@@ -1,0 +1,17 @@
+# Python / Environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Local database / secrets configuration overrides
+.env
+config.local.py
+
+# Visualizer runtime output & temp stores
+exports/
+*.mp4
+*.jpg
+*.png
