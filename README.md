@@ -1,57 +1,70 @@
-# Immich Ring Visualizer
+```markdown
+# Immich Ring Visualizer & LoRA Frame Curator
 
-A local tool to visualize face and CLIP embeddings from Immich in concentric similarity rings, with video frame analysis via InsightFace.
+A specialized dataset curation and visual quality-control tool designed for AI workflow developers.
 
-Thats not the best description for this tool. 
-The immich half that works with the immich database to take an initial image with a face from your collection and find the closest matches
-immich was written to deal with collections of real people and real people tend to wear the same face everyday. Immich Ring Visualizer was written
-with AI generated faces in mind, which tend to drift into other faces. immich will find pictures of aunt mary but doesnt give the confidence that its 
-actually aunt mary. With AI for a repeatable charactor you need a lora and that requires a certain number of good quality images of a charactor. 
+While Immich excels at organizing real-world photo collections, AI-generated characters present a unique challenge: **facial drift**. Immich’s default face clustering finds similar faces, but it doesn't give a granular, visual representation of model confidence or character fidelity.
 
-The ring Visualizer was created to graphically show the confidence that your other images match the reference image which is at the centre. 
-other images orbit this reference image the nearer they are to the reference the closer they are to being that reference face. 
-with the data from your immich database any particular face file can be the reference infact clicking on an orbiting image makes that become the reference and then 
-the best matches to that face are shown. it also has a list of images from most similar to least similar. 
-immich takes the video thumbnail as the representative image for an mp4 unfortunately that might not be very representative of the frames inside the mp4
+This tool bridges that gap by turning your Immich database into an interactive similarity radar and providing an automated video frame extractor designed specifically for building clean, unblurred LoRA training datasets.
 
-This is where the second side of the visualizer comes into play you can drag in a mp4 select a frame as reference and set simularity and blur parameters 
-this will then process the mp4 file and choose which frames are above the threshold set. It does a blur check initially because a blurry face is not whats
-needed for a lora , and then extracts the frames reaching your criteria. it can also create a video file with the 'junk' frames removed. or you can save the individual 
-frames. these can be added to immich which will do its facial recognition scans and ideally will match other faces in your collection. 
+---
 
-The main thing is to generate enough good quality frames of the same charactor so the lora knows who that character is , you need 15 at least to train the lora. 
-once you have the lora you should be able to create more images of that charactor and if its still not generating closely enough you can use the images it does produce to 
-create better training material.  
+## Why This Tool Exists
 
+Training a consistent character LoRA requires at least 15–20 high-quality, sharp, subject-accurate images.
+
+1. **Immich Ring Visualizer:** Places a reference face at the center. Other images orbit this reference—the closer they orbit, the higher the confidence that they match the target face. Clicking any orbiting node instantly turns it into the new reference, recalculating surrounding matches so you can traverse face clusters, spot character drift, and isolate bad renders.
+2. **Video Frame Extractor (InsightFace):** Immich uses a single static thumbnail to represent an entire MP4. This side of the tool lets you drop in an MP4, set a reference frame, and configure similarity and blur thresholds. It filters out motion blur, discards low-confidence frames, and extracts clean dataset candidates. You can save individual frames or output a transcode with 'junk' frames removed.
+
+Once exported, these clean frames can be fed into Immich or directly into your trainer to refine your LoRA and eliminate facial drift in future generations.
+
+---
 
 ## Features
-- **Immich Visualizer**: Interactively explore nearest face or CLIP matches around a seed asset.
-- **Video Clip Analyzer**: Frame-by-frame face detection, blur scoring, and similarity filtering on local MP4s using InsightFace.
-- **Fisheye Focus**: Interactive radial magnification on hover.
 
-## Requirements
+- **Concentric Similarity Radar:** Visual confidence map where distance from center reflects facial embedding proximity.
+- **Dynamic Recenter on Click:** Click any face to promote it to the reference node and re-index the visual cluster.
+- **Ranked Similarity Sidebar:** Side-by-side list showing exact match percentages from highest to lowest.
+- **MP4 Frame Extractor:** Interactive reference frame picker for video files.
+- **Automated Blur & Drift Filtering:** Dual-stage evaluation using InsightFace to discard blurry or off-model frames.
+- **Junk-Frame Removal:** Export cleaned video files or raw frame sets directly for training pipelines.
+
+---
+
+## Prerequisites
+
 - Python 3.10+
-- `ffmpeg` (installed on system PATH for playback generation)
-- Read access to your Immich PostgreSQL database and API key (optional if you don't run immich)
+- `ffmpeg` installed on your system PATH (required for video processing)
+- Read access to an Immich PostgreSQL database and Immich API key *(Optional if only using the MP4 video extractor)*
+
+> For instructions on exposing PostgreSQL in Docker and generating an API key, see **[IMMICH_SETUP.md](./IMMICH_SETUP.md)**.
+
+---
 
 ## Installation
 
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/your-username/immich-ring-visualizer.git](https://github.com/your-username/immich-ring-visualizer.git)
+   git clone [https://github.com/blackest/immich-ring-visualizer.git](https://github.com/blackest/immich-ring-visualizer.git)
    cd immich-ring-visualizer
-   ```
+
+```
 
 2. Create a virtual environment and install dependencies:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+```
+
+
+
+---
 
 ## Configuration
 
-Edit the configuration block near the top of `ring_viz.py` to match your local setup:
+Edit the configuration block near the top of `ring_viz.py` to match your environment:
 
 ```python
 PG_HOST = "localhost"
@@ -62,16 +75,24 @@ PG_DB = "immich"
 
 IMMICH_BASE_URL = "http://localhost:2283"
 IMMICH_API_KEY = "your_api_key_here"
+
 ```
 
-> **Warning**: Do not commit your actual API keys or database passwords to GitHub.
+> **Security Note**: Never commit actual database passwords or API keys to GitHub.
+
+---
 
 ## Usage
 
-Run the web app:
+Start the local server:
 
 ```bash
 python3 ring_viz.py
+
 ```
 
 Open `http://localhost:5050` in your browser.
+
+```
+
+```
