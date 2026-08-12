@@ -1,98 +1,70 @@
-```markdown
-# Immich Ring Visualizer & LoRA Frame Curator
+Immich Ring Visualizer & LoRA Frame Curator
 
 A specialized dataset curation and visual quality-control tool designed for AI workflow developers.
 
-While Immich excels at organizing real-world photo collections, AI-generated characters present a unique challenge: **facial drift**. Immich’s default face clustering finds similar faces, but it doesn't give a granular, visual representation of model confidence or character fidelity.
+While Immich excels at organizing real-world photo collections, AI-generated characters present a unique challenge: facial drift. Immich’s default face clustering finds similar faces, but it doesn’t give a granular, visual representation of model confidence or character fidelity.
 
 This tool bridges that gap by turning your Immich database into an interactive similarity radar and providing an automated video frame extractor designed specifically for building clean, unblurred LoRA training datasets.
 
----
-
-## Why This Tool Exists
+Why This Tool Exists
 
 Training a consistent character LoRA requires at least 15–20 high-quality, sharp, subject-accurate images.
 
-1. **Immich Ring Visualizer:** Places a reference face at the center. Other images orbit this reference—the closer they orbit, the higher the confidence that they match the target face. Clicking any orbiting node instantly turns it into the new reference, recalculating surrounding matches so you can traverse face clusters, spot character drift, and isolate bad renders.
-2. **Video Frame Extractor (InsightFace):** Immich uses a single static thumbnail to represent an entire MP4. This side of the tool lets you drop in an MP4, set a reference frame, and configure similarity and blur thresholds. It filters out motion blur, discards low-confidence frames, and extracts clean dataset candidates. You can save individual frames or output a transcode with 'junk' frames removed.
+1. Immich Ring Visualizer: Places a reference face at the center. Other images orbit this reference—the closer they orbit, the higher the confidence that they match the target face. Clicking any orbiting node instantly turns it into the new reference, recalculating surrounding matches so you can traverse face clusters, spot character drift, and isolate bad renders.
+2. Video Frame Extractor (InsightFace): Immich uses a single static thumbnail to represent an entire MP4. This side of the tool lets you drop in an MP4, set a reference frame, and configure similarity and blur thresholds. It filters out motion blur, discards low-confidence frames, and extracts clean dataset candidates. You can save individual frames or output a transcode with “junk” frames removed.
 
 Once exported, these clean frames can be fed into Immich or directly into your trainer to refine your LoRA and eliminate facial drift in future generations.
 
----
+Features
 
-## Features
+* Concentric Similarity Radar: Visual confidence map where distance from center reflects facial embedding proximity.
+* Dynamic Recenter on Click: Click any face to promote it to the reference node and re-index the visual cluster.
+* Ranked Similarity Sidebar: Side-by-side list showing exact match percentages from highest to lowest.
+* MP4 Frame Extractor: Interactive reference frame picker for video files.
+* Automated Blur & Drift Filtering: Dual-stage evaluation using InsightFace to discard blurry or off-model frames.
+* Junk-Frame Removal: Export cleaned video files or raw frame sets directly for training pipelines.
 
-- **Concentric Similarity Radar:** Visual confidence map where distance from center reflects facial embedding proximity.
-- **Dynamic Recenter on Click:** Click any face to promote it to the reference node and re-index the visual cluster.
-- **Ranked Similarity Sidebar:** Side-by-side list showing exact match percentages from highest to lowest.
-- **MP4 Frame Extractor:** Interactive reference frame picker for video files.
-- **Automated Blur & Drift Filtering:** Dual-stage evaluation using InsightFace to discard blurry or off-model frames.
-- **Junk-Frame Removal:** Export cleaned video files or raw frame sets directly for training pipelines.
+Prerequisites
 
----
+* Python 3.10+
+* ffmpeg installed on your system PATH (required for video processing)
+* Read access to an Immich PostgreSQL database and Immich API key (optional if only using the MP4 video extractor)
 
-## Prerequisites
+For instructions on exposing PostgreSQL in Docker and generating an API key, see IMMICH_SETUP.md.
 
-- Python 3.10+
-- `ffmpeg` installed on your system PATH (required for video processing)
-- Read access to an Immich PostgreSQL database and Immich API key *(Optional if only using the MP4 video extractor)*
+Installation
 
-> For instructions on exposing PostgreSQL in Docker and generating an API key, see **[IMMICH_SETUP.md](./IMMICH_SETUP.md)**.
+1. Clone the Repository
 
----
+git clone https://github.com/blackest/immich-ring-visualizer.git
+cd immich-ring-visualizer
 
-## Installation
+2. Create a Virtual Environment
 
-1. Clone the repository:
-   ```bash
-   git clone [https://github.com/blackest/immich-ring-visualizer.git](https://github.com/blackest/immich-ring-visualizer.git)
-   cd immich-ring-visualizer
-
-```
-
-2. Create a virtual environment and install dependencies:
-```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-```
+Configuration
 
+Edit the configuration block near the top of ring_viz.py to match your environment:
 
-
----
-
-## Configuration
-
-Edit the configuration block near the top of `ring_viz.py` to match your environment:
-
-```python
 PG_HOST = "localhost"
 PG_PORT = 5432
 PG_USER = "postgres"
 PG_PASSWORD = "your_db_password"
 PG_DB = "immich"
-
 IMMICH_BASE_URL = "http://localhost:2283"
 IMMICH_API_KEY = "your_api_key_here"
 
-```
+Security Note: Never commit actual database passwords or API keys to GitHub.
 
-> **Security Note**: Never commit actual database passwords or API keys to GitHub.
-
----
-
-## Usage
+Usage
 
 Start the local server:
 
-```bash
 python3 ring_viz.py
 
-```
+Then open:
 
-Open `http://localhost:5050` in your browser.
-
-```
-
-```
+http://localhost:5050
