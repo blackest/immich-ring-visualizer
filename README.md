@@ -10,7 +10,7 @@ A local tool to visualize face and CLIP embeddings from Immich in concentric sim
 ## Requirements
 - Python 3.10+
 - `ffmpeg` (installed on system PATH for playback generation)
-- Read access to your Immich PostgreSQL database and API key
+- Read access to your Immich PostgreSQL database and API key (optional if you don't run immich)
 
 ## Installation
 
