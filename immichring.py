@@ -258,7 +258,8 @@ def analyze_video():
     source_name = os.path.splitext(request.files["video"].filename or "clip")[0]
     _analysis_jobs[job_id] = {
         "status": "running", "results": [], "error": None,
-        "sourceName": source_name, "videoPath": video_path
+        "sourceName": source_name, "videoPath": video_path,
+        "simThreshold": sim_threshold,
     }
 
     t = threading.Thread(
@@ -281,6 +282,7 @@ def analysis_status(job_id):
         "error": job.get("error"),
         "frameCount": len(job["results"]),
         "results": job["results"],
+        "simThreshold": job.get("simThreshold", 0.65),
     })
 
 
@@ -404,7 +406,7 @@ def build_playback(job_id):
         out_path = raw_path
 
     job["playbackPath"] = out_path
-    return jsonify({"ready": True, "url": f"/api/playback-file/{job_id}"})
+    return jsonify({"ready": True, "url": f"/api/playback-file/{job_id}", "fps": fps})
 
 
 @app.route("/api/playback-file/<job_id>")
@@ -679,54 +681,37 @@ HTML = r"""
     margin-top: 10px;
     width: 260px;
   }
+  /* Compact video selector -- deliberately no visible drag/drop target. */
   #video-drop-zone {
-    border: 2px dashed #33333c;
-    border-radius: 8px;
-    padding: 28px 12px;
-    min-height: 64px;
-    display: flex;
-    flex-direction: column;
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
+    min-height: 0;
+    padding: 6px 10px;
+    border: 1px solid #2a4a6a;
+    border-radius: 6px;
+    background: #1a2a3a;
+    color: var(--accent);
     font-size: 11px;
-    color: var(--dim);
-    text-align: center;
-    transition: border-color 0.15s ease, background 0.15s ease;
     cursor: pointer;
+  }
+  #video-drop-zone > div:last-child {
+    display: none;
   }
   #video-drop-zone.dragover {
     border-color: var(--accent);
-    background: #10151c;
+    background: #22384d;
     color: var(--text);
   }
-  /* Full-page overlay shown while dragging a file anywhere on the window,
-     so missing the small drop-zone target no longer sends the browser off
-     to open/navigate to the raw video file instead. */
-  /*
-  #page-drop-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    background: rgba(10, 14, 20, 0.85);
-    border: 3px dashed var(--accent);
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    color: var(--text);
-    pointer-events: none;
-  }
-  #page-drop-overlay.active {
-    display: flex;
-  }
-  */
   #preview-container {
     display: none;
     position: fixed;
     left: 16px;
     bottom: 16px;
-    width: min(720px, calc(100vw - 380px));
-    max-height: calc(100vh - 180px);
-    overflow: auto;
+    top: auto;
+    width: min(480px, calc(100vw - 372px));
+    max-height: calc(100vh - 360px);
+    overflow: hidden;
     margin: 0;
     background: #101015;
     border: 1px solid #2a2a32;
@@ -737,8 +722,8 @@ HTML = r"""
   }
   #preview-canvas {
     width: 100%;
-    max-height: calc(100vh - 260px);
     height: auto;
+    max-height: calc(100vh - 440px);
     object-fit: contain;
     border-radius: 6px;
     background: #000;
@@ -944,6 +929,11 @@ HTML = r"""
 <!-- <div id="page-drop-overlay">Drop video anywhere to load it</div> -->
 <div id="preview-hover-panel"><img id="preview-hover-img"><div class="preview-caption" id="preview-hover-caption"></div></div>
 <div id="hud">
+  <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px; font-size: 11px;">
+    <label for="ring-scale-input">Ring Scale:</label>
+    <input id="ring-scale-input" type="range" min="50" max="200" value="100" style="flex: 1;">
+    <span id="ring-scale-val">100%</span>
+  </div>
   <div class="fname" id="hud-filename">loading…</div>
   <div id="hud-sub">Immich Ring Visualizer</div>
   <div class="mode" id="hud-mode"></div>
@@ -954,12 +944,11 @@ HTML = r"""
   <div id="video-drop">
     <div style="display: flex; gap: 6px; margin-bottom: 8px;">
       <input id="sim-threshold" type="number" step="0.05" value="0.65" title="Similarity Threshold" style="width: 120px; background: #16161c; border: 1px solid #2a2a32; color: var(--text); padding: 4px; border-radius: 4px;">
-      <input id="blur-threshold" type="number" step="1" value="100" title="Blur Threshold" style="width: 120px; background: #16161c; border: 1px solid #2a2a32; color: var(--text); padding: 4px; border-radius: 4px;">
+      <input id="blur-threshold" type="number" step="1" value="50" title="Blur Threshold" style="width: 120px; background: #16161c; border: 1px solid #2a2a32; color: var(--text); padding: 4px; border-radius: 4px;">
     </div>
     <input type="file" id="video-file-input" accept="video/*" style="display:none">
     <div id="video-drop-zone">
-      <div>Drop or click to select MP4 video</div>
-      <div style="font-size:10px;margin-top:4px;color:var(--dim)">Step through frames to set reference face</div>
+      Select video
     </div>
     
     <div id="video-status"></div>
@@ -970,6 +959,8 @@ HTML = r"""
       <canvas id="preview-canvas"></canvas>
       <div class="preview-controls">
         <button class="btn-seek" id="btn-prev-frame">◀ -1</button>
+        <button class="btn-seek" id="btn-play-frames">▶ Play</button>
+        <button class="btn-seek" id="btn-stop-frames">■ Stop</button>
         <span id="frame-counter">Frame: 1</span>
         <button class="btn-seek" id="btn-next-frame">+1 ▶</button>
       </div>
@@ -996,12 +987,32 @@ function sizeForSim(sim) {
   return MIN_SIZE + t * (CENTER_SIZE - MIN_SIZE);
 }
 
+let ringScale = 1.0;
+
 function radiusForSim(sim) {
   const minDim = Math.min(window.innerWidth, window.innerHeight);
-  const maxR = minDim * (MAX_RADIUS_VW / 100);
+  const maxR = minDim * (MAX_RADIUS_VW / 100) * ringScale;
   const t = 1 - Math.max(0, Math.min(1, (sim - 0.25) / 0.75));
-  return 90 + t * (maxR - 90);
+  return (90 * ringScale) + t * (maxR - (90 * ringScale));
 }
+
+// Global reference to store the last rendered data
+let lastRenderArgs = null;
+
+const originalRender = render;
+render = function(centerId, data, centerThumbUrl) {
+  lastRenderArgs = { centerId, data, centerThumbUrl };
+  originalRender(centerId, data, centerThumbUrl);
+};
+
+document.getElementById('ring-scale-input').addEventListener('input', (e) => {
+  const val = e.target.value;
+  ringScale = val / 100;
+  document.getElementById('ring-scale-val').textContent = `${val}%`;
+  if (lastRenderArgs) {
+    render(lastRenderArgs.centerId, lastRenderArgs.data, lastRenderArgs.centerThumbUrl);
+  }
+});
 
 async function loadNeighbors(assetId) {
   stage.innerHTML = '<div id="loading">loading neighbors…</div>';
@@ -1276,61 +1287,31 @@ fileInput.addEventListener('change', (e) => {
 });
 
 // Guard the ENTIRE window against the browser's default drag/drop
-// behavior first. Without this, dropping even slightly outside the small
+// behavior. Without this, dropping even slightly outside the small
 // drop-zone target makes the browser navigate the tab to open the raw
-// video file -- that's the "mp4 opens in a new tab" symptom. This must
-// be attached before any more specific handlers below.
-/*
-const pageOverlay = document.getElementById('page-drop-overlay');
-let dragDepth = 0;
-
-window.addEventListener('dragenter', (e) => {
-  e.preventDefault();
-  dragDepth++;
-  pageOverlay.classList.add('active');
-});
-window.addEventListener('dragover', (e) => {
-  e.preventDefault(); // required on every dragover, not just dragenter
-});
-window.addEventListener('dragleave', (e) => {
-  dragDepth = Math.max(0, dragDepth - 1);
-  if (dragDepth === 0) pageOverlay.classList.remove('active');
-});
+// video file -- that's the "mp4 opens in a new tab" symptom.
+//
+// Earlier version of this also showed/hid a full-page overlay element
+// via dragenter/dragleave. That toggles the element's display mid-drag,
+// and mutating the DOM under the cursor while a drag is in progress is
+// enough to make Safari on macOS silently cancel the drag session
+// without ever firing 'drop' -- the first drop vanished, the second one
+// worked because nothing changed structurally that time. Fixed by never
+// touching the DOM during the drag: just preventDefault everywhere
+// (stops the tab-navigation) and, if a drop lands outside the small
+// zone, handle the file directly with no visual overlay involved.
+window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => {
   e.preventDefault();
-  dragDepth = 0;
-  pageOverlay.classList.remove('active');
-  // A drop anywhere on the page (not just the small zone) now loads the
-  // file, as long as it wasn't already handled by the zone's own
-  // listener below (stopPropagation there prevents double-handling).
-  const file = e.dataTransfer.files[0];
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
   if (file && file.type.startsWith('video/')) {
     handleFileSelect(file);
-  } else if (file) {
-    videoStatus.textContent = 'Please drop a valid MP4/video file.';
   }
 });
-*/
 
-['dragover'].forEach(evt => dropZone.addEventListener(evt, e => {
-  e.preventDefault();
-  dropZone.classList.add('dragover');
-}));
-['dragleave', 'drop'].forEach(evt => dropZone.addEventListener(evt, e => {
-  e.preventDefault();
-  dropZone.classList.remove('dragover');
-}));
-
-dropZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  e.stopPropagation(); // stop this from also being handled by the window listener above
-  const file = e.dataTransfer.files[0];
-  if (file && file.type.startsWith('video/')) {
-    handleFileSelect(file);
-  } else {
-    videoStatus.textContent = 'Please drop a valid MP4/video file.';
-  }
-});
+// No full-page or large drag/drop target. The compact button is just a
+// file picker; window-level drag/drop remains supported without creating an
+// overlay or changing layout while a file is being dragged.
 
 async function handleFileSelect(file) {
   currentVideoFile = file;
@@ -1392,7 +1373,111 @@ async function seekToFrame(idx) {
 }
 
 document.getElementById('btn-prev-frame').addEventListener('click', () => seekToFrame(currentFrameIdx - 1));
+
+// ---- similarity-over-time sparkline ----
+// Shows the same shape as a YouTube retention graph, but for face-match
+// confidence: x = frame number in original chronological order (not the
+// sim-sorted ranking used elsewhere), y = similarity. Makes drift visible
+// as a curve -- a dip-then-recovery reads instantly here, where it's
+// invisible in a flat ranked list.
+function renderSimSparkline(results, threshold) {
+  const wrap = document.getElementById('sim-sparkline-wrap');
+  if (!wrap || !results || !results.length) return;
+
+  // Chronological order regardless of how `results` was sorted upstream.
+  const sorted = [...results].sort((a, b) => a.frame - b.frame);
+
+  const W = wrap.clientWidth || 320;
+  const H = 90;
+  const padL = 4, padR = 4, padT = 8, padB = 4;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const minFrame = sorted[0].frame;
+  const maxFrame = sorted[sorted.length - 1].frame;
+  const frameSpan = Math.max(1, maxFrame - minFrame);
+
+  const xFor = (frame) => padL + ((frame - minFrame) / frameSpan) * plotW;
+  const yFor = (sim) => padT + (1 - Math.max(0, Math.min(1, sim))) * plotH;
+
+  const linePoints = sorted.map(r => `${xFor(r.frame).toFixed(1)},${yFor(r.sim).toFixed(1)}`).join(' ');
+  const thresholdY = yFor(threshold).toFixed(1);
+
+  // Small hit-target circles per frame, colored by pass/fail, so a click
+  // anywhere near a point jumps the exact-frame preview straight to it.
+  const dots = sorted.map(r => {
+    const cx = xFor(r.frame).toFixed(1);
+    const cy = yFor(r.sim).toFixed(1);
+    const color = r.passed ? '#7cc4ff' : '#d9534f';
+    return `<circle cx="${cx}" cy="${cy}" r="7" fill="transparent" data-frame="${r.frame}" class="spark-hit" style="cursor:pointer;"></circle>` +
+           `<circle cx="${cx}" cy="${cy}" r="2" fill="${color}" style="pointer-events:none;"></circle>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div style="font-size:10px;color:var(--dim);margin-bottom:3px;">
+      Match confidence by frame — click a point to jump the preview
+    </div>
+    <svg width="${W}" height="${H}" style="background:#0c0c10;border:1px solid #22222a;border-radius:6px;display:block;">
+      <line x1="${padL}" y1="${thresholdY}" x2="${W - padR}" y2="${thresholdY}"
+            stroke="#4a4a55" stroke-width="1" stroke-dasharray="3,3"></line>
+      <polyline points="${linePoints}" fill="none" stroke="#5a8fc4" stroke-width="1.5"></polyline>
+      ${dots}
+    </svg>
+  `;
+
+  wrap.querySelectorAll('.spark-hit').forEach(el => {
+    el.addEventListener('click', () => {
+      const frame = parseInt(el.dataset.frame, 10);
+      stopFramePlayback();
+      seekToFrame(frame);
+      // Scroll the exact-frame preview into view in case it's off-screen.
+      previewContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  });
+}
+
+
 document.getElementById('btn-next-frame').addEventListener('click', () => seekToFrame(currentFrameIdx + 1));
+
+// ---- play/stop through the exact decoded frames ----
+// This isn't a real <video> element -- each frame is fetched and decoded
+// individually via /api/preview-frame -- so "play" just steps seekToFrame
+// on an interval timed to the source clip's real fps, rather than being
+// native video playback. Stops automatically at the last frame.
+let playTimer = null;
+
+function stopFramePlayback() {
+  if (playTimer) {
+    clearInterval(playTimer);
+    playTimer = null;
+  }
+  document.getElementById('btn-play-frames').textContent = '▶ Play';
+}
+
+function startFramePlayback() {
+  if (!currentPreviewId || playTimer) return;
+  if (currentFrameIdx >= totalFrames) currentFrameIdx = 0; // replay from start if already at the end
+  const intervalMs = fps > 0 ? (1000 / fps) : (1000 / 24);
+  document.getElementById('btn-play-frames').textContent = '⏸ Playing…';
+  playTimer = setInterval(() => {
+    if (currentFrameIdx >= totalFrames) {
+      stopFramePlayback();
+      return;
+    }
+    seekToFrame(currentFrameIdx + 1);
+  }, intervalMs);
+}
+
+document.getElementById('btn-play-frames').addEventListener('click', () => {
+  if (playTimer) stopFramePlayback();
+  else startFramePlayback();
+});
+document.getElementById('btn-stop-frames').addEventListener('click', stopFramePlayback);
+// Manual stepping/scrubbing while playing should stop playback rather
+// than fight it.
+document.getElementById('btn-prev-frame').addEventListener('click', stopFramePlayback);
+document.getElementById('btn-next-frame').addEventListener('click', stopFramePlayback);
+
 
 document.addEventListener('keydown', (e) => {
   if (!currentPreviewId) return;
@@ -1401,9 +1486,11 @@ document.addEventListener('keydown', (e) => {
 
   if (e.key === 'ArrowLeft') {
     e.preventDefault();
+    stopFramePlayback();
     seekToFrame(currentFrameIdx - 1);
   } else if (e.key === 'ArrowRight') {
     e.preventDefault();
+    stopFramePlayback();
     seekToFrame(currentFrameIdx + 1);
   }
 });
@@ -1457,10 +1544,16 @@ async function pollAnalysis(jobId, videoFileName, refFrameIdx) {
 
   videoStatus.innerHTML = `
     Done — ${passed}/${data.frameCount} frames kept.
+    <div id="sim-sparkline-wrap" style="margin-top:8px;"></div>
     <button id="export-btn" style="margin-top:6px;width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:11px;">Save kept frames to disk</button>
     <button id="playback-btn" style="margin-top:6px;width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:11px;">Build playback (rejected frames blanked)</button>
     <video id="playback-video" controls style="width:100%;margin-top:8px;display:none;border-radius:6px;"></video>
+    <div id="playback-frame-controls" style="display:none;margin-top:6px;gap:6px;">
+      <button id="playback-prev-frame" class="btn-seek" style="flex:1;">◀ -1 frame</button>
+      <button id="playback-next-frame" class="btn-seek" style="flex:1;">+1 frame ▶</button>
+    </div>
   `;
+  renderSimSparkline(data.results, data.simThreshold);
   document.getElementById('export-btn').onclick = async () => {
     const btn = document.getElementById('export-btn');
     btn.textContent = 'Saving…';
@@ -1483,6 +1576,24 @@ async function pollAnalysis(jobId, videoFileName, refFrameIdx) {
     const vid = document.getElementById('playback-video');
     vid.src = result.url;
     vid.style.display = 'block';
+
+    // Native <video> has no per-frame step -- pause it and nudge
+    // currentTime by exactly one frame duration (1/fps), using the same
+    // fps the reconstruction was written at so a "frame" here really is
+    // one source-video frame, not an arbitrary time jump.
+    const playbackFps = result.fps || 24.0;
+    const frameStep = 1 / playbackFps;
+    const stepControls = document.getElementById('playback-frame-controls');
+    stepControls.style.display = 'flex';
+
+    document.getElementById('playback-prev-frame').onclick = () => {
+      vid.pause();
+      vid.currentTime = Math.max(0, vid.currentTime - frameStep);
+    };
+    document.getElementById('playback-next-frame').onclick = () => {
+      vid.pause();
+      vid.currentTime = Math.min(vid.duration || Infinity, vid.currentTime + frameStep);
+    };
   };
 
   const results = data.results
