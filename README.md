@@ -1,4 +1,6 @@
 Immich Ring Visualizer & LoRA Frame Curator
+<img width="2156" height="1354" alt="image" src="https://github.com/user-attachments/assets/d7715ea6-880c-4c76-86cf-9ca644b7d129" />
+
 
 A specialized dataset curation and visual quality-control tool designed for AI workflow developers.
 
