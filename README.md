@@ -63,8 +63,11 @@ Usage
 
 Start the local server:
 
-python3 ring_viz.py
+python3 immichring.py
 
 Then open:
 
 http://localhost:5050
+
+this repo works standalone without immich being installed on your system it will say loading initially as it cant find the immich postgres db
+if you want to use it with immich you need to expose the postgres.db ports normally only accessible within docker
