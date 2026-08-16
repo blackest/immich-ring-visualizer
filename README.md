@@ -72,4 +72,11 @@ Then open:
 http://localhost:5050
 
 this repo works standalone without immich being installed on your system it will say loading initially as it cant find the immich postgres db
-if you want to use it with immich you need to expose the postgres.db ports normally only accessible within docker
+if you want to use it with immich you need to expose the postgres.db ports normally only accessible within docker 
+there are 4 versions now probably sticky is the best as it both lets you compare existing images in the immich db 
+and selective saving of both the frames and any existing immich images that corolate, still some judgement needed for side profiles
+they will score lower but you need coverage for the lora. 
+
+An Example prompt might be 
+
+"A woman moves in to a quiet courtyard with natural, unselfconscious movement — checking something nearby, glancing over her shoulder, reaching for an object, pausing to look directly at camera, then turning away again. The camera doesn't hold still: it drifts and re-angles with her, circling partway around during her movement, pushing in close on her face during a still moment, pulling back wide as she crosses the space. Coverage includes clear profile, three-quarter, and face-on angles as she turns. Natural shifting light. No single held pose — her head and body continuously reorient through small, ordinary actions."
