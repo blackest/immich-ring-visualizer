@@ -103,6 +103,7 @@
       <div class="panel-section-header"><span class="chev">▸</span><span class="sec-title">Export Settings</span></div>
       <div class="panel-section-body">
         <div style="display:flex;flex-direction:column;gap:6px;font-size:11px;">
+          <div id="source-resolution-note" style="display:none;font-size:10px;color:var(--dim);padding:5px 6px;background:#16161c;border:1px solid #2a2a32;border-radius:5px;line-height:1.4;"></div>
           <div style="display:flex;gap:6px;align-items:center;">
             <label style="width:56px;color:var(--dim);">Size</label>
             <input id="export-width" type="number" step="8" value="512" style="width:70px;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;">
@@ -112,7 +113,15 @@
               <button type="button" class="export-preset-btn" data-w="512" data-h="512" style="font-size:9px;padding:3px 5px;background:#16161c;border:1px solid #2a2a32;color:var(--dim);border-radius:4px;cursor:pointer;">512</button>
               <button type="button" class="export-preset-btn" data-w="576" data-h="576" style="font-size:9px;padding:3px 5px;background:#16161c;border:1px solid #2a2a32;color:var(--dim);border-radius:4px;cursor:pointer;">576</button>
               <button type="button" class="export-preset-btn" data-w="1024" data-h="1024" style="font-size:9px;padding:3px 5px;background:#16161c;border:1px solid #2a2a32;color:var(--dim);border-radius:4px;cursor:pointer;">1024</button>
+              <button type="button" id="match-source-res-btn" style="display:none;font-size:9px;padding:3px 5px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:4px;cursor:pointer;" title="Set export size to match the source images">Match source</button>
             </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <label style="width:56px;"></label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);cursor:pointer;">
+              <input id="export-native" type="checkbox">
+              Export at native resolution (keep source pixel size, don't force to the size above)
+            </label>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
             <label style="width:56px;color:var(--dim);">Crop</label>

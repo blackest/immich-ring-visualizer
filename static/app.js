@@ -381,6 +381,7 @@ function getExportParams() {
     upscale: upscaleOn,
     maxUpscale: upscaleOn ? (parseFloat(document.getElementById('export-max-upscale').value) || null) : null,
     padMode: upscaleOn ? document.getElementById('export-pad-mode').value : 'none',
+    native: document.getElementById('export-native').checked,
   };
 }
 
@@ -407,6 +408,22 @@ function getExportParams() {
       document.getElementById('export-height').value = btn.dataset.h;
     });
   });
+
+  const nativeCb = document.getElementById('export-native');
+  const widthInput = document.getElementById('export-width');
+  const heightInput = document.getElementById('export-height');
+  function syncNativeState() {
+    const on = nativeCb.checked;
+    // native mode still uses width/height as an aspect ratio for face/center
+    // crop modes, so keep them enabled but dim them to signal the meaning
+    // shifted from 'exact output size' to 'output aspect ratio'.
+    [widthInput, heightInput].forEach(el => { el.style.opacity = on ? '0.55' : '1'; });
+    document.querySelectorAll('.export-preset-btn').forEach(btn => { btn.style.opacity = on ? '0.4' : '1'; });
+    const matchBtn = document.getElementById('match-source-res-btn');
+    if (matchBtn) matchBtn.style.display = on ? 'none' : matchBtn.style.display;
+  }
+  nativeCb.addEventListener('change', () => { syncNativeState(); applyResolutionSummary(); });
+  syncNativeState();
 })();
 
 function updateSaveSelectedButton() {
@@ -1091,6 +1108,50 @@ const previewContainer = document.getElementById('preview-container');
 const previewCanvas = document.getElementById('preview-canvas');
 const hiddenVideo = document.getElementById('hidden-video');
 const frameCounter = document.getElementById('frame-counter');
+
+// ---- surfaces the actual pixel dimensions of the analyzed source images,
+// since analysis reads full-resolution originals but export defaults to
+// 512x512 - without this you'd only discover you'd been downsampling
+// 1024x1024 sources after the fact. ----
+let lastResolutionSummary = null;
+function applyResolutionSummary(summary) {
+  if (summary !== undefined) lastResolutionSummary = summary;
+  summary = lastResolutionSummary;
+  const note = document.getElementById('source-resolution-note');
+  const matchBtn = document.getElementById('match-source-res-btn');
+  if (!summary) {
+    note.style.display = 'none';
+    matchBtn.style.display = 'none';
+    return;
+  }
+  const nativeOn = document.getElementById('export-native').checked;
+  const exportW = parseInt(document.getElementById('export-width').value, 10);
+  const exportH = parseInt(document.getElementById('export-height').value, 10);
+  const downsampling = !nativeOn && (summary.modeWidth > exportW || summary.modeHeight > exportH);
+
+  let text;
+  if (summary.uniform) {
+    text = `Source: all ${summary.totalCount} images are ${summary.modeWidth}×${summary.modeHeight}`;
+  } else {
+    text = `Source: mostly ${summary.modeWidth}×${summary.modeHeight} (${summary.modeCount}/${summary.totalCount}), range ${summary.minWidth}–${summary.maxWidth} × ${summary.minHeight}–${summary.maxHeight}`;
+  }
+  if (downsampling) {
+    text += ` — <span style="color:#e0a94a;">exporting at ${exportW}×${exportH} throws away resolution — tick "native resolution" below to keep it</span>`;
+  } else if (nativeOn) {
+    text += ` — native resolution export is on, source pixels are kept`;
+  }
+  note.innerHTML = text;
+  note.style.display = 'block';
+  matchBtn.style.display = (!nativeOn && (downsampling || exportW !== summary.modeWidth || exportH !== summary.modeHeight)) ? 'inline-block' : 'none';
+  matchBtn.dataset.w = summary.modeWidth;
+  matchBtn.dataset.h = summary.modeHeight;
+}
+
+document.getElementById('match-source-res-btn').addEventListener('click', function () {
+  document.getElementById('export-width').value = this.dataset.w;
+  document.getElementById('export-height').value = this.dataset.h;
+  this.style.display = 'none';
+});
 const videoStatus = document.getElementById('video-status');
 
 let currentVideoFile = null;
@@ -1378,6 +1439,8 @@ async function pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceTyp
     setTimeout(() => pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceType), 800);
     return;
   }
+
+  applyResolutionSummary(data.resolutionSummary);
 
   statusEl.innerHTML = `
     Done — ${passed}/${data.frameCount} kept.

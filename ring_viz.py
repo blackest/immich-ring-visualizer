@@ -129,7 +129,7 @@ def _center_crop_to_aspect(img, out_w, out_h):
         return img[y0:y0 + new_h, :]
 
 
-def crop_resize_export(img, bbox, out_w, out_h, mode="face", margin=2.2, interp="auto", upscale=True, max_upscale=None, pad_mode="none"):
+def crop_resize_export(img, bbox, out_w, out_h, mode="face", margin=2.2, interp="auto", upscale=True, max_upscale=None, pad_mode="none", native=False):
     """Crop + resize a BGR image for training-set export.
     mode: 'face' (bbox-centered, keeps the face framed), 'center' (center crop,
     ignores face), 'contain' (letterbox, no cropping), 'stretch' (naive resize).
@@ -141,6 +141,13 @@ def crop_resize_export(img, bbox, out_w, out_h, mode="face", margin=2.2, interp=
     source frame itself is too small to deliver the full widened field of
     view: 'none' lets the final scale exceed max_upscale as a last resort,
     'black' pads with black bars, 'edge' pads by extending the border pixels.
+    native: skip the final resize entirely and keep the crop at whatever
+    real pixel size it comes out to. out_w/out_h still set the *aspect
+    ratio* the crop is cut to for 'face'/'center' modes; 'stretch' and
+    'contain' just return the source image untouched, since a fixed target
+    box is meaningless once nothing is being resized to fit one. Avoids
+    silently downsampling (or, worse, upsampling) source images that don't
+    match your usual export size.
     Returns (image, info) where info has 'scale' (final resize factor),
     'widened' (crop was pulled back to respect max_upscale) and 'padded'
     (frame edge forced padding to avoid exceeding max_upscale).
@@ -149,6 +156,9 @@ def crop_resize_export(img, bbox, out_w, out_h, mode="face", margin=2.2, interp=
 
     h, w = img.shape[:2]
     out_w, out_h = max(8, int(out_w)), max(8, int(out_h))
+
+    if native and mode in ("stretch", "contain"):
+        return img, {"scale": 1.0, "widened": False, "padded": False}
 
     if mode == "stretch":
         s = out_w / max(1, w)
@@ -238,6 +248,9 @@ def crop_resize_export(img, bbox, out_w, out_h, mode="face", margin=2.2, interp=
         crop = img
         ch, cw = crop.shape[:2]
 
+    if native:
+        return crop, {"scale": 1.0, "widened": widened, "padded": padded}
+
     scale = out_w / cw
     if not upscale and scale > 1:
         # pad at native resolution instead of upscaling past 1:1
@@ -272,6 +285,7 @@ def _export_params_from_body(body):
         "max_upscale": max_upscale,
         "pad_mode": body.get("padMode") or "none",
         "min_face_px": min_face_px,
+        "native": bool(body.get("native", False)),
     }
 
 
@@ -358,7 +372,7 @@ def export_immich_asset_ids(asset_ids, dest_dir, p):
                 errors.append(f"{asset_id}: skipped ({reason})")
                 continue
 
-            out_img, info = crop_resize_export(img, bbox, p["out_w"], p["out_h"], p["mode"], p["margin"], p["interp"], p["upscale"], p["max_upscale"], p["pad_mode"])
+            out_img, info = crop_resize_export(img, bbox, p["out_w"], p["out_h"], p["mode"], p["margin"], p["interp"], p["upscale"], p["max_upscale"], p["pad_mode"], p["native"])
             if info.get("widened"):
                 widened_count += 1
             if info.get("padded"):
@@ -420,10 +434,11 @@ def run_video_analysis(job_id, video_path, anchor_path, sim_threshold, blur_thre
             frame_idx += 1
 
             faces = face_app.get(frame)
+            fh, fw = frame.shape[:2]
             if not faces:
                 results.append({
                     "frame": frame_idx, "sim": 0.0, "blur": 0.0, "passed": False, "hasFace": False,
-                    "yaw": None, "pitch": None, "roll": None
+                    "yaw": None, "pitch": None, "roll": None, "width": fw, "height": fh
                 })
                 job["results"] = results
                 continue
@@ -458,15 +473,38 @@ def run_video_analysis(job_id, video_path, anchor_path, sim_threshold, blur_thre
                 "passed": passed, "failReason": fail_reason, "hasFace": True,
                 "frameId": frame_id if passed else None,
                 "yaw": yaw, "pitch": pitch, "roll": roll,
-                "bbox": [x1, y1, x2, y2]
+                "bbox": [x1, y1, x2, y2], "width": fw, "height": fh
             })
             job["results"] = results
 
         cap.release()
         job["status"] = "done"
+        job["resolutionSummary"] = summarize_resolutions(results)
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
+
+
+def summarize_resolutions(results):
+    """Roll per-frame width/height into something worth glancing at: the
+    dominant resolution plus whether anything deviates from it. Lets you
+    catch 'these are actually 1024x1024, why are we exporting at 512' at
+    a glance instead of after the fact."""
+    from collections import Counter
+    dims = [(r["width"], r["height"]) for r in results if r.get("width") and r.get("height")]
+    if not dims:
+        return None
+    counts = Counter(dims)
+    (mode_w, mode_h), mode_count = counts.most_common(1)[0]
+    widths = [d[0] for d in dims]
+    heights = [d[1] for d in dims]
+    return {
+        "modeWidth": mode_w, "modeHeight": mode_h,
+        "modeCount": mode_count, "totalCount": len(dims),
+        "uniform": len(counts) == 1,
+        "minWidth": min(widths), "maxWidth": max(widths),
+        "minHeight": min(heights), "maxHeight": max(heights),
+    }
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -514,10 +552,11 @@ def run_folder_analysis(job_id, image_paths, anchor_path, sim_threshold, blur_th
                 continue
 
             faces = face_app.get(frame)
+            fh, fw = frame.shape[:2]
             if not faces:
                 results.append({
                     "frame": frame_idx, "sim": 0.0, "blur": 0.0, "passed": False, "hasFace": False,
-                    "yaw": None, "pitch": None, "roll": None, "origName": orig_name
+                    "yaw": None, "pitch": None, "roll": None, "origName": orig_name, "width": fw, "height": fh
                 })
                 job["results"] = results
                 continue
@@ -552,11 +591,12 @@ def run_folder_analysis(job_id, image_paths, anchor_path, sim_threshold, blur_th
                 "passed": passed, "failReason": fail_reason, "hasFace": True,
                 "frameId": frame_id if passed else None,
                 "yaw": yaw, "pitch": pitch, "roll": roll,
-                "bbox": [x1, y1, x2, y2], "origName": orig_name
+                "bbox": [x1, y1, x2, y2], "origName": orig_name, "width": fw, "height": fh
             })
             job["results"] = results
 
         job["status"] = "done"
+        job["resolutionSummary"] = summarize_resolutions(results)
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
@@ -829,6 +869,7 @@ def analysis_status(job_id):
         "frameCount": len(job["results"]),
         "results": job["results"],
         "simThreshold": job.get("simThreshold", 0.65),
+        "resolutionSummary": job.get("resolutionSummary"),
     })
 
 
@@ -896,7 +937,7 @@ def export_job(job_id):
             errors.append(f"frame {r['frame']}: skipped ({reason})")
             continue
 
-        out_img, info = crop_resize_export(img, bbox, p["out_w"], p["out_h"], p["mode"], p["margin"], p["interp"], p["upscale"], p["max_upscale"], p["pad_mode"])
+        out_img, info = crop_resize_export(img, bbox, p["out_w"], p["out_h"], p["mode"], p["margin"], p["interp"], p["upscale"], p["max_upscale"], p["pad_mode"], p["native"])
         if info.get("widened"):
             widened_count += 1
         if info.get("padded"):
