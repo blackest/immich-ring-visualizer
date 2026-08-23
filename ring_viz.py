@@ -485,7 +485,8 @@ def run_video_analysis(job_id, video_path, anchor_path, sim_threshold, blur_thre
                 "passed": passed, "failReason": fail_reason, "hasFace": True,
                 "frameId": frame_id if passed else None,
                 "yaw": yaw, "pitch": pitch, "roll": roll,
-                "bbox": [x1, y1, x2, y2], "width": fw, "height": fh
+                "bbox": [x1, y1, x2, y2], "width": fw, "height": fh,
+                "bboxRatio": bbox_frame_ratio([x1, y1, x2, y2], fw, fh)
             })
             job["results"] = results
 
@@ -517,6 +518,20 @@ def summarize_resolutions(results):
         "minWidth": min(widths), "maxWidth": max(widths),
         "minHeight": min(heights), "maxHeight": max(heights),
     }
+
+
+def bbox_frame_ratio(bbox, frame_w, frame_h):
+    """Face bbox area as a fraction of the full frame area - a rough proxy
+    for shot scale. Near 0 means a small face in a wide/distant shot, near
+    1 means the face fills most of the frame (extreme close-up). Useful
+    alongside pitch/yaw/blur for judging what kind of shot a candidate
+    frame actually is, not just whether the face matched and was sharp."""
+    if not bbox or frame_w <= 0 or frame_h <= 0:
+        return 0.0
+    x1, y1, x2, y2 = bbox
+    bw = max(0, x2 - x1)
+    bh = max(0, y2 - y1)
+    return float((bw * bh) / (frame_w * frame_h))
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -603,7 +618,8 @@ def run_folder_analysis(job_id, image_paths, anchor_path, sim_threshold, blur_th
                 "passed": passed, "failReason": fail_reason, "hasFace": True,
                 "frameId": frame_id if passed else None,
                 "yaw": yaw, "pitch": pitch, "roll": roll,
-                "bbox": [x1, y1, x2, y2], "origName": orig_name, "width": fw, "height": fh
+                "bbox": [x1, y1, x2, y2], "origName": orig_name, "width": fw, "height": fh,
+                "bboxRatio": bbox_frame_ratio([x1, y1, x2, y2], fw, fh)
             })
             job["results"] = results
 
@@ -683,6 +699,7 @@ def analyze_folder():
         "sourceName": source_name, "sourceType": "folder",
         "srcDir": src_dir,
         "simThreshold": sim_threshold,
+        "blurThreshold": blur_threshold,
     }
 
     t = threading.Thread(
@@ -763,6 +780,7 @@ def analyze_immich():
         "sourceName": f"immich_selection_{len(saved_paths)}", "sourceType": "immich",
         "srcDir": src_dir,
         "simThreshold": sim_threshold,
+        "blurThreshold": blur_threshold,
     }
 
     t = threading.Thread(
@@ -858,6 +876,7 @@ def analyze_video():
         "status": "running", "results": [], "error": None,
         "sourceName": source_name, "videoPath": video_path,
         "simThreshold": sim_threshold,
+        "blurThreshold": blur_threshold,
     }
 
     t = threading.Thread(
@@ -881,6 +900,7 @@ def analysis_status(job_id):
         "frameCount": len(job["results"]),
         "results": job["results"],
         "simThreshold": job.get("simThreshold", 0.65),
+        "blurThreshold": job.get("blurThreshold", 50),
         "resolutionSummary": job.get("resolutionSummary"),
     })
 

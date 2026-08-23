@@ -96,6 +96,8 @@ function showHoverPreview(r) {
     let poseText = '';
     if (r.pitch !== undefined && r.yaw !== undefined && r.roll !== undefined && r.pitch !== null) {
       poseText = `<br>pitch: ${r.pitch.toFixed(1)} yaw: ${r.yaw.toFixed(1)} roll: ${r.roll.toFixed(1)}`;
+      if (typeof r.blur === 'number') poseText += ` · sharpness: ${r.blur.toFixed(0)}`;
+      if (typeof r.bboxRatio === 'number') poseText += ` · face: ${(r.bboxRatio * 100).toFixed(0)}% of frame`;
     }
     
     hoverCaption.innerHTML = `${r.filename} — ${pct}%${poseText}`;
@@ -262,7 +264,10 @@ function render(centerId, data, centerThumbUrl) {
 
     let poseHtml = '';
     if (r.pitch !== undefined && r.yaw !== undefined && r.roll !== undefined && r.pitch !== null) {
-      poseHtml = `<div style="font-size:10px;color:var(--dim);margin-top:2px;">pitch: ${r.pitch.toFixed(1)} yaw: ${r.yaw.toFixed(1)} roll: ${r.roll.toFixed(1)}</div>`;
+      let poseLine = `pitch: ${r.pitch.toFixed(1)} yaw: ${r.yaw.toFixed(1)} roll: ${r.roll.toFixed(1)}`;
+      if (typeof r.blur === 'number') poseLine += ` · sharp: ${r.blur.toFixed(0)}`;
+      if (typeof r.bboxRatio === 'number') poseLine += ` · ${(r.bboxRatio * 100).toFixed(0)}% frame`;
+      poseHtml = `<div style="font-size:10px;color:var(--dim);margin-top:2px;">${poseLine}</div>`;
     }
 
     let linkedBadgeHtml = '';
@@ -525,13 +530,21 @@ function findFrameResult(frame) {
       || null;
 }
 
+// when set, the selection modal shows just this list of frame numbers
+// instead of the full accumulated export selection - used by the pose
+// picker's "Preview these 9" so nibbling around one angle doesn't get
+// mixed in with everything else you've already queued up
+let modalFrameOverride = null;
+
 function openSelectionModal() {
+  modalFrameOverride = null;
   document.getElementById('selection-modal-overlay').style.display = 'flex';
   renderSelectionModal();
 }
 
 function closeSelectionModal() {
   document.getElementById('selection-modal-overlay').style.display = 'none';
+  modalFrameOverride = null;
 }
 
 function refreshSelectionModalIfOpen() {
@@ -542,11 +555,13 @@ function refreshSelectionModalIfOpen() {
 function renderSelectionModal() {
   const grid = document.getElementById('selection-modal-grid');
   const countEl = document.getElementById('selection-modal-count');
+  const titleEl = document.getElementById('selection-modal-title');
   const realPreview = document.getElementById('selection-modal-real-preview').checked;
   const poseLayout = document.getElementById('selection-modal-pose-layout').checked;
   grid.innerHTML = '';
 
-  const assetItems = Array.from(selectedAssetIds).map(id => {
+  const isPickerPreview = Array.isArray(modalFrameOverride);
+  const assetItems = isPickerPreview ? [] : Array.from(selectedAssetIds).map(id => {
     const known = [...(lastVideoRingState ? lastVideoRingState.baseResults : []), ...extraImmichNodes]
       .find(r => r.assetId === id);
     const cached = assetPoseCache[id];
@@ -556,7 +571,8 @@ function renderSelectionModal() {
       yaw: cached ? cached.yaw : (known && typeof known.yaw === 'number' ? known.yaw : null),
     };
   });
-  const frameItems = Array.from(selectedFrames).map(frame => {
+  const frameSource = isPickerPreview ? modalFrameOverride : Array.from(selectedFrames);
+  const frameItems = frameSource.map(frame => {
     const r = findFrameResult(frame);
     return {
       kind: 'frame', frame, filename: r ? r.filename : `frame ${frame}`, thumb: r ? thumbUrlFor(r) : '',
@@ -565,10 +581,15 @@ function renderSelectionModal() {
     };
   });
   const items = [...assetItems, ...frameItems];
-  countEl.textContent = items.length;
-
+  if (titleEl) {
+    titleEl.innerHTML = isPickerPreview
+      ? `Pose Picker preview — <span id="selection-modal-count">${items.length}</span> nearest to target. Not part of your export selection yet.`
+      : `Export selection — <span id="selection-modal-count">${items.length}</span> item(s). Double-click to remove.`;
+  }
   if (!items.length) {
-    grid.innerHTML = '<div style="grid-column:1/-1;color:var(--dim);font-size:11px;text-align:center;padding:20px;">Nothing selected yet.</div>';
+    grid.innerHTML = isPickerPreview
+      ? '<div style="grid-column:1/-1;color:var(--dim);font-size:11px;text-align:center;padding:20px;">Nothing on stage in the Pose Picker yet.</div>'
+      : '<div style="grid-column:1/-1;color:var(--dim);font-size:11px;text-align:center;padding:20px;">Nothing selected yet.</div>';
     return;
   }
 
@@ -585,6 +606,25 @@ function renderSelectionModal() {
     return it.thumb;
   }
 
+  function isItemSelected(it) {
+    return it.kind === 'asset' ? selectedAssetIds.has(it.assetId) : selectedFrames.has(it.frame);
+  }
+
+  function toggleItem(it) {
+    if (it.kind === 'asset') {
+      if (selectedAssetIds.has(it.assetId)) selectedAssetIds.delete(it.assetId);
+      else selectedAssetIds.add(it.assetId);
+      updateImmichSelectionBar();
+    } else {
+      if (selectedFrames.has(it.frame)) selectedFrames.delete(it.frame);
+      else selectedFrames.add(it.frame);
+      updateSaveSelectedButton();
+    }
+    const cb = document.querySelector(`#list-body-frames .frame-select-cb[data-frame="${it.frame}"], #list-body-immich .asset-select-cb[data-asset-id="${it.assetId}"]`);
+    if (cb) cb.checked = isItemSelected(it);
+    syncSelectionVisuals();
+  }
+
   function removeItem(it) {
     if (it.kind === 'asset') {
       selectedAssetIds.delete(it.assetId);
@@ -599,14 +639,21 @@ function renderSelectionModal() {
     renderSelectionModal();
   }
 
+  // in picker-preview mode there's nothing to "remove" (these 9 are fixed
+  // as the picker's current stage) - clicking just toggles export
+  // selection instead, same as the picker's own live grid
+  const onInteract = isPickerPreview
+    ? (it) => { toggleItem(it); renderSelectionModal(); }
+    : removeItem;
+
   if (poseLayout) {
-    renderSelectionModalPoseScatter(grid, items, srcFor, removeItem, realPreview);
+    renderSelectionModalPoseScatter(grid, items, srcFor, onInteract, realPreview, isPickerPreview, isItemSelected);
   } else {
-    renderSelectionModalGrid(grid, items, srcFor, removeItem, realPreview);
+    renderSelectionModalGrid(grid, items, srcFor, onInteract, realPreview, isPickerPreview, isItemSelected);
   }
 }
 
-function renderSelectionModalGrid(grid, items, srcFor, removeItem, realPreview) {
+function renderSelectionModalGrid(grid, items, srcFor, onInteract, realPreview, isPickerPreview, isItemSelected) {
   grid.style.display = 'grid';
   grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(84px,1fr))';
   grid.style.position = 'static';
@@ -614,15 +661,20 @@ function renderSelectionModalGrid(grid, items, srcFor, removeItem, realPreview) 
   grid.style.backgroundImage = 'none';
 
   items.forEach(it => {
+    const selected = isPickerPreview && isItemSelected(it);
     const cell = document.createElement('div');
     cell.style.textAlign = 'center';
     cell.style.cursor = 'pointer';
     cell.innerHTML = `
-      <img src="${srcFor(it)}" loading="lazy" title="Double-click to remove"
-           style="width:100%;${realPreview ? '' : 'aspect-ratio:1;'}object-fit:${realPreview ? 'contain' : 'cover'};border-radius:6px;border:2px solid var(--accent);display:block;background:#0a0a0d;">
+      <img src="${srcFor(it)}" loading="lazy" title="${isPickerPreview ? `Click to ${selected ? 'remove from' : 'add to'} export selection` : 'Double-click to remove'}"
+           style="width:100%;${realPreview ? '' : 'aspect-ratio:1;'}object-fit:${realPreview ? 'contain' : 'cover'};border-radius:6px;border:2px solid ${isPickerPreview ? (selected ? 'var(--accent)' : '#3a3a44') : 'var(--accent)'};display:block;background:#0a0a0d;">
       <div style="font-size:9px;color:var(--dim);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.filename}</div>
     `;
-    cell.ondblclick = () => removeItem(it);
+    if (isPickerPreview) {
+      cell.onclick = () => onInteract(it);
+    } else {
+      cell.ondblclick = () => onInteract(it);
+    }
     grid.appendChild(cell);
   });
 }
@@ -652,7 +704,7 @@ document.getElementById('selection-modal-spread').addEventListener('input', appl
 // neutral (0,0) pose - so you can see the actual spread of angles you're
 // about to export at a glance, with the most "reference-like" shot
 // anchoring the middle, rather than an arbitrary flat list order. ----
-function renderSelectionModalPoseScatter(grid, items, srcFor, removeItem, realPreview) {
+function renderSelectionModalPoseScatter(grid, items, srcFor, onInteract, realPreview, isPickerPreview, isItemSelected) {
   const posed = items.filter(it => it.pitch !== null && it.yaw !== null);
   const unposed = items.filter(it => it.pitch === null || it.yaw === null);
 
@@ -736,14 +788,20 @@ function renderSelectionModalPoseScatter(grid, items, srcFor, removeItem, realPr
     cell.style.width = `${size}px`;
     cell.style.textAlign = 'center';
     cell.style.cursor = 'pointer';
+    const selected = isPickerPreview && isItemSelected(it);
+    const borderColor = isPickerPreview ? (selected ? 'var(--accent)' : '#3a3a44') : (isAnchor ? 'var(--accent)' : '#3a3a44');
     cell.innerHTML = `
-      <img src="${srcFor(it)}" loading="lazy" title="pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)}${isAnchor ? ' (closest to this selection\'s pose centroid, not necessarily true zero)' : ` — ${deltaPitch(it) >= 0 ? '+' : ''}${deltaPitch(it).toFixed(1)}p / ${deltaYaw(it) >= 0 ? '+' : ''}${deltaYaw(it).toFixed(1)}y from center`} — double-click to remove"
+      <img src="${srcFor(it)}" loading="lazy" title="pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)}${isAnchor ? ' (closest to this selection\'s pose centroid, not necessarily true zero)' : ` — ${deltaPitch(it) >= 0 ? '+' : ''}${deltaPitch(it).toFixed(1)}p / ${deltaYaw(it) >= 0 ? '+' : ''}${deltaYaw(it).toFixed(1)}y from center`}${isPickerPreview ? ` — click to ${selected ? 'remove from' : 'add to'} export selection` : ' — double-click to remove'}"
            style="width:${size}px;height:${size}px;${realPreview ? 'object-fit:contain;background:#0a0a0d;' : 'object-fit:cover;'}border-radius:8px;
-                  border:${isAnchor ? '3px solid var(--accent)' : '2px solid #3a3a44'};
+                  border:${isAnchor ? '3px' : '2px'} solid ${borderColor};
                   box-shadow:${isAnchor ? '0 0 20px rgba(124,196,255,0.35)' : 'none'};display:block;">
       <div style="font-size:8px;color:var(--dim);margin-top:2px;">${isAnchor ? `center (p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)})` : `p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)}`}</div>
     `;
-    cell.ondblclick = () => removeItem(it);
+    if (isPickerPreview) {
+      cell.onclick = () => onInteract(it);
+    } else {
+      cell.ondblclick = () => onInteract(it);
+    }
     stage.appendChild(cell);
   });
 
@@ -774,10 +832,14 @@ function renderSelectionModalPoseScatter(grid, items, srcFor, removeItem, realPr
       cell.style.textAlign = 'center';
       cell.style.cursor = 'pointer';
       cell.innerHTML = `
-        <img src="${srcFor(it)}" loading="lazy" title="Double-click to remove"
-             style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:2px solid #3a3a44;display:block;">
+        <img src="${srcFor(it)}" loading="lazy" title="${isPickerPreview ? 'Click to toggle export selection' : 'Double-click to remove'}"
+             style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:2px solid ${isPickerPreview && isItemSelected(it) ? 'var(--accent)' : '#3a3a44'};display:block;">
       `;
-      cell.ondblclick = () => removeItem(it);
+      if (isPickerPreview) {
+        cell.onclick = () => onInteract(it);
+      } else {
+        cell.ondblclick = () => onInteract(it);
+      }
       row.appendChild(cell);
     });
     strip.appendChild(row);
@@ -1477,7 +1539,7 @@ async function seekToFrame(idx) {
     `/api/preview-frame/${currentPreviewId}/${currentFrameIdx}?t=${Date.now()}`;
 }
 
-function renderSimSparkline(results, threshold) {
+function renderSimSparkline(results, threshold, blurThreshold) {
   const wrap = document.getElementById('sim-sparkline-wrap');
   if (!wrap || !results || !results.length) return;
 
@@ -1496,8 +1558,17 @@ function renderSimSparkline(results, threshold) {
   const xFor = (frame) => padL + ((frame - minFrame) / frameSpan) * plotW;
   const yFor = (sim) => padT + (1 - Math.max(0, Math.min(1, sim))) * plotH;
 
+  // blur (Laplacian variance) is unbounded, not 0-1 like similarity, so its
+  // cutoff line needs its own scale to sit at a meaningful height - derived
+  // from the actual blur values in this batch, not the trace itself (we
+  // only show where the cutoff falls, not a full blur trace)
+  const blurVals = sorted.map(r => typeof r.blur === 'number' ? r.blur : 0);
+  const blurMax = Math.max(1, blurThreshold * 1.4, ...blurVals) * 1.05;
+  const yForBlur = (blur) => padT + (1 - Math.max(0, blur) / blurMax) * plotH;
+
   const linePoints = sorted.map(r => `${xFor(r.frame).toFixed(1)},${yFor(r.sim).toFixed(1)}`).join(' ');
   const thresholdY = yFor(threshold).toFixed(1);
+  const blurThresholdY = yForBlur(blurThreshold).toFixed(1);
 
   const dots = sorted.map(r => {
     const cx = xFor(r.frame).toFixed(1);
@@ -1508,12 +1579,15 @@ function renderSimSparkline(results, threshold) {
   }).join('');
 
   wrap.innerHTML = `
-    <div style="font-size:10px;color:var(--dim);margin-bottom:3px;">
-      Match confidence by frame — click a point to jump the preview
+    <div style="font-size:10px;color:var(--dim);margin-bottom:3px;display:flex;justify-content:space-between;">
+      <span>Match confidence by frame — click a point to jump the preview</span>
+      <span style="color:#d4c04a;">·· blur cutoff (${blurThreshold})</span>
     </div>
     <svg width="${W}" height="${H}" style="background:#0c0c10;border:1px solid #22222a;border-radius:6px;display:block;">
       <line x1="${padL}" y1="${thresholdY}" x2="${W - padR}" y2="${thresholdY}"
             stroke="#4a4a55" stroke-width="1" stroke-dasharray="3,3"></line>
+      <line x1="${padL}" y1="${blurThresholdY}" x2="${W - padR}" y2="${blurThresholdY}"
+            stroke="#d4c04a" stroke-width="1" stroke-dasharray="1,3" opacity="0.8"></line>
       <polyline points="${linePoints}" fill="none" stroke="#5a8fc4" stroke-width="1.5"></polyline>
       ${dots}
     </svg>
@@ -1709,7 +1783,7 @@ async function pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceTyp
       <div id="crosscheck-results" style="margin-top:8px;"></div>
     </div>
   `;
-  renderSimSparkline(data.results, data.simThreshold);
+  renderSimSparkline(data.results, data.simThreshold, data.blurThreshold);
   const ccInput = document.getElementById('crosscheck-frame-input');
   if (ccInput) ccInput.value = currentFrameIdx;
   const ccHeader = document.getElementById('crosscheck-header');
@@ -1929,6 +2003,8 @@ function setupPosePicker(dataResults, jobId, sourceType) {
       thumbUrl: `/api/framefile/${r.frameId}`,
       pitch: r.pitch,
       yaw: r.yaw,
+      blur: typeof r.blur === 'number' ? r.blur : 0,
+      bboxRatio: typeof r.bboxRatio === 'number' ? r.bboxRatio : null,
     }));
 
   const emptyEl = document.getElementById('pose-picker-empty');
@@ -1972,7 +2048,8 @@ function updatePosePickerCellVisual(cell, it, dist) {
     img.src = it.thumbUrl;
     img.dataset.frame = it.frame;
   }
-  img.title = `pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)} (Δ${dist.toFixed(1)} from target) — click to ${isSelected ? 'remove from' : 'add to'} selection`;
+  const scaleTxt = typeof it.bboxRatio === 'number' ? `, face ${(it.bboxRatio * 100).toFixed(0)}% of frame` : '';
+  img.title = `pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)} (Δ${dist.toFixed(1)} from target), sharpness ${it.blur.toFixed(0)}${scaleTxt} — click to ${isSelected ? 'remove from' : 'add to'} selection`;
   img.style.borderColor = isSelected ? 'var(--accent)' : '#3a3a44';
   cell.onclick = () => {
     if (selectedFrames.has(it.frame)) selectedFrames.delete(it.frame);
@@ -1992,10 +2069,16 @@ function renderPosePickerGrid() {
   document.getElementById('pose-picker-pitch-num').value = pitchTarget;
   document.getElementById('pose-picker-yaw-num').value = yawTarget;
 
-  const ranked = posePickerPool
+  const toleranceOn = document.getElementById('pose-picker-tolerance-enable').checked;
+  const toleranceVal = parseFloat(document.getElementById('pose-picker-tolerance-val').value) || 5;
+
+  let ranked = posePickerPool
     .map(it => ({ it, dist: Math.hypot(it.pitch - pitchTarget, it.yaw - yawTarget) }))
-    .sort((a, b) => a.dist - b.dist)
-    .slice(0, 9);
+    .sort((a, b) => a.dist - b.dist);
+  if (toleranceOn) {
+    ranked = ranked.filter(r => r.dist <= toleranceVal);
+  }
+  ranked = ranked.slice(0, 9);
   const rankedFrames = ranked.map(r => r.it.frame);
 
   // items already on stage that are still in the new nearest-9 keep their
@@ -2019,7 +2102,9 @@ function renderPosePickerGrid() {
     }
   }
 
-  document.getElementById('pose-picker-count').textContent = `${posePickerPool.length} in analyzed pool`;
+  document.getElementById('pose-picker-count').textContent = toleranceOn
+    ? `${ranked.length} within ${toleranceVal}° of target (${posePickerPool.length} in pool)`
+    : `${posePickerPool.length} in analyzed pool`;
 }
 
 function syncPosePickerFromSlider(axis) {
@@ -2037,6 +2122,24 @@ document.getElementById('pose-picker-pitch').addEventListener('input', () => syn
 document.getElementById('pose-picker-yaw').addEventListener('input', () => syncPosePickerFromSlider('yaw'));
 document.getElementById('pose-picker-pitch-num').addEventListener('input', () => syncPosePickerFromNumber('pitch'));
 document.getElementById('pose-picker-yaw-num').addEventListener('input', () => syncPosePickerFromNumber('yaw'));
+
+document.getElementById('pose-picker-tolerance-enable').addEventListener('change', (e) => {
+  const input = document.getElementById('pose-picker-tolerance-val');
+  input.disabled = !e.target.checked;
+  input.style.color = e.target.checked ? 'var(--text)' : 'var(--dim)';
+  renderPosePickerGrid();
+});
+document.getElementById('pose-picker-tolerance-val').addEventListener('input', renderPosePickerGrid);
+
+document.getElementById('pose-picker-preview-btn').addEventListener('click', () => {
+  const frames = posePickerDisplayed.filter(f => f !== null);
+  if (!frames.length) return;
+  modalFrameOverride = frames;
+  document.getElementById('selection-modal-pose-layout').checked = true;
+  document.getElementById('selection-modal-spread-wrap').style.display = 'flex';
+  document.getElementById('selection-modal-overlay').style.display = 'flex';
+  renderSelectionModal();
+});
 
 // ---- image folder / zip loader: runs the exact same analysis pipeline as
 // video, just over a variable-count set of still images (e.g. 32 curated
