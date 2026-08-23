@@ -542,16 +542,27 @@ function refreshSelectionModalIfOpen() {
 function renderSelectionModal() {
   const grid = document.getElementById('selection-modal-grid');
   const countEl = document.getElementById('selection-modal-count');
+  const realPreview = document.getElementById('selection-modal-real-preview').checked;
+  const poseLayout = document.getElementById('selection-modal-pose-layout').checked;
   grid.innerHTML = '';
 
   const assetItems = Array.from(selectedAssetIds).map(id => {
     const known = [...(lastVideoRingState ? lastVideoRingState.baseResults : []), ...extraImmichNodes]
       .find(r => r.assetId === id);
-    return { kind: 'asset', assetId: id, filename: known ? known.filename : id, thumb: `/api/thumb/${id}` };
+    const cached = assetPoseCache[id];
+    return {
+      kind: 'asset', assetId: id, filename: known ? known.filename : id, thumb: `/api/thumb/${id}`,
+      pitch: cached ? cached.pitch : (known && typeof known.pitch === 'number' ? known.pitch : null),
+      yaw: cached ? cached.yaw : (known && typeof known.yaw === 'number' ? known.yaw : null),
+    };
   });
   const frameItems = Array.from(selectedFrames).map(frame => {
     const r = findFrameResult(frame);
-    return { kind: 'frame', frame, filename: r ? r.filename : `frame ${frame}`, thumb: r ? thumbUrlFor(r) : '' };
+    return {
+      kind: 'frame', frame, filename: r ? r.filename : `frame ${frame}`, thumb: r ? thumbUrlFor(r) : '',
+      pitch: r && typeof r.pitch === 'number' ? r.pitch : null,
+      yaw: r && typeof r.yaw === 'number' ? r.yaw : null,
+    };
   });
   const items = [...assetItems, ...frameItems];
   countEl.textContent = items.length;
@@ -561,32 +572,253 @@ function renderSelectionModal() {
     return;
   }
 
+  // real crop preview reuses the exact same crop_resize_export call the
+  // actual export does - what you see here is genuinely what gets written,
+  // not a generic square thumbnail unrelated to crop mode/margin/native
+  const params = new URLSearchParams(getExportParams());
+  const jobId = lastVideoRingState ? lastVideoRingState.jobId : null;
+
+  function srcFor(it) {
+    if (!realPreview) return it.thumb;
+    if (it.kind === 'frame' && jobId) return `/api/export-preview/${jobId}/${it.frame}?${params.toString()}`;
+    if (it.kind === 'asset') return `/api/export-preview-immich/${it.assetId}?${params.toString()}`;
+    return it.thumb;
+  }
+
+  function removeItem(it) {
+    if (it.kind === 'asset') {
+      selectedAssetIds.delete(it.assetId);
+      updateImmichSelectionBar();
+    } else {
+      selectedFrames.delete(it.frame);
+      updateSaveSelectedButton();
+    }
+    document.querySelectorAll('.pose-list-item.selected, .node.export-selected').forEach(el => {
+      if (el.dataset.filename === it.filename) el.classList.remove('selected', 'export-selected');
+    });
+    renderSelectionModal();
+  }
+
+  if (poseLayout) {
+    renderSelectionModalPoseScatter(grid, items, srcFor, removeItem, realPreview);
+  } else {
+    renderSelectionModalGrid(grid, items, srcFor, removeItem, realPreview);
+  }
+}
+
+function renderSelectionModalGrid(grid, items, srcFor, removeItem, realPreview) {
+  grid.style.display = 'grid';
+  grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(84px,1fr))';
+  grid.style.position = 'static';
+  grid.style.height = 'auto';
+  grid.style.backgroundImage = 'none';
+
   items.forEach(it => {
     const cell = document.createElement('div');
     cell.style.textAlign = 'center';
     cell.style.cursor = 'pointer';
     cell.innerHTML = `
-      <img src="${it.thumb}" loading="lazy" title="Double-click to remove"
-           style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;border:2px solid var(--accent);display:block;">
+      <img src="${srcFor(it)}" loading="lazy" title="Double-click to remove"
+           style="width:100%;${realPreview ? '' : 'aspect-ratio:1;'}object-fit:${realPreview ? 'contain' : 'cover'};border-radius:6px;border:2px solid var(--accent);display:block;background:#0a0a0d;">
       <div style="font-size:9px;color:var(--dim);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.filename}</div>
     `;
-    cell.ondblclick = () => {
-      if (it.kind === 'asset') {
-        selectedAssetIds.delete(it.assetId);
-        updateImmichSelectionBar();
-      } else {
-        selectedFrames.delete(it.frame);
-        updateSaveSelectedButton();
-      }
-      // reflect removal in whichever grid/ring/strip is currently rendered
-      document.querySelectorAll('.pose-list-item.selected, .node.export-selected').forEach(el => {
-        if (el.dataset.filename === it.filename) el.classList.remove('selected', 'export-selected');
-      });
-      renderSelectionModal();
-    };
+    cell.ondblclick = () => removeItem(it);
     grid.appendChild(cell);
   });
 }
+
+// max distance from center, as a percentage of the stage, at spread=1
+const POSE_SCATTER_SPREAD_BASE = 42;
+
+// repositions existing scatter cells from their stored yaw/pitch ratios -
+// no rebuild, no image src change, so dragging the Spread slider is instant
+// even with real-crop-preview on (which would otherwise mean a fresh
+// network fetch per Immich asset on every tick)
+function applyPoseScatterSpread() {
+  const spread = parseFloat(document.getElementById('selection-modal-spread').value) || 1;
+  document.querySelectorAll('.pose-scatter-item').forEach(cell => {
+    const yawRatio = parseFloat(cell.dataset.yawRatio) || 0;
+    const pitchRatio = parseFloat(cell.dataset.pitchRatio) || 0;
+    const leftPct = 50 + yawRatio * POSE_SCATTER_SPREAD_BASE * spread;
+    const topPct = 50 + pitchRatio * POSE_SCATTER_SPREAD_BASE * spread;
+    cell.style.left = `${Math.max(4, Math.min(96, leftPct))}%`;
+    cell.style.top = `${Math.max(4, Math.min(96, topPct))}%`;
+  });
+}
+document.getElementById('selection-modal-spread').addEventListener('input', applyPoseScatterSpread);
+
+// ---- pose-scatter layout: places each selected item at a position derived
+// from its own pitch/yaw, centered on whichever item is closest to a
+// neutral (0,0) pose - so you can see the actual spread of angles you're
+// about to export at a glance, with the most "reference-like" shot
+// anchoring the middle, rather than an arbitrary flat list order. ----
+function renderSelectionModalPoseScatter(grid, items, srcFor, removeItem, realPreview) {
+  const posed = items.filter(it => it.pitch !== null && it.yaw !== null);
+  const unposed = items.filter(it => it.pitch === null || it.yaw === null);
+
+  grid.style.display = 'block';
+  grid.style.position = 'relative';
+  grid.style.gridTemplateColumns = '';
+  const stageHeight = 480;
+  grid.style.height = unposed.length ? `${stageHeight + 110}px` : `${stageHeight}px`;
+  grid.style.backgroundImage =
+    'linear-gradient(#22222a 1px, transparent 1px), linear-gradient(90deg, #22222a 1px, transparent 1px)';
+  grid.style.backgroundSize = '40px 40px';
+  grid.style.backgroundPosition = 'center center';
+
+  if (!posed.length) {
+    const detectableCount = unposed.filter(it => it.kind === 'asset').length;
+    grid.innerHTML = `
+      <div style="color:var(--dim);font-size:11px;text-align:center;padding:20px;">
+        No pose data on the current selection — pitch/yaw only comes from the pose-analysis pipeline (analyze video/folder/Immich selection).<br><br>
+        ${detectableCount ? `<button id="detect-pose-btn" style="padding:6px 12px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:11px;">Detect pose for ${detectableCount} Immich item(s)</button>` : ''}
+      </div>`;
+    if (detectableCount) {
+      document.getElementById('detect-pose-btn').addEventListener('click', () => detectPoseForItems(unposed.filter(it => it.kind === 'asset')));
+    }
+    return;
+  }
+
+  // find the item closest to this selection's own pose centroid, not
+  // absolute (0,0) - if the whole set is consistently turned/tilted (e.g.
+  // camera wasn't dead-on for this sequence), anchoring on absolute zero
+  // picks an unrepresentative outlier and everything else huddles in one
+  // corner relative to it. anchoring on the actual centroid keeps the
+  // layout balanced around where the data genuinely sits.
+  const meanPitch = posed.reduce((s, it) => s + it.pitch, 0) / posed.length;
+  const meanYaw = posed.reduce((s, it) => s + it.yaw, 0) / posed.length;
+  let anchor = posed[0];
+  let bestScore = Infinity;
+  posed.forEach(it => {
+    const score = Math.abs(it.pitch - meanPitch) + Math.abs(it.yaw - meanYaw);
+    if (score < bestScore) { bestScore = score; anchor = it; }
+  });
+
+  const deltaYaw = it => it.yaw - anchor.yaw;
+  const deltaPitch = it => it.pitch - anchor.pitch;
+  const yawMax = Math.max(15, ...posed.map(it => Math.abs(deltaYaw(it))));
+  const pitchMax = Math.max(15, ...posed.map(it => Math.abs(deltaPitch(it))));
+  const stage = document.createElement('div');
+  stage.style.position = 'relative';
+  stage.style.width = '100%';
+  stage.style.height = `${stageHeight}px`;
+
+  const spread = parseFloat(document.getElementById('selection-modal-spread').value) || 1;
+
+  posed.forEach(it => {
+    const isAnchor = it === anchor;
+    // pitch is inverted here to match the pose-list strip's convention:
+    // positive pitch (nose up) moves toward the top of the stage, negative
+    // (nose down) moves toward the bottom - matches how up/down actually
+    // reads visually, confirmed against a real sample (p-18 placed upper,
+    // should be lower since -18 is nose-down)
+    const yawRatio = isAnchor ? 0 : deltaYaw(it) / yawMax;
+    const pitchRatio = isAnchor ? 0 : -deltaPitch(it) / pitchMax;
+    const leftPct = 50 + yawRatio * POSE_SCATTER_SPREAD_BASE * spread;
+    const topPct = 50 + pitchRatio * POSE_SCATTER_SPREAD_BASE * spread;
+    const size = isAnchor ? 108 : 76;
+
+    const cell = document.createElement('div');
+    cell.className = 'pose-scatter-item';
+    cell.style.position = 'absolute';
+    // yawRatio/pitchRatio kept on the cell so the Spread slider can just
+    // recompute left/top directly (no rebuild, no image reload/refetch -
+    // matters a lot with real-crop-preview on, since that hits the network
+    // per Immich asset)
+    cell.dataset.yawRatio = yawRatio;
+    cell.dataset.pitchRatio = pitchRatio;
+    cell.style.left = `${Math.max(4, Math.min(96, leftPct))}%`;
+    cell.style.top = `${Math.max(4, Math.min(96, topPct))}%`;
+    cell.dataset.baseTransform = 'translate(-50%,-50%)';
+    cell.dataset.baseZ = isAnchor ? '5' : '2';
+    cell.style.transform = cell.dataset.baseTransform;
+    cell.style.zIndex = cell.dataset.baseZ;
+    cell.style.width = `${size}px`;
+    cell.style.textAlign = 'center';
+    cell.style.cursor = 'pointer';
+    cell.innerHTML = `
+      <img src="${srcFor(it)}" loading="lazy" title="pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)}${isAnchor ? ' (closest to this selection\'s pose centroid, not necessarily true zero)' : ` — ${deltaPitch(it) >= 0 ? '+' : ''}${deltaPitch(it).toFixed(1)}p / ${deltaYaw(it) >= 0 ? '+' : ''}${deltaYaw(it).toFixed(1)}y from center`} — double-click to remove"
+           style="width:${size}px;height:${size}px;${realPreview ? 'object-fit:contain;background:#0a0a0d;' : 'object-fit:cover;'}border-radius:8px;
+                  border:${isAnchor ? '3px solid var(--accent)' : '2px solid #3a3a44'};
+                  box-shadow:${isAnchor ? '0 0 20px rgba(124,196,255,0.35)' : 'none'};display:block;">
+      <div style="font-size:8px;color:var(--dim);margin-top:2px;">${isAnchor ? `center (p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)})` : `p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)}`}</div>
+    `;
+    cell.ondblclick = () => removeItem(it);
+    stage.appendChild(cell);
+  });
+
+  grid.appendChild(stage);
+  // reuse the same dock-style magnify used on the pose-list strip - genuinely
+  // overlapping thumbnails at similar pitch/yaw are otherwise impossible to
+  // pick apart, same problem the strip already solved
+  attachLensEffect(stage, '.pose-scatter-item', { radius: 90, maxScale: 1.8 });
+
+  if (unposed.length) {
+    const strip = document.createElement('div');
+    strip.style.marginTop = '8px';
+    strip.style.paddingTop = '8px';
+    strip.style.borderTop = '1px solid #26262e';
+    const detectableCount = unposed.filter(it => it.kind === 'asset').length;
+    strip.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:9px;color:var(--dim);">No pose data (${unposed.length}):</span>
+        ${detectableCount ? `<button id="detect-pose-btn" style="padding:3px 8px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:5px;cursor:pointer;font-size:9px;">Detect pose (${detectableCount})</button>` : ''}
+      </div>`;
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.flexWrap = 'wrap';
+    row.style.gap = '8px';
+    unposed.forEach(it => {
+      const cell = document.createElement('div');
+      cell.style.width = '64px';
+      cell.style.textAlign = 'center';
+      cell.style.cursor = 'pointer';
+      cell.innerHTML = `
+        <img src="${srcFor(it)}" loading="lazy" title="Double-click to remove"
+             style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:2px solid #3a3a44;display:block;">
+      `;
+      cell.ondblclick = () => removeItem(it);
+      row.appendChild(cell);
+    });
+    strip.appendChild(row);
+    grid.appendChild(strip);
+    if (detectableCount) {
+      document.getElementById('detect-pose-btn').addEventListener('click', () => detectPoseForItems(unposed.filter(it => it.kind === 'asset')));
+    }
+  }
+}
+
+// ---- fetches pose on demand for Immich assets that never went through the
+// analysis pipeline, using the existing job-independent pose endpoint.
+// Frame items are deliberately excluded from this - if analysis already ran
+// face detection on a local frame and found no pitch/yaw, re-detecting from
+// the same cached image won't find one either. ----
+async function detectPoseForItems(items) {
+  const btn = document.getElementById('detect-pose-btn');
+  if (btn) { btn.textContent = `Detecting 0/${items.length}…`; btn.disabled = true; }
+  let done = 0;
+  await Promise.all(items.map(async it => {
+    try {
+      const res = await fetch(`/api/asset-face-pose/${it.assetId}`);
+      const data = await res.json();
+      if (!data.error) {
+        assetPoseCache[it.assetId] = { pitch: data.pitch, yaw: data.yaw };
+      }
+    } catch (e) {
+      console.warn('Pose detection failed for', it.assetId, e);
+    } finally {
+      done++;
+      if (btn) btn.textContent = `Detecting ${done}/${items.length}…`;
+    }
+  }));
+  renderSelectionModal();
+}
+
+document.getElementById('selection-modal-real-preview').addEventListener('change', renderSelectionModal);
+document.getElementById('selection-modal-pose-layout').addEventListener('change', (e) => {
+  document.getElementById('selection-modal-spread-wrap').style.display = e.target.checked ? 'flex' : 'none';
+  renderSelectionModal();
+});
 
 document.getElementById('selection-modal-close').addEventListener('click', closeSelectionModal);
 document.getElementById('selection-modal-overlay').addEventListener('click', (e) => {
@@ -858,50 +1090,58 @@ stage.addEventListener('mouseleave', () => {
 
 // ---- pose list lens effect: dock-style magnify along the horizontal strip,
 // composes with each item's pitch-based translateY so the wave and the
-// hover-zoom don't fight each other ----
+// hover-zoom don't fight each other. See attachLensEffect below - this is
+// now just the pose-list-specific tuning constants. ----
 const POSE_LENS_RADIUS = 140;
 const POSE_LENS_MAX_SCALE = 1.6;
-let poseLensRafPending = false;
-let poseLensLastMouse = null;
 
-function applyPoseLens(mx, my) {
-  const listEl = document.getElementById('pose-list-view');
-  const items = listEl.querySelectorAll('.pose-list-item');
-  items.forEach(item => {
-    const rect = item.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const dist = Math.hypot(mx - cx, my - cy);
-    const baseY = parseFloat(item.dataset.pitchY || 0);
-    if (dist < POSE_LENS_RADIUS) {
-      const t = 1 - (dist / POSE_LENS_RADIUS);
-      const eased = t * t * (3 - 2 * t);
-      const scale = 1 + eased * (POSE_LENS_MAX_SCALE - 1);
-      item.style.transform = `translateY(${baseY}px) scale(${scale})`;
-      item.style.zIndex = Math.round(10 + eased * 50);
-    } else {
-      item.style.transform = `translateY(${baseY}px)`;
-      item.style.zIndex = 1;
+// ---- dock-style lens/magnify effect: generalized so both the pose-list
+// strip and the selection modal's pitch/yaw scatter can share it. Items
+// near the cursor scale up and rise in z-index, which matters most for the
+// scatter layout where genuinely overlapping thumbnails (similar pitch/yaw)
+// would otherwise occlude each other with no way to pick one out. ----
+function attachLensEffect(container, itemSelector, { radius = 140, maxScale = 1.6 } = {}) {
+  let rafPending = false;
+  let lastMouse = null;
+
+  function apply(mx, my) {
+    const items = container.querySelectorAll(itemSelector);
+    items.forEach(item => {
+      const rect = item.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dist = Math.hypot(mx - cx, my - cy);
+      const base = item.dataset.baseTransform || '';
+      if (dist < radius) {
+        const t = 1 - (dist / radius);
+        const eased = t * t * (3 - 2 * t);
+        const scale = 1 + eased * (maxScale - 1);
+        item.style.transform = `${base} scale(${scale})`;
+        item.style.zIndex = Math.round(10 + eased * 50);
+      } else {
+        item.style.transform = base;
+        item.style.zIndex = item.dataset.baseZ || 1;
+      }
+    });
+    rafPending = false;
+  }
+
+  container.addEventListener('mousemove', (e) => {
+    lastMouse = [e.clientX, e.clientY];
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(() => apply(...lastMouse));
     }
   });
-  poseLensRafPending = false;
+  container.addEventListener('mouseleave', () => {
+    container.querySelectorAll(itemSelector).forEach(item => {
+      item.style.transform = item.dataset.baseTransform || '';
+      item.style.zIndex = item.dataset.baseZ || 1;
+    });
+  });
 }
 
-const poseListView = document.getElementById('pose-list-view');
-poseListView.addEventListener('mousemove', (e) => {
-  poseLensLastMouse = [e.clientX, e.clientY];
-  if (!poseLensRafPending) {
-    poseLensRafPending = true;
-    requestAnimationFrame(() => applyPoseLens(...poseLensLastMouse));
-  }
-});
-poseListView.addEventListener('mouseleave', () => {
-  poseListView.querySelectorAll('.pose-list-item').forEach(item => {
-    const baseY = parseFloat(item.dataset.pitchY || 0);
-    item.style.transform = `translateY(${baseY}px)`;
-    item.style.zIndex = 1;
-  });
-});
+attachLensEffect(document.getElementById('pose-list-view'), '.pose-list-item', { radius: POSE_LENS_RADIUS, maxScale: POSE_LENS_MAX_SCALE });
 
 init();
 
@@ -1441,6 +1681,7 @@ async function pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceTyp
   }
 
   applyResolutionSummary(data.resolutionSummary);
+  setupPosePicker(data.results, jobId, sourceType);
 
   statusEl.innerHTML = `
     Done — ${passed}/${data.frameCount} kept.
@@ -1642,10 +1883,160 @@ document.getElementById('save-selected-btn').onclick = async () => {
     refFrameIdx,
     baseResults: results,
     sourceType,
+    jobId,
   };
   renderVideoRing();
   updateSaveSelectedButton();
 }
+
+// ---- pose picker: dial in a target pitch/yaw and see the 9 closest
+// matches from the FULL analyzed pool (not just the current selection) -
+// live, client-side, no backend round trip, since pose is already computed
+// per frame during analysis. Good for either building a selection from
+// scratch or filling gaps ("I need more shots around p10/y-20") in an
+// existing one, and doubles as a way to pan around the face interactively.
+//
+// The 9 grid cells are persistent DOM nodes ("9 images on stage") rather
+// than being torn down and rebuilt on every slider tick - an item that's
+// still in the nearest-9 after a small nudge keeps its exact slot and never
+// reloads, only items that actually fall out of range get swapped for
+// whichever new item took their place. ----
+let posePickerPool = [];
+let posePickerCells = [];
+let posePickerDisplayed = new Array(9).fill(null); // frame number currently in each slot, or null
+
+function buildPosePickerCells() {
+  const grid = document.getElementById('pose-picker-grid');
+  grid.innerHTML = '';
+  posePickerCells = [];
+  posePickerDisplayed = new Array(9).fill(null);
+  for (let i = 0; i < 9; i++) {
+    const cell = document.createElement('div');
+    cell.style.cursor = 'pointer';
+    cell.style.visibility = 'hidden';
+    cell.innerHTML = `<img loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;border:2px solid #3a3a44;display:block;">`;
+    grid.appendChild(cell);
+    posePickerCells.push(cell);
+  }
+}
+
+function setupPosePicker(dataResults, jobId, sourceType) {
+  posePickerPool = (dataResults || [])
+    .filter(r => r.passed && r.frameId && typeof r.pitch === 'number' && typeof r.yaw === 'number')
+    .map(r => ({
+      filename: r.origName || `frame_${r.frame}`,
+      frame: r.frame,
+      thumbUrl: `/api/framefile/${r.frameId}`,
+      pitch: r.pitch,
+      yaw: r.yaw,
+    }));
+
+  const emptyEl = document.getElementById('pose-picker-empty');
+  const controlsEl = document.getElementById('pose-picker-controls');
+  if (!posePickerPool.length) {
+    emptyEl.style.display = 'block';
+    controlsEl.style.display = 'none';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  controlsEl.style.display = 'flex';
+
+  const pitchVals = posePickerPool.map(it => it.pitch);
+  const yawVals = posePickerPool.map(it => it.yaw);
+  const pitchSlider = document.getElementById('pose-picker-pitch');
+  const yawSlider = document.getElementById('pose-picker-yaw');
+  // fixed +/-90 range rather than clamped to the pool's own extent, so you
+  // can dial in an arbitrary target pose (e.g. 45/45) even if nothing in
+  // the current pool is actually that far off-angle yet - useful for
+  // spotting coverage gaps, not just browsing what's already there
+  pitchSlider.min = yawSlider.min = -90;
+  pitchSlider.max = yawSlider.max = 90;
+  document.getElementById('pose-picker-pitch-num').min = document.getElementById('pose-picker-yaw-num').min = -90;
+  document.getElementById('pose-picker-pitch-num').max = document.getElementById('pose-picker-yaw-num').max = 90;
+  // starting position centers on the pool's own centroid, not an arbitrary
+  // 0 that might sit outside the actual pose range for this particular set
+  pitchSlider.value = Math.round(pitchVals.reduce((s, v) => s + v, 0) / pitchVals.length);
+  yawSlider.value = Math.round(yawVals.reduce((s, v) => s + v, 0) / yawVals.length);
+  document.getElementById('pose-picker-pitch-num').value = pitchSlider.value;
+  document.getElementById('pose-picker-yaw-num').value = yawSlider.value;
+
+  buildPosePickerCells();
+  renderPosePickerGrid();
+}
+
+function updatePosePickerCellVisual(cell, it, dist) {
+  cell.style.visibility = 'visible';
+  const isSelected = selectedFrames.has(it.frame);
+  const img = cell.querySelector('img');
+  if (img.dataset.frame !== String(it.frame)) {
+    img.src = it.thumbUrl;
+    img.dataset.frame = it.frame;
+  }
+  img.title = `pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)} (Δ${dist.toFixed(1)} from target) — click to ${isSelected ? 'remove from' : 'add to'} selection`;
+  img.style.borderColor = isSelected ? 'var(--accent)' : '#3a3a44';
+  cell.onclick = () => {
+    if (selectedFrames.has(it.frame)) selectedFrames.delete(it.frame);
+    else selectedFrames.add(it.frame);
+    syncSelectionVisuals();
+    updateSaveSelectedButton();
+    const cb = document.querySelector(`#list-body-frames .frame-select-cb[data-frame="${it.frame}"]`);
+    if (cb) cb.checked = selectedFrames.has(it.frame);
+    renderPosePickerGrid();
+  };
+}
+
+function renderPosePickerGrid() {
+  if (!posePickerPool.length) return;
+  const pitchTarget = parseFloat(document.getElementById('pose-picker-pitch').value);
+  const yawTarget = parseFloat(document.getElementById('pose-picker-yaw').value);
+  document.getElementById('pose-picker-pitch-num').value = pitchTarget;
+  document.getElementById('pose-picker-yaw-num').value = yawTarget;
+
+  const ranked = posePickerPool
+    .map(it => ({ it, dist: Math.hypot(it.pitch - pitchTarget, it.yaw - yawTarget) }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 9);
+  const rankedFrames = ranked.map(r => r.it.frame);
+
+  // items already on stage that are still in the new nearest-9 keep their
+  // exact slot untouched; only slots whose occupant fell out of range get
+  // refilled with whichever new items just entered
+  const keepSlot = posePickerDisplayed.map(frame => frame !== null && rankedFrames.includes(frame));
+  const toPlace = ranked.filter(r => !posePickerDisplayed.includes(r.it.frame));
+  let placeIdx = 0;
+
+  for (let i = 0; i < 9; i++) {
+    if (keepSlot[i]) {
+      const match = ranked.find(r => r.it.frame === posePickerDisplayed[i]);
+      updatePosePickerCellVisual(posePickerCells[i], match.it, match.dist);
+    } else if (placeIdx < toPlace.length) {
+      const { it, dist } = toPlace[placeIdx++];
+      posePickerDisplayed[i] = it.frame;
+      updatePosePickerCellVisual(posePickerCells[i], it, dist);
+    } else {
+      posePickerDisplayed[i] = null;
+      posePickerCells[i].style.visibility = 'hidden';
+    }
+  }
+
+  document.getElementById('pose-picker-count').textContent = `${posePickerPool.length} in analyzed pool`;
+}
+
+function syncPosePickerFromSlider(axis) {
+  document.getElementById(`pose-picker-${axis}-num`).value = document.getElementById(`pose-picker-${axis}`).value;
+  renderPosePickerGrid();
+}
+function syncPosePickerFromNumber(axis) {
+  const num = document.getElementById(`pose-picker-${axis}-num`);
+  const slider = document.getElementById(`pose-picker-${axis}`);
+  const clamped = Math.max(-90, Math.min(90, parseFloat(num.value) || 0));
+  slider.value = clamped;
+  renderPosePickerGrid();
+}
+document.getElementById('pose-picker-pitch').addEventListener('input', () => syncPosePickerFromSlider('pitch'));
+document.getElementById('pose-picker-yaw').addEventListener('input', () => syncPosePickerFromSlider('yaw'));
+document.getElementById('pose-picker-pitch-num').addEventListener('input', () => syncPosePickerFromNumber('pitch'));
+document.getElementById('pose-picker-yaw-num').addEventListener('input', () => syncPosePickerFromNumber('yaw'));
 
 // ---- image folder / zip loader: runs the exact same analysis pipeline as
 // video, just over a variable-count set of still images (e.g. 32 curated
@@ -1700,6 +2091,10 @@ async function startFolderAnalysis({ images, zip }, refIndexOverride) {
 let lastVideoRingState = null;
 let lastImmichAnalysisAssetIds = null;
 const extraImmichNodes = [];
+// assetId -> {pitch, yaw} for poses fetched on demand via /api/asset-face-pose,
+// e.g. from the selection modal's "Detect pose" button on raw Immich
+// selections that never went through the full analysis pipeline
+const assetPoseCache = {};
 let ringSortMetric = 'sim';
 
 // squeeze filter: a live post-hoc min-similarity cutoff applied on top of
@@ -1892,10 +2287,10 @@ function renderPoseList(metric, anchorUrl, anchorLabel, combined) {
       // gives the strip a wavy "head bob" feel that mirrors the pose itself.
       const clamped = Math.max(-PITCH_CLAMP_DEG, Math.min(PITCH_CLAMP_DEG, r.pitch));
       const offsetPx = -clamped * PITCH_PX_PER_DEG;
-      item.dataset.pitchY = offsetPx;
-      item.style.transform = `translateY(${offsetPx}px)`;
+      item.dataset.baseTransform = `translateY(${offsetPx}px)`;
+      item.style.transform = item.dataset.baseTransform;
     } else {
-      item.dataset.pitchY = 0;
+      item.dataset.baseTransform = '';
     }
 
     // single click (debounced) = browse/recenter; double click = add to

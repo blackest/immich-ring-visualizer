@@ -264,6 +264,18 @@ def crop_resize_export(img, bbox, out_w, out_h, mode="face", margin=2.2, interp=
     return cv2.resize(crop, (out_w, out_h), interpolation=interp_flag), {"scale": scale, "widened": widened, "padded": padded}
 
 
+def _as_bool(value, default=False):
+    """Coerces a value that may be a real bool (JSON body) or a string
+    (query string, e.g. the preview endpoints) into a proper bool. Plain
+    bool(...) silently breaks on query strings since bool('false') is
+    True - any non-empty string is truthy."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _export_params_from_body(body):
     max_upscale = body.get("maxUpscale")
     min_face_px = body.get("minFacePx")
@@ -281,11 +293,11 @@ def _export_params_from_body(body):
         "mode": body.get("cropMode") or "contain",
         "margin": float(body.get("margin") or 2.2),
         "interp": body.get("interp") or "auto",
-        "upscale": bool(body.get("upscale", True)),
+        "upscale": _as_bool(body.get("upscale"), True),
         "max_upscale": max_upscale,
         "pad_mode": body.get("padMode") or "none",
         "min_face_px": min_face_px,
-        "native": bool(body.get("native", False)),
+        "native": _as_bool(body.get("native"), False),
     }
 
 
@@ -1365,6 +1377,78 @@ def export_immich_assets():
         "widened": result["widened"],
         "padded": result["padded"],
     })
+
+
+@app.route("/api/export-preview/<job_id>/<int:frame_no>")
+def export_preview_frame(job_id, frame_no):
+    """Renders a frame exactly as it would be written by /api/export-job -
+    same bbox, same crop_resize_export call, same params - so the 'View
+    selected' modal can show the real crop/aspect/native-resolution result
+    instead of a generic square thumbnail that has nothing to do with what
+    actually gets saved."""
+    import cv2
+
+    job = _analysis_jobs.get(job_id)
+    if not job:
+        return "unknown job", 404
+
+    r = next((x for x in job["results"] if x["frame"] == frame_no), None)
+    if not r or not (r.get("passed") and r.get("frameId")):
+        return "frame not available for preview (not passed / not cached)", 404
+
+    src = os.path.join(FRAME_STORE, f"{r['frameId']}.jpg")
+    if not os.path.exists(src):
+        return "source frame no longer cached", 404
+    img = cv2.imread(src)
+    if img is None:
+        return "could not read source frame", 404
+
+    p = _export_params_from_body(request.args)
+    bbox = r.get("bbox")
+    out_img, _info = crop_resize_export(img, bbox, p["out_w"], p["out_h"], p["mode"], p["margin"], p["interp"], p["upscale"], p["max_upscale"], p["pad_mode"], p["native"])
+    ok, encoded = cv2.imencode(".jpg", out_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        return "encode failed", 500
+    return Response(encoded.tobytes(), mimetype="image/jpeg")
+
+
+@app.route("/api/export-preview-immich/<asset_id>")
+def export_preview_immich(asset_id):
+    """Same idea as export_preview_frame but for an Immich asset - fetches
+    the original, detects the face fresh (no cached bbox for library
+    assets), and applies the identical crop_resize_export call the real
+    Immich export path uses."""
+    import cv2
+
+    r = requests.get(
+        f"{IMMICH_BASE_URL}/api/assets/{asset_id}/original",
+        headers={"x-api-key": IMMICH_API_KEY},
+        stream=True,
+        timeout=60,
+    )
+    if r.status_code != 200:
+        return f"could not fetch original: HTTP {r.status_code}", 502
+    arr = np.frombuffer(r.content, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return "could not decode image", 500
+
+    p = _export_params_from_body(request.args)
+    bbox = None
+    if p["mode"] == "face" or p["min_face_px"] > 0:
+        try:
+            face_app = get_face_app()
+            faces = face_app.get(img)
+            if faces:
+                bbox = list(map(int, pick_largest_face(faces).bbox))
+        except Exception:
+            bbox = None
+
+    out_img, _info = crop_resize_export(img, bbox, p["out_w"], p["out_h"], p["mode"], p["margin"], p["interp"], p["upscale"], p["max_upscale"], p["pad_mode"], p["native"])
+    ok, encoded = cv2.imencode(".jpg", out_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        return "encode failed", 500
+    return Response(encoded.tobytes(), mimetype="image/jpeg")
 
 
 @app.route("/api/thumb/<asset_id>")

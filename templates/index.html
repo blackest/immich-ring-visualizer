@@ -99,6 +99,32 @@
       </div>
     </div>
 
+    <div class="panel-section" data-section="pose-picker">
+      <div class="panel-section-header"><span class="chev">▸</span><span class="sec-title">Pose Picker</span></div>
+      <div class="panel-section-body">
+        <div style="font-size:10px;color:var(--dim);margin-bottom:8px;line-height:1.4;">Dial in a target pitch/yaw — shows the 9 closest matches from the full analyzed pool. Click a thumbnail to add it to your export selection.</div>
+        <div id="pose-picker-empty" style="font-size:10px;color:var(--dim);padding:8px 0;">Run an analysis first (Video/Image-Set, or Analyze selected Immich images) — this searches the analyzed pool, not the whole library.</div>
+        <div id="pose-picker-controls" style="display:none;flex-direction:column;gap:10px;">
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--dim);margin-bottom:2px;">
+              <span>Pitch</span>
+              <input type="number" id="pose-picker-pitch-num" min="-90" max="90" step="1" value="0" style="width:52px;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:2px 4px;border-radius:4px;font-size:10px;text-align:right;">
+            </div>
+            <input type="range" id="pose-picker-pitch" min="-90" max="90" value="0" step="1" style="width:100%;">
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--dim);margin-bottom:2px;">
+              <span>Yaw</span>
+              <input type="number" id="pose-picker-yaw-num" min="-90" max="90" step="1" value="0" style="width:52px;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:2px 4px;border-radius:4px;font-size:10px;text-align:right;">
+            </div>
+            <input type="range" id="pose-picker-yaw" min="-90" max="90" value="0" step="1" style="width:100%;">
+          </div>
+          <div id="pose-picker-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;"></div>
+          <div id="pose-picker-count" style="font-size:9px;color:var(--dim);text-align:center;"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="panel-section" data-section="export-settings">
       <div class="panel-section-header"><span class="chev">▸</span><span class="sec-title">Export Settings</span></div>
       <div class="panel-section-body">
@@ -261,9 +287,21 @@
 <video id="hidden-video" style="display:none;" muted playsinline></video>
 
 <div id="selection-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100;align-items:center;justify-content:center;">
-  <div id="selection-modal" style="background:#16161c;border:1px solid #2a2a32;border-radius:10px;width:min(720px,90vw);max-height:80vh;display:flex;flex-direction:column;overflow:hidden;">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #26262e;">
+  <div id="selection-modal" style="background:#16161c;border:1px solid #2a2a32;border-radius:10px;width:min(920px,92vw);max-height:85vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #26262e;gap:12px;flex-wrap:wrap;">
       <div style="font-size:12px;color:var(--text);">Export selection — <span id="selection-modal-count">0</span> item(s). Double-click to remove.</div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);cursor:pointer;">
+        <input id="selection-modal-pose-layout" type="checkbox">
+        Arrange by pitch/yaw
+      </label>
+      <div id="selection-modal-spread-wrap" style="display:none;align-items:center;gap:6px;font-size:10px;color:var(--dim);">
+        <span>Spread</span>
+        <input id="selection-modal-spread" type="range" min="0.4" max="10" step="0.1" value="1" style="width:90px;">
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);cursor:pointer;">
+        <input id="selection-modal-real-preview" type="checkbox">
+        Show real export crop (slower)
+      </label>
       <button id="selection-modal-close" style="background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;line-height:1;">✕</button>
     </div>
     <div id="selection-modal-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;padding:14px;overflow-y:auto;"></div>
