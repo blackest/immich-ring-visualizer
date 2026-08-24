@@ -102,7 +102,7 @@
     <div class="panel-section" data-section="pose-picker">
       <div class="panel-section-header"><span class="chev">▸</span><span class="sec-title">Pose Picker</span></div>
       <div class="panel-section-body">
-        <div style="font-size:10px;color:var(--dim);margin-bottom:8px;line-height:1.4;">Dial in a target pitch/yaw — shows the 9 closest matches from the full analyzed pool. Click a thumbnail to add it to your export selection.</div>
+        <div style="font-size:10px;color:var(--dim);margin-bottom:8px;line-height:1.4;">Dial in a target pitch/yaw — shows the 9 closest matches from the full analyzed pool. Frames below Export Settings' "Min face px" are excluded (they'd be rejected at export anyway). Click a thumbnail to add it to your export selection.</div>
         <div id="pose-picker-empty" style="font-size:10px;color:var(--dim);padding:8px 0;">Run an analysis first (Video/Image-Set, or Analyze selected Immich images) — this searches the analyzed pool, not the whole library.</div>
         <div id="pose-picker-controls" style="display:none;flex-direction:column;gap:10px;">
           <div>
@@ -130,6 +130,34 @@
           <div id="pose-picker-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;"></div>
           <button id="pose-picker-preview-btn" style="width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:10px;">Preview these 9 (spread out, pick individually)</button>
           <div id="pose-picker-count" style="font-size:9px;color:var(--dim);text-align:center;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section" data-section="scale-picker">
+      <div class="panel-section-header"><span class="chev">▸</span><span class="sec-title">Shot Scale Picker</span></div>
+      <div class="panel-section-body">
+        <div style="font-size:10px;color:var(--dim);margin-bottom:8px;line-height:1.4;">Dial in a target face-to-frame ratio — 0% is a distant/wide shot, 100% is an extreme close-up. Frames below Export Settings' "Min face px" are excluded, since too-distant shots are too small to be useful regardless of match.</div>
+        <div id="scale-picker-empty" style="font-size:10px;color:var(--dim);padding:8px 0;">Run an analysis first — this searches the analyzed pool, not the whole library.</div>
+        <div id="scale-picker-controls" style="display:none;flex-direction:column;gap:10px;">
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--dim);margin-bottom:2px;">
+              <span>Face % of frame</span>
+              <input type="number" id="scale-picker-num" min="0" max="100" step="1" value="30" style="width:52px;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:2px 4px;border-radius:4px;font-size:10px;text-align:right;">
+            </div>
+            <input type="range" id="scale-picker-slider" min="0" max="100" value="30" step="1" style="width:100%;">
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--dim);cursor:pointer;">
+              <input type="checkbox" id="scale-picker-tolerance-enable">
+              Tolerance (max distance from target)
+            </label>
+            <input type="number" id="scale-picker-tolerance-val" min="0.5" step="0.5" value="10" disabled
+                   style="width:52px;background:#16161c;border:1px solid #2a2a32;color:var(--dim);padding:2px 4px;border-radius:4px;font-size:10px;text-align:right;">
+          </div>
+          <div id="scale-picker-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;"></div>
+          <button id="scale-picker-preview-btn" style="width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:10px;">Preview these 9 (spread out, pick individually)</button>
+          <div id="scale-picker-count" style="font-size:9px;color:var(--dim);text-align:center;"></div>
         </div>
       </div>
     </div>

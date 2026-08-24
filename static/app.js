@@ -67,7 +67,10 @@ function setSidebarCurrentDetail(centerId, centerResult) {
     centerResult.roll !== undefined &&
     centerResult.pitch !== null;
   if (canShowInlinePose) {
-    detailEl.textContent = `${sim}${sim ? ' · ' : ''}pitch: ${centerResult.pitch.toFixed(1)} yaw: ${centerResult.yaw.toFixed(1)} roll: ${centerResult.roll.toFixed(1)}`;
+    let text = `${sim}${sim ? ' · ' : ''}pitch: ${centerResult.pitch.toFixed(1)} yaw: ${centerResult.yaw.toFixed(1)} roll: ${centerResult.roll.toFixed(1)}`;
+    if (typeof centerResult.blur === 'number') text += ` · sharpness: ${centerResult.blur.toFixed(1)}`;
+    if (typeof centerResult.bboxRatio === 'number') text += ` · face: ${(centerResult.bboxRatio * 100).toFixed(0)}% of frame`;
+    detailEl.textContent = text;
     return;
   }
 
@@ -1940,6 +1943,8 @@ document.getElementById('save-selected-btn').onclick = async () => {
       pitch: r.pitch,
       yaw: r.yaw,
       roll: r.roll,
+      blur: r.blur,
+      bboxRatio: r.bboxRatio,
     }))
     .sort((a, b) => b.similarity - a.similarity);
 
