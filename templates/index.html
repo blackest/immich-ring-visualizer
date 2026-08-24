@@ -26,11 +26,17 @@
           <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="ring-sort-cb" data-metric="yaw"> Yaw</label>
           <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="ring-sort-cb" data-metric="pitch"> Pitch</label>
           <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="ring-sort-cb" data-metric="roll"> Roll</label>
+          <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="sharp-squeeze-enable"> Sharpness cutoff</label>
         </div>
         <div id="ring-squeeze-controls" style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);margin-bottom:8px;">
           <label for="ring-squeeze-slider" style="white-space:nowrap;">Min sim</label>
           <input id="ring-squeeze-slider" type="range" min="0" max="100" value="20" style="flex:1;">
           <span id="ring-squeeze-val" style="min-width:70px;text-align:right;white-space:nowrap;">20% (0/0)</span>
+        </div>
+        <div id="sharp-squeeze-controls" style="display:none;align-items:center;gap:6px;font-size:10px;color:var(--dim);margin-bottom:8px;">
+          <label for="sharp-squeeze-slider" style="white-space:nowrap;">Min sharpness</label>
+          <input id="sharp-squeeze-slider" type="range" min="0" max="200" value="0" style="flex:1;">
+          <span id="sharp-squeeze-val" style="min-width:70px;text-align:right;white-space:nowrap;">0 (0/0)</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;font-size:10px;margin-bottom:8px;">
           <button type="button" id="find-neutral-btn" style="flex:1;font-size:11px;padding:5px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:4px;cursor:pointer;">Find neutral pose (calibration frame)</button>
