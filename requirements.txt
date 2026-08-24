@@ -4,4 +4,4 @@ requests
 numpy
 opencv-python
 insightface
-onnxruntime-silicon
+onnxruntime
