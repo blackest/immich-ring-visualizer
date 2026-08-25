@@ -486,7 +486,8 @@ def run_video_analysis(job_id, video_path, anchor_path, sim_threshold, blur_thre
                 "frameId": frame_id if passed else None,
                 "yaw": yaw, "pitch": pitch, "roll": roll,
                 "bbox": [x1, y1, x2, y2], "width": fw, "height": fh,
-                "bboxRatio": bbox_frame_ratio([x1, y1, x2, y2], fw, fh)
+                "bboxRatio": bbox_frame_ratio([x1, y1, x2, y2], fw, fh),
+                "vertFillPct": vert_fill_ratio([x1, y1, x2, y2], fw, fh)
             })
             job["results"] = results
 
@@ -525,13 +526,38 @@ def bbox_frame_ratio(bbox, frame_w, frame_h):
     for shot scale. Near 0 means a small face in a wide/distant shot, near
     1 means the face fills most of the frame (extreme close-up). Useful
     alongside pitch/yaw/blur for judging what kind of shot a candidate
-    frame actually is, not just whether the face matched and was sharp."""
+    frame actually is, not just whether the face matched and was sharp.
+
+    NOTE: this is area-based, so it's skewed by aspect ratio - a 1000x500
+    frame and a 500x500 frame with the *same* face at the *same* pixel
+    size report different ratios here, because the wider frame's extra
+    width dilutes the denominator even though the face's on-screen scale
+    hasn't changed. Kept for backward compatibility; prefer
+    vert_fill_ratio() for comparing shot scale across frames of different
+    aspect ratios."""
     if not bbox or frame_w <= 0 or frame_h <= 0:
         return 0.0
     x1, y1, x2, y2 = bbox
     bw = max(0, x2 - x1)
     bh = max(0, y2 - y1)
     return float((bw * bh) / (frame_w * frame_h))
+
+
+def vert_fill_ratio(bbox, frame_w, frame_h):
+    """Face bbox height as a fraction of the frame's SHORTER dimension -
+    an aspect-ratio-independent measure of shot scale. Normalizing by the
+    shorter (usually vertical) dimension means a 1000x500 wide crop and a
+    500x500 square crop containing the exact same face at the exact same
+    pixel size report the same fill percentage, since only the
+    constraining dimension is used rather than total frame area."""
+    if not bbox or frame_w <= 0 or frame_h <= 0:
+        return 0.0
+    x1, y1, x2, y2 = bbox
+    bh = max(0, y2 - y1)
+    short_side = min(frame_w, frame_h)
+    if short_side <= 0:
+        return 0.0
+    return float(bh / short_side)
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -619,7 +645,8 @@ def run_folder_analysis(job_id, image_paths, anchor_path, sim_threshold, blur_th
                 "frameId": frame_id if passed else None,
                 "yaw": yaw, "pitch": pitch, "roll": roll,
                 "bbox": [x1, y1, x2, y2], "origName": orig_name, "width": fw, "height": fh,
-                "bboxRatio": bbox_frame_ratio([x1, y1, x2, y2], fw, fh)
+                "bboxRatio": bbox_frame_ratio([x1, y1, x2, y2], fw, fh),
+                "vertFillPct": vert_fill_ratio([x1, y1, x2, y2], fw, fh)
             })
             job["results"] = results
 
@@ -1134,7 +1161,13 @@ def find_by_filename():
 
 @app.route("/api/asset-face-pose/<asset_id>")
 def asset_face_pose(asset_id):
-    """Return yaw/pitch/roll for the largest face in an Immich asset preview."""
+    """Return pose/blur/frame-fill metrics for the largest face in an
+    Immich asset preview. Kept at this same URL even though it now
+    returns more than pose - functionally an Immich asset is no
+    different from a video frame or folder image once we're running the
+    same detector over it, so it gets the same metric set (minus
+    similarity, since that's a separate concern already known from
+    wherever this asset appeared - e.g. a neighbors/cross-check match)."""
     import cv2
 
     try:
@@ -1164,7 +1197,17 @@ def asset_face_pose(asset_id):
 
     face = pick_largest_face(faces)
     pitch, yaw, roll = (float(p) for p in face.pose)
-    return jsonify({"assetId": asset_id, "yaw": yaw, "pitch": pitch, "roll": roll})
+    x1, y1, x2, y2 = map(int, face.bbox)
+    fh, fw = frame.shape[:2]
+    crop = frame[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+    blur_score = get_blur_score(crop)
+
+    return jsonify({
+        "assetId": asset_id, "yaw": yaw, "pitch": pitch, "roll": roll,
+        "blur": blur_score,
+        "bboxRatio": bbox_frame_ratio([x1, y1, x2, y2], fw, fh),
+        "vertFillPct": vert_fill_ratio([x1, y1, x2, y2], fw, fh),
+    })
 
 
 @app.route("/api/neighbors")

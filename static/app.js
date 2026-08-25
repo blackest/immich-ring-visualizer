@@ -34,6 +34,8 @@ document.getElementById('ring-scale-input').addEventListener('input', (e) => {
   }
 });
 
+let lastNeighborsRender = null; // {centerId, data, centerThumbUrl} - so changing sort can re-render without refetching
+
 async function loadNeighbors(assetId) {
   stage.innerHTML = '<div id="loading">loading neighbors…</div>';
   const res = await fetch(`/api/neighbors?assetId=${assetId}&limit=36`);
@@ -69,7 +71,8 @@ function setSidebarCurrentDetail(centerId, centerResult) {
   if (canShowInlinePose) {
     let text = `${sim}${sim ? ' · ' : ''}pitch: ${centerResult.pitch.toFixed(1)} yaw: ${centerResult.yaw.toFixed(1)} roll: ${centerResult.roll.toFixed(1)}`;
     if (typeof centerResult.blur === 'number') text += ` · sharpness: ${centerResult.blur.toFixed(1)}`;
-    if (typeof centerResult.bboxRatio === 'number') text += ` · face: ${(centerResult.bboxRatio * 100).toFixed(0)}% of frame`;
+    if (typeof centerResult.vertFillPct === 'number') text += ` · face: ${(centerResult.vertFillPct * 100).toFixed(0)}% frame height`;
+    else if (typeof centerResult.bboxRatio === 'number') text += ` · face: ${(centerResult.bboxRatio * 100).toFixed(0)}% of frame`;
     detailEl.textContent = text;
     return;
   }
@@ -100,7 +103,8 @@ function showHoverPreview(r) {
     if (r.pitch !== undefined && r.yaw !== undefined && r.roll !== undefined && r.pitch !== null) {
       poseText = `<br>pitch: ${r.pitch.toFixed(1)} yaw: ${r.yaw.toFixed(1)} roll: ${r.roll.toFixed(1)}`;
       if (typeof r.blur === 'number') poseText += ` · sharpness: ${r.blur.toFixed(0)}`;
-      if (typeof r.bboxRatio === 'number') poseText += ` · face: ${(r.bboxRatio * 100).toFixed(0)}% of frame`;
+      if (typeof r.vertFillPct === 'number') poseText += ` · face: ${(r.vertFillPct * 100).toFixed(0)}% frame height`;
+      else if (typeof r.bboxRatio === 'number') poseText += ` · face: ${(r.bboxRatio * 100).toFixed(0)}% of frame`;
     }
     
     hoverCaption.innerHTML = `${r.filename} — ${pct}%${poseText}`;
@@ -113,12 +117,29 @@ function hideHoverPreview() {
   hoverPanel.classList.remove('active');
 }
 
+let rankedSortMetric = 'sim';
+
+function sortRankedResults(results) {
+  // sort descending for sim and vertFillPct (bigger = better match / bigger
+  // face), descending for blur too (sharper = better) - all three want
+  // "best first" at the top of the list. Rows missing the chosen metric
+  // (e.g. blur/vertFillPct only exist once a frame has gone through pose
+  // analysis or on-demand detection) sort to the bottom rather than being
+  // dropped, so the list stays complete either way.
+  const key = rankedSortMetric === 'sim' ? 'similarity' : rankedSortMetric;
+  const withMetric = results.filter(r => typeof r[key] === 'number');
+  const withoutMetric = results.filter(r => typeof r[key] !== 'number');
+  withMetric.sort((a, b) => b[key] - a[key]);
+  return [...withMetric, ...withoutMetric];
+}
+
 function render(centerId, data, centerThumbUrl) {
+  lastNeighborsRender = { centerId, data, centerThumbUrl };
   stage.innerHTML = '';
   const modeLabel = data.mode === 'face' ? 'FACE SIMILARITY' : 'CLIP (WHOLE-IMAGE) SIMILARITY';
   document.getElementById('hud-mode').textContent = modeLabel;
 
-  const results = data.results.filter(r => r.assetId !== centerId);
+  const results = sortRankedResults(data.results.filter(r => r.assetId !== centerId));
   const centerResult = data.results.find(r => r.assetId === centerId) || data.results[0];
   document.getElementById('hud-filename').textContent = centerResult ? centerResult.filename : '';
 
@@ -269,7 +290,8 @@ function render(centerId, data, centerThumbUrl) {
     if (r.pitch !== undefined && r.yaw !== undefined && r.roll !== undefined && r.pitch !== null) {
       let poseLine = `pitch: ${r.pitch.toFixed(1)} yaw: ${r.yaw.toFixed(1)} roll: ${r.roll.toFixed(1)}`;
       if (typeof r.blur === 'number') poseLine += ` · sharp: ${r.blur.toFixed(0)}`;
-      if (typeof r.bboxRatio === 'number') poseLine += ` · ${(r.bboxRatio * 100).toFixed(0)}% frame`;
+      if (typeof r.vertFillPct === 'number') poseLine += ` · ${(r.vertFillPct * 100).toFixed(0)}% frame ht`;
+      else if (typeof r.bboxRatio === 'number') poseLine += ` · ${(r.bboxRatio * 100).toFixed(0)}% frame`;
       poseHtml = `<div style="font-size:10px;color:var(--dim);margin-top:2px;">${poseLine}</div>`;
     }
 
@@ -572,6 +594,8 @@ function renderSelectionModal() {
       kind: 'asset', assetId: id, filename: known ? known.filename : id, thumb: `/api/thumb/${id}`,
       pitch: cached ? cached.pitch : (known && typeof known.pitch === 'number' ? known.pitch : null),
       yaw: cached ? cached.yaw : (known && typeof known.yaw === 'number' ? known.yaw : null),
+      blur: cached ? cached.blur : (known && typeof known.blur === 'number' ? known.blur : null),
+      vertFillPct: cached ? cached.vertFillPct : (known && typeof known.vertFillPct === 'number' ? known.vertFillPct : null),
     };
   });
   const frameSource = isPickerPreview ? modalFrameOverride : Array.from(selectedFrames);
@@ -867,7 +891,14 @@ async function detectPoseForItems(items) {
       const res = await fetch(`/api/asset-face-pose/${it.assetId}`);
       const data = await res.json();
       if (!data.error) {
-        assetPoseCache[it.assetId] = { pitch: data.pitch, yaw: data.yaw };
+        // this endpoint now returns the full metric set (pose + blur +
+        // vertFillPct), same as a video/folder analysis frame would -
+        // cache all of it, not just pose, so sharpness sort/filtering
+        // works on on-demand-detected Immich items too.
+        assetPoseCache[it.assetId] = {
+          pitch: data.pitch, yaw: data.yaw,
+          blur: data.blur, vertFillPct: data.vertFillPct,
+        };
       }
     } catch (e) {
       console.warn('Pose detection failed for', it.assetId, e);
@@ -1759,6 +1790,7 @@ async function pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceTyp
 
   applyResolutionSummary(data.resolutionSummary);
   setupPosePicker(data.results, jobId, sourceType);
+  setupScalePicker(data.results, jobId, sourceType);
 
   statusEl.innerHTML = `
     Done — ${passed}/${data.frameCount} kept.
@@ -1945,6 +1977,7 @@ document.getElementById('save-selected-btn').onclick = async () => {
       roll: r.roll,
       blur: r.blur,
       bboxRatio: r.bboxRatio,
+      vertFillPct: r.vertFillPct,
     }))
     .sort((a, b) => b.similarity - a.similarity);
 
@@ -2010,6 +2043,7 @@ function setupPosePicker(dataResults, jobId, sourceType) {
       yaw: r.yaw,
       blur: typeof r.blur === 'number' ? r.blur : 0,
       bboxRatio: typeof r.bboxRatio === 'number' ? r.bboxRatio : null,
+      vertFillPct: typeof r.vertFillPct === 'number' ? r.vertFillPct : null,
     }));
 
   const emptyEl = document.getElementById('pose-picker-empty');
@@ -2053,7 +2087,8 @@ function updatePosePickerCellVisual(cell, it, dist) {
     img.src = it.thumbUrl;
     img.dataset.frame = it.frame;
   }
-  const scaleTxt = typeof it.bboxRatio === 'number' ? `, face ${(it.bboxRatio * 100).toFixed(0)}% of frame` : '';
+  const scaleTxt = typeof it.vertFillPct === 'number' ? `, face ${(it.vertFillPct * 100).toFixed(0)}% frame ht`
+    : (typeof it.bboxRatio === 'number' ? `, face ${(it.bboxRatio * 100).toFixed(0)}% of frame` : '');
   img.title = `pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)} (Δ${dist.toFixed(1)} from target), sharpness ${it.blur.toFixed(0)}${scaleTxt} — click to ${isSelected ? 'remove from' : 'add to'} selection`;
   img.style.borderColor = isSelected ? 'var(--accent)' : '#3a3a44';
   cell.onclick = () => {
@@ -2146,6 +2181,172 @@ document.getElementById('pose-picker-preview-btn').addEventListener('click', () 
   renderSelectionModal();
 });
 
+// ---- shot scale picker: same idea as the pose picker, but a single axis
+// (face-to-frame fill %) instead of pitch/yaw. Prefers vertFillPct (the
+// aspect-ratio-independent metric); for any frame that predates it and
+// only has the old area-based bboxRatio, uses sqrt(bboxRatio) as a rough
+// linear approximation (area scales with the square of linear size) so
+// old and new frames sit on roughly the same percentage scale rather than
+// old frames being silently excluded from this picker. ----
+let scalePickerPool = [];
+let scalePickerCells = [];
+let scalePickerDisplayed = new Array(9).fill(null);
+
+function buildScalePickerCells() {
+  const grid = document.getElementById('scale-picker-grid');
+  grid.innerHTML = '';
+  scalePickerCells = [];
+  scalePickerDisplayed = new Array(9).fill(null);
+  for (let i = 0; i < 9; i++) {
+    const cell = document.createElement('div');
+    cell.style.cursor = 'pointer';
+    cell.style.visibility = 'hidden';
+    cell.innerHTML = `<img loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;border:2px solid #3a3a44;display:block;">`;
+    grid.appendChild(cell);
+    scalePickerCells.push(cell);
+  }
+}
+
+function setupScalePicker(dataResults, jobId, sourceType) {
+  const minFacePx = parseFloat(document.getElementById('export-min-face')?.value) || 0;
+
+  scalePickerPool = (dataResults || [])
+    .filter(r => {
+      if (!r.passed || !r.frameId) return false;
+      const scaleVal = typeof r.vertFillPct === 'number' ? r.vertFillPct
+        : (typeof r.bboxRatio === 'number' ? Math.sqrt(r.bboxRatio) : null);
+      if (scaleVal === null) return false;
+      // honor the same "too distant to be useful" floor Export Settings
+      // uses, so this picker doesn't surface frames the export pipeline
+      // would just skip anyway
+      if (minFacePx > 0 && r.bbox) {
+        const [x1, y1, x2, y2] = r.bbox;
+        const faceH = y2 - y1;
+        if (faceH < minFacePx) return false;
+      }
+      return true;
+    })
+    .map(r => ({
+      filename: r.origName || `frame_${r.frame}`,
+      frame: r.frame,
+      thumbUrl: `/api/framefile/${r.frameId}`,
+      scalePct: (typeof r.vertFillPct === 'number' ? r.vertFillPct : Math.sqrt(r.bboxRatio)) * 100,
+      pitch: r.pitch, yaw: r.yaw, roll: r.roll,
+      blur: typeof r.blur === 'number' ? r.blur : 0,
+    }));
+
+  const emptyEl = document.getElementById('scale-picker-empty');
+  const controlsEl = document.getElementById('scale-picker-controls');
+  if (!scalePickerPool.length) {
+    emptyEl.style.display = 'block';
+    controlsEl.style.display = 'none';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  controlsEl.style.display = 'flex';
+
+  const scaleVals = scalePickerPool.map(it => it.scalePct);
+  const slider = document.getElementById('scale-picker-slider');
+  const num = document.getElementById('scale-picker-num');
+  // start centered on the pool's own average scale, same convention as the
+  // pose picker's centroid start, rather than an arbitrary fixed default
+  const startVal = Math.round(scaleVals.reduce((s, v) => s + v, 0) / scaleVals.length);
+  slider.value = startVal;
+  num.value = startVal;
+
+  buildScalePickerCells();
+  renderScalePickerGrid();
+}
+
+function updateScalePickerCellVisual(cell, it, dist) {
+  cell.style.visibility = 'visible';
+  const isSelected = selectedFrames.has(it.frame);
+  const img = cell.querySelector('img');
+  if (img.dataset.frame !== String(it.frame)) {
+    img.src = it.thumbUrl;
+    img.dataset.frame = it.frame;
+  }
+  img.title = `${it.scalePct.toFixed(0)}% frame ht (Δ${dist.toFixed(1)} from target), sharpness ${it.blur.toFixed(0)} — click to ${isSelected ? 'remove from' : 'add to'} selection`;
+  img.style.borderColor = isSelected ? 'var(--accent)' : '#3a3a44';
+  cell.onclick = () => {
+    if (selectedFrames.has(it.frame)) selectedFrames.delete(it.frame);
+    else selectedFrames.add(it.frame);
+    syncSelectionVisuals();
+    updateSaveSelectedButton();
+    const cb = document.querySelector(`#list-body-frames .frame-select-cb[data-frame="${it.frame}"]`);
+    if (cb) cb.checked = selectedFrames.has(it.frame);
+    renderScalePickerGrid();
+  };
+}
+
+function renderScalePickerGrid() {
+  if (!scalePickerPool.length) return;
+  const target = parseFloat(document.getElementById('scale-picker-slider').value);
+  document.getElementById('scale-picker-num').value = target;
+
+  const toleranceOn = document.getElementById('scale-picker-tolerance-enable').checked;
+  const toleranceVal = parseFloat(document.getElementById('scale-picker-tolerance-val').value) || 10;
+
+  let ranked = scalePickerPool
+    .map(it => ({ it, dist: Math.abs(it.scalePct - target) }))
+    .sort((a, b) => a.dist - b.dist);
+  if (toleranceOn) {
+    ranked = ranked.filter(r => r.dist <= toleranceVal);
+  }
+  ranked = ranked.slice(0, 9);
+  const rankedFrames = ranked.map(r => r.it.frame);
+
+  const keepSlot = scalePickerDisplayed.map(frame => frame !== null && rankedFrames.includes(frame));
+  const toPlace = ranked.filter(r => !scalePickerDisplayed.includes(r.it.frame));
+  let placeIdx = 0;
+
+  for (let i = 0; i < 9; i++) {
+    if (keepSlot[i]) {
+      const match = ranked.find(r => r.it.frame === scalePickerDisplayed[i]);
+      updateScalePickerCellVisual(scalePickerCells[i], match.it, match.dist);
+    } else if (placeIdx < toPlace.length) {
+      const { it, dist } = toPlace[placeIdx++];
+      scalePickerDisplayed[i] = it.frame;
+      updateScalePickerCellVisual(scalePickerCells[i], it, dist);
+    } else {
+      scalePickerDisplayed[i] = null;
+      scalePickerCells[i].style.visibility = 'hidden';
+    }
+  }
+
+  document.getElementById('scale-picker-count').textContent = toleranceOn
+    ? `${ranked.length} within ${toleranceVal}% of target (${scalePickerPool.length} in pool)`
+    : `${scalePickerPool.length} in analyzed pool`;
+}
+
+document.getElementById('scale-picker-slider').addEventListener('input', () => {
+  document.getElementById('scale-picker-num').value = document.getElementById('scale-picker-slider').value;
+  renderScalePickerGrid();
+});
+document.getElementById('scale-picker-num').addEventListener('input', () => {
+  const numEl = document.getElementById('scale-picker-num');
+  const clamped = Math.max(0, Math.min(100, parseFloat(numEl.value) || 0));
+  document.getElementById('scale-picker-slider').value = clamped;
+  renderScalePickerGrid();
+});
+document.getElementById('scale-picker-tolerance-enable').addEventListener('change', (e) => {
+  const input = document.getElementById('scale-picker-tolerance-val');
+  input.disabled = !e.target.checked;
+  input.style.color = e.target.checked ? 'var(--text)' : 'var(--dim)';
+  renderScalePickerGrid();
+});
+document.getElementById('scale-picker-tolerance-val').addEventListener('input', renderScalePickerGrid);
+
+document.getElementById('scale-picker-preview-btn').addEventListener('click', () => {
+  const frames = scalePickerDisplayed.filter(f => f !== null);
+  if (!frames.length) return;
+  modalFrameOverride = frames;
+  document.getElementById('selection-modal-pose-layout').checked = true;
+  document.getElementById('selection-modal-spread-wrap').style.display = 'flex';
+  document.getElementById('selection-modal-overlay').style.display = 'flex';
+  renderSelectionModal();
+});
+
 // ---- image folder / zip loader: runs the exact same analysis pipeline as
 // video, just over a variable-count set of still images (e.g. 32 curated
 // LoRA reference frames) instead of decoded video frames ----
@@ -2212,7 +2413,7 @@ let ringSortMetric = 'sim';
 // (yaw/pitch/roll) wants a low bar so marginal-confidence frames stay
 // available - defaults switch automatically per metric, but the slider
 // always stays user-overridable.
-const SQUEEZE_DEFAULTS = { sim: 65, yaw: 20, pitch: 20, roll: 20 };
+const SQUEEZE_DEFAULTS = { sim: 65, yaw: 20, pitch: 20, roll: 20, blur: 65 };
 let squeezeMinPct = SQUEEZE_DEFAULTS.sim;
 let squeezeUserOverridden = false;
 
@@ -2223,6 +2424,43 @@ squeezeSlider.value = squeezeMinPct;
 squeezeSlider.addEventListener('input', () => {
   squeezeMinPct = parseFloat(squeezeSlider.value);
   squeezeUserOverridden = true;
+  if (lastVideoRingState) renderVideoRing();
+});
+
+// sharpness cutoff: independent min-blur-score filter, toggled on/off via
+// its own checkbox so tightening blur doesn't force-tighten similarity too.
+let sharpCutoffEnabled = false;
+let sharpMinVal = 0;
+
+const sharpEnableCb = document.getElementById('sharp-squeeze-enable');
+const sharpControls = document.getElementById('sharp-squeeze-controls');
+const sharpSlider = document.getElementById('sharp-squeeze-slider');
+const sharpVal = document.getElementById('sharp-squeeze-val');
+
+document.querySelectorAll('.ranked-sort-cb').forEach(cb => {
+  cb.addEventListener('change', () => {
+    if (!cb.checked) return;
+    rankedSortMetric = cb.value;
+    if (lastNeighborsRender) {
+      render(lastNeighborsRender.centerId, lastNeighborsRender.data, lastNeighborsRender.centerThumbUrl);
+    }
+  });
+});
+
+sharpEnableCb.addEventListener('change', () => {
+  sharpCutoffEnabled = sharpEnableCb.checked;
+  sharpControls.style.display = sharpCutoffEnabled ? 'flex' : 'none';
+  if (lastVideoRingState) renderVideoRing();
+});
+
+// reflect whatever the checkbox's starting state is on page load (e.g. if
+// the browser restored a checked checkbox from form autofill/back-forward
+// cache) rather than assuming it starts unchecked.
+sharpCutoffEnabled = sharpEnableCb.checked;
+sharpControls.style.display = sharpCutoffEnabled ? 'flex' : 'none';
+
+sharpSlider.addEventListener('input', () => {
+  sharpMinVal = parseFloat(sharpSlider.value);
   if (lastVideoRingState) renderVideoRing();
 });
 
@@ -2253,11 +2491,25 @@ function metricValueForRing(r) {
 
 function applySqueeze(combined) {
   const cutoff = squeezeMinPct / 100;
-  const kept = combined.filter(r => {
+  const simKept = combined.filter(r => {
     const sim = typeof r.similarity === 'number' ? r.similarity : (typeof r.sim === 'number' ? r.sim : 1);
     return sim >= cutoff;
   });
-  squeezeVal.textContent = `${squeezeMinPct}% (${kept.length}/${combined.length})`;
+  squeezeVal.textContent = `${squeezeMinPct}% (${simKept.length}/${combined.length})`;
+
+  if (!sharpCutoffEnabled) {
+    sharpVal.textContent = `${sharpMinVal} (${simKept.length}/${combined.length})`;
+    return simKept;
+  }
+
+  // sharpness cutoff only applies to items that actually carry a blur
+  // score (video/folder analysis results); Immich-only nodes with no
+  // blur field pass through untouched rather than being dropped.
+  const kept = simKept.filter(r => {
+    if (typeof r.blur !== 'number') return true;
+    return r.blur >= sharpMinVal;
+  });
+  sharpVal.textContent = `${sharpMinVal} (${kept.length}/${combined.length})`;
   return kept;
 }
 
@@ -2286,26 +2538,31 @@ document.getElementById('find-neutral-btn').addEventListener('click', () => {
   document.getElementById('use-as-reference-btn').onclick = () => {
     const btn = document.getElementById('use-as-reference-btn');
     const sourceType = lastVideoRingState.sourceType;
+    // this readout describes the *old* anchor's neutral-pose stats, which
+    // are invalidated by the re-analysis it's about to trigger - hide it
+    // now rather than leaving a stale "Re-analyzing…" button behind once
+    // the new job finishes (nothing else resets this div on completion).
+    const hideReadout = () => { readout.style.display = 'none'; readout.innerHTML = ''; };
     if (sourceType === 'folder') {
       if (!lastFolderSource) {
         btn.textContent = 'Original folder/zip no longer available — reload it first';
         return;
       }
-      btn.textContent = 'Re-analyzing…';
+      hideReadout();
       startFolderAnalysis(lastFolderSource, best.frame);
     } else if (sourceType === 'immich') {
       if (!lastImmichAnalysisAssetIds) {
         btn.textContent = 'Original Immich selection no longer available — re-select and analyze again';
         return;
       }
-      btn.textContent = 'Re-analyzing…';
+      hideReadout();
       reanalyzeImmichSelection(lastImmichAnalysisAssetIds, best.frame);
     } else {
       if (!currentVideoFile) {
         btn.textContent = 'Original video no longer available — reload it first';
         return;
       }
-      btn.textContent = 'Re-analyzing…';
+      hideReadout();
       startVideoAnalysis(currentVideoFile, best.frame);
     }
   };
@@ -2332,7 +2589,7 @@ function renderVideoRing() {
   if (!lastVideoRingState) return;
   const { anchorUrl, refFrameIdx, baseResults, sourceType } = lastVideoRingState;
   const combined = applySqueeze([...baseResults, ...extraImmichNodes]);
-  const metricLabel = { sim: 'Similarity', yaw: 'Yaw', pitch: 'Pitch', roll: 'Roll' }[ringSortMetric];
+  const metricLabel = { sim: 'Similarity', yaw: 'Yaw', pitch: 'Pitch', roll: 'Roll', blur: 'Sharpness' }[ringSortMetric];
   const baseLabel = sourceType === 'immich'
     ? 'IMMICH SELECTION ANALYSIS'
     : (sourceType === 'folder' ? 'IMAGE SET ANALYSIS (local, not in Immich)' : 'VIDEO FRAME ANALYSIS (local, not in Immich)');
@@ -2389,7 +2646,9 @@ function renderPoseList(metric, anchorUrl, anchorLabel, combined) {
     if (r.assetId) item.dataset.assetId = r.assetId;
     if (r.frame !== undefined) item.dataset.frame = r.frame;
     const thumb = r.thumbUrl || (r.fromImmich ? `/api/thumb/${r.assetId}` : `/api/thumb/${r.assetId}`);
-    item.innerHTML = `<img src="${thumb}" loading="lazy"><div class="plabel">${metric}: ${r[metric].toFixed(1)}°</div>`;
+    const unit = metric === 'blur' ? '' : '°';
+    const label = metric === 'blur' ? 'sharp' : metric;
+    item.innerHTML = `<img src="${thumb}" loading="lazy"><div class="plabel">${label}: ${r[metric].toFixed(1)}${unit}</div>`;
     if (typeof r.pitch === 'number') {
       // pitch up (nose up) raises the thumbnail, pitch down lowers it -
       // gives the strip a wavy "head bob" feel that mirrors the pose itself.

@@ -26,6 +26,7 @@
           <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="ring-sort-cb" data-metric="yaw"> Yaw</label>
           <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="ring-sort-cb" data-metric="pitch"> Pitch</label>
           <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="ring-sort-cb" data-metric="roll"> Roll</label>
+          <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="ring-sort-cb" data-metric="blur"> Sharpness</label>
           <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="sharp-squeeze-enable"> Sharpness cutoff</label>
         </div>
         <div id="ring-squeeze-controls" style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);margin-bottom:8px;">
@@ -293,6 +294,12 @@
   </div>
   <div id="sidebar-scroll">
     <div id="sidebar-header"><span id="sidebar-header-title">Ranked matches</span><button id="toggle-list-btn" title="Hide ranked match list">Hide</button></div>
+    <div id="ranked-sort-row" style="display:flex;gap:10px;align-items:center;padding:6px 16px;border-bottom:1px solid #212127;font-size:10px;color:var(--dim);">
+      <span style="white-space:nowrap;">Sort:</span>
+      <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="radio" name="ranked-sort" class="ranked-sort-cb" value="sim" checked> Similarity</label>
+      <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="radio" name="ranked-sort" class="ranked-sort-cb" value="blur"> Sharpness</label>
+      <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="radio" name="ranked-sort" class="ranked-sort-cb" value="vertFillPct"> Vertical %</label>
+    </div>
     <div id="immich-selection-bar" style="display:none;padding:8px 16px;border-bottom:1px solid #212127;background:#12121a;">
       <div style="font-size:10px;color:var(--dim);margin-bottom:5px;">
         <span id="immich-selection-count">0</span> Immich image(s) selected — sticks across browsing
