@@ -1090,6 +1090,7 @@ async function runImmichAnalysis(assetIds, refIndex, statusEl) {
         simThreshold: document.getElementById('sim-threshold').value,
         blurThreshold: document.getElementById('blur-threshold').value,
         refIndex,
+        cacheFormat: document.getElementById('cache-format-png').checked ? 'png' : 'jpg',
       }),
     });
     const data = await res.json();
@@ -1846,6 +1847,7 @@ async function startVideoAnalysis(videoFile, refFrameIdx) {
   form.append('simThreshold', document.getElementById('sim-threshold').value);
   form.append('blurThreshold', document.getElementById('blur-threshold').value);
   form.append('refFrame', refFrameIdx);
+  form.append('cacheFormat', document.getElementById('cache-format-png').checked ? 'png' : 'jpg');
 
   const res = await fetch('/api/analyze-video', { method: 'POST', body: form });
   const data = await res.json();
@@ -2468,6 +2470,7 @@ async function startFolderAnalysis({ images, zip }, refIndexOverride) {
   form.append('simThreshold', document.getElementById('sim-threshold').value);
   form.append('blurThreshold', document.getElementById('blur-threshold').value);
   form.append('refIndex', refIndex);
+  form.append('cacheFormat', document.getElementById('cache-format-png').checked ? 'png' : 'jpg');
 
   let sourceLabel;
   if (zip) {
