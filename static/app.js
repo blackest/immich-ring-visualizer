@@ -97,8 +97,8 @@ function showHoverPreview(r) {
   clearTimeout(hoverTimer);
   hoverTimer = setTimeout(() => {
     hoverImg.src = previewUrlFor(r);
-    const pct = (r.similarity * 100).toFixed(1);
-    
+    const pctText = typeof r.similarity === 'number' ? `${(r.similarity * 100).toFixed(1)}%` : '';
+
     let poseText = '';
     if (r.pitch !== undefined && r.yaw !== undefined && r.roll !== undefined && r.pitch !== null) {
       poseText = `<br>pitch: ${r.pitch.toFixed(1)} yaw: ${r.yaw.toFixed(1)} roll: ${r.roll.toFixed(1)}`;
@@ -106,8 +106,8 @@ function showHoverPreview(r) {
       if (typeof r.vertFillPct === 'number') poseText += ` · face: ${(r.vertFillPct * 100).toFixed(0)}% frame height`;
       else if (typeof r.bboxRatio === 'number') poseText += ` · face: ${(r.bboxRatio * 100).toFixed(0)}% of frame`;
     }
-    
-    hoverCaption.innerHTML = `${r.filename} — ${pct}%${poseText}`;
+
+    hoverCaption.innerHTML = `${r.filename}${pctText ? ` — ${pctText}` : ''}${poseText}`;
     hoverPanel.classList.add('active');
   }, 80);
 }
@@ -292,7 +292,7 @@ function render(centerId, data, centerThumbUrl) {
       if (typeof r.blur === 'number') poseLine += ` · sharp: ${r.blur.toFixed(0)}`;
       if (typeof r.vertFillPct === 'number') poseLine += ` · ${(r.vertFillPct * 100).toFixed(0)}% frame ht`;
       else if (typeof r.bboxRatio === 'number') poseLine += ` · ${(r.bboxRatio * 100).toFixed(0)}% frame`;
-      poseHtml = `<div style="font-size:10px;color:var(--dim);margin-top:2px;">${poseLine}</div>`;
+      poseHtml = `<div style="font-size:var(--fs-10);color:var(--dim);margin-top:2px;">${poseLine}</div>`;
     }
 
     let linkedBadgeHtml = '';
@@ -306,7 +306,7 @@ function render(centerId, data, centerThumbUrl) {
       ${checkboxHtml}
       <img src="${thumbUrlFor(r)}" loading="lazy" style="${r.fromImmich ? 'border:1.5px solid #d4a544;' : ''}">
       <div class="info">
-        <div class="fname">${r.filename}${r.fromImmich ? ' <span style="color:#d4a544;font-size:9px;">● Immich</span>' : ''}${linkedBadgeHtml}</div>
+        <div class="fname">${r.filename}${r.fromImmich ? ' <span style="color:#d4a544;font-size:var(--fs-9);">● Immich</span>' : ''}${linkedBadgeHtml}</div>
         <div class="simbar-track"><div class="simbar-fill" style="width:${pct}%"></div></div>
         ${poseHtml}
       </div>
@@ -615,8 +615,8 @@ function renderSelectionModal() {
   }
   if (!items.length) {
     grid.innerHTML = isPickerPreview
-      ? '<div style="grid-column:1/-1;color:var(--dim);font-size:11px;text-align:center;padding:20px;">Nothing on stage in the Pose Picker yet.</div>'
-      : '<div style="grid-column:1/-1;color:var(--dim);font-size:11px;text-align:center;padding:20px;">Nothing selected yet.</div>';
+      ? '<div style="grid-column:1/-1;color:var(--dim);font-size:var(--fs-11);text-align:center;padding:20px;">Nothing on stage in the Pose Picker yet.</div>'
+      : '<div style="grid-column:1/-1;color:var(--dim);font-size:var(--fs-11);text-align:center;padding:20px;">Nothing selected yet.</div>';
     return;
   }
 
@@ -695,13 +695,22 @@ function renderSelectionModalGrid(grid, items, srcFor, onInteract, realPreview, 
     cell.innerHTML = `
       <img src="${srcFor(it)}" loading="lazy" title="${isPickerPreview ? `Click to ${selected ? 'remove from' : 'add to'} export selection` : 'Double-click to remove'}"
            style="width:100%;${realPreview ? '' : 'aspect-ratio:1;'}object-fit:${realPreview ? 'contain' : 'cover'};border-radius:6px;border:2px solid ${isPickerPreview ? (selected ? 'var(--accent)' : '#3a3a44') : 'var(--accent)'};display:block;background:#0a0a0d;">
-      <div style="font-size:9px;color:var(--dim);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.filename}</div>
+      <div style="font-size:var(--fs-9);color:var(--dim);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.filename}</div>
     `;
     if (isPickerPreview) {
       cell.onclick = () => onInteract(it);
     } else {
       cell.ondblclick = () => onInteract(it);
     }
+    // reuse the same rollover preview panel the ring/list views use - it's
+    // position:fixed with its own z-index, so it just needs to sit above
+    // the modal overlay (handled via z-index in style.css). Modal items
+    // carry a `.thumb` field, not `.thumbUrl` (what previewUrlFor looks
+    // for), and frame-kind items have no assetId for its fallback either
+    // - so pass the already-computed srcFor() URL explicitly as thumbUrl
+    // rather than relying on previewUrlFor's defaults.
+    cell.addEventListener('mouseenter', () => showHoverPreview({ ...it, thumbUrl: srcFor(it) }));
+    cell.addEventListener('mouseleave', hideHoverPreview);
     grid.appendChild(cell);
   });
 }
@@ -748,9 +757,9 @@ function renderSelectionModalPoseScatter(grid, items, srcFor, onInteract, realPr
   if (!posed.length) {
     const detectableCount = unposed.filter(it => it.kind === 'asset').length;
     grid.innerHTML = `
-      <div style="color:var(--dim);font-size:11px;text-align:center;padding:20px;">
+      <div style="color:var(--dim);font-size:var(--fs-11);text-align:center;padding:20px;">
         No pose data on the current selection — pitch/yaw only comes from the pose-analysis pipeline (analyze video/folder/Immich selection).<br><br>
-        ${detectableCount ? `<button id="detect-pose-btn" style="padding:6px 12px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:11px;">Detect pose for ${detectableCount} Immich item(s)</button>` : ''}
+        ${detectableCount ? `<button id="detect-pose-btn" style="padding:6px 12px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:var(--fs-11);">Detect pose for ${detectableCount} Immich item(s)</button>` : ''}
       </div>`;
     if (detectableCount) {
       document.getElementById('detect-pose-btn').addEventListener('click', () => detectPoseForItems(unposed.filter(it => it.kind === 'asset')));
@@ -822,13 +831,15 @@ function renderSelectionModalPoseScatter(grid, items, srcFor, onInteract, realPr
            style="width:${size}px;height:${size}px;${realPreview ? 'object-fit:contain;background:#0a0a0d;' : 'object-fit:cover;'}border-radius:8px;
                   border:${isAnchor ? '3px' : '2px'} solid ${borderColor};
                   box-shadow:${isAnchor ? '0 0 20px rgba(124,196,255,0.35)' : 'none'};display:block;">
-      <div style="font-size:8px;color:var(--dim);margin-top:2px;">${isAnchor ? `center (p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)})` : `p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)}`}</div>
+      <div style="font-size:var(--fs-8);color:var(--dim);margin-top:2px;">${isAnchor ? `center (p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)})` : `p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)}`}</div>
     `;
     if (isPickerPreview) {
       cell.onclick = () => onInteract(it);
     } else {
       cell.ondblclick = () => onInteract(it);
     }
+    cell.addEventListener('mouseenter', () => showHoverPreview({ ...it, thumbUrl: srcFor(it) }));
+    cell.addEventListener('mouseleave', hideHoverPreview);
     stage.appendChild(cell);
   });
 
@@ -846,8 +857,8 @@ function renderSelectionModalPoseScatter(grid, items, srcFor, onInteract, realPr
     const detectableCount = unposed.filter(it => it.kind === 'asset').length;
     strip.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-        <span style="font-size:9px;color:var(--dim);">No pose data (${unposed.length}):</span>
-        ${detectableCount ? `<button id="detect-pose-btn" style="padding:3px 8px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:5px;cursor:pointer;font-size:9px;">Detect pose (${detectableCount})</button>` : ''}
+        <span style="font-size:var(--fs-9);color:var(--dim);">No pose data (${unposed.length}):</span>
+        ${detectableCount ? `<button id="detect-pose-btn" style="padding:3px 8px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:5px;cursor:pointer;font-size:var(--fs-9);">Detect pose (${detectableCount})</button>` : ''}
       </div>`;
     const row = document.createElement('div');
     row.style.display = 'flex';
@@ -974,11 +985,11 @@ document.getElementById('immich-export-selected-btn').addEventListener('click', 
       const tight = p.avgSim > tightCutoff;
       row.innerHTML = `
         <div class="info" style="flex:1;">
-          <div class="fname">${p.name}${tight ? ' <span style="color:#d4a544;font-size:9px;">● tight cluster</span>' : ''}</div>
+          <div class="fname">${p.name}${tight ? ' <span style="color:#d4a544;font-size:var(--fs-9);">● tight cluster</span>' : ''}</div>
           <div class="simbar-track"><div class="simbar-fill" style="width:${pct}%"></div></div>
         </div>
         <div class="simpct">${pct}%</div>
-        <div style="font-size:10px;color:var(--dim);margin-left:6px;">${p.faceCount}</div>
+        <div style="font-size:var(--fs-10);color:var(--dim);margin-left:6px;">${p.faceCount}</div>
       `;
       row.onclick = () => loadPersonAssets(p.personId, row);
       listEl.appendChild(row);
@@ -1573,7 +1584,30 @@ async function seekToFrame(idx) {
     `/api/preview-frame/${currentPreviewId}/${currentFrameIdx}?t=${Date.now()}`;
 }
 
-function renderSimSparkline(results, threshold, blurThreshold) {
+// fixed shot-scale bands (face height as % of frame's shorter dimension),
+// loosely following standard cinematography shot-scale terms. Fixed
+// rather than adaptive-per-sequence, since most clips ground themselves to
+// one or two framings anyway - a fixed scale makes color meaningful when
+// comparing across different analysis jobs too, not just within one.
+const SHOT_SCALE_BANDS = [
+  { max: 0.05, label: 'Extreme wide',      color: '#8a5fd4' },
+  { max: 0.12, label: 'Full shot',         color: '#4a7fd4' },
+  { max: 0.20, label: 'Cowboy/American',   color: '#4ad4c4' },
+  { max: 0.25, label: 'Medium',            color: '#4ad46a' },
+  { max: 0.35, label: 'Medium close-up',   color: '#d4c04a' },
+  { max: 0.50, label: 'Close-up',          color: '#d4824a' },
+  { max: Infinity, label: 'Extreme close-up', color: '#d4544a' },
+];
+
+function shotScaleFor(r) {
+  const pct = typeof r.vertFillPct === 'number' ? r.vertFillPct
+    : (typeof r.bboxRatio === 'number' ? Math.sqrt(r.bboxRatio) : null);
+  if (pct === null) return null;
+  const band = SHOT_SCALE_BANDS.find(b => pct <= b.max) || SHOT_SCALE_BANDS[SHOT_SCALE_BANDS.length - 1];
+  return { pct, ...band };
+}
+
+function renderSimSparkline(results, threshold, blurThreshold, sourceType) {
   const wrap = document.getElementById('sim-sparkline-wrap');
   if (!wrap || !results || !results.length) return;
 
@@ -1612,8 +1646,29 @@ function renderSimSparkline(results, threshold, blurThreshold) {
            `<circle cx="${cx}" cy="${cy}" r="2" fill="${color}" style="pointer-events:none;"></circle>`;
   }).join('');
 
+  // shot-scale strip: a thin false-color band under the main chart, one
+  // segment per frame, colored by which fixed shot-scale bucket that
+  // frame's face-fill % falls into - so a glance at the strip shows the
+  // rough shape of the sequence (wide -> push in -> hold close -> ...)
+  // without scrubbing through frame by frame. Frames with no scale data
+  // (e.g. no bbox recorded) render as a neutral gray gap rather than being
+  // skipped, so gaps in coverage are visible too, not silently hidden.
+  const stripH = 14;
+  const segW = Math.max(1, plotW / sorted.length);
+  const stripSegs = sorted.map(r => {
+    const scale = shotScaleFor(r);
+    const x = xFor(r.frame).toFixed(1);
+    const color = scale ? scale.color : '#2a2a32';
+    const title = scale ? `${scale.label} (${(scale.pct * 100).toFixed(0)}%)` : 'no scale data';
+    return `<rect x="${(x - segW / 2).toFixed(1)}" y="0" width="${segW.toFixed(1)}" height="${stripH}" fill="${color}" data-frame="${r.frame}" class="spark-hit strip-seg" style="cursor:pointer;"><title>frame ${r.frame} — ${title}</title></rect>`;
+  }).join('');
+
+  const legend = SHOT_SCALE_BANDS.map(b =>
+    `<span style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;"><span style="width:8px;height:8px;border-radius:2px;background:${b.color};display:inline-block;"></span>${b.label}</span>`
+  ).join('');
+
   wrap.innerHTML = `
-    <div style="font-size:10px;color:var(--dim);margin-bottom:3px;display:flex;justify-content:space-between;">
+    <div style="font-size:var(--fs-10);color:var(--dim);margin-bottom:3px;display:flex;justify-content:space-between;">
       <span>Match confidence by frame — click a point to jump the preview</span>
       <span style="color:#d4c04a;">·· blur cutoff (${blurThreshold})</span>
     </div>
@@ -1625,17 +1680,56 @@ function renderSimSparkline(results, threshold, blurThreshold) {
       <polyline points="${linePoints}" fill="none" stroke="#5a8fc4" stroke-width="1.5"></polyline>
       ${dots}
     </svg>
+    <div style="font-size:var(--fs-9);color:var(--dim);margin-top:4px;">Shot scale by frame (face height % of frame)</div>
+    <svg width="${W}" height="${stripH}" style="background:#0c0c10;border:1px solid #22222a;border-radius:4px;display:block;margin-top:2px;">
+      ${stripSegs}
+    </svg>
+    <div style="font-size:var(--fs-8);color:var(--dim);margin-top:4px;line-height:1.6;">${legend}</div>
   `;
 
   wrap.querySelectorAll('.spark-hit').forEach(el => {
     el.addEventListener('click', () => {
       const frame = parseInt(el.dataset.frame, 10);
-      stopFramePlayback();
-      seekToFrame(frame);
-      syncAudioToFrame(frame);
+      if (sourceType === 'folder' || sourceType === 'immich') {
+        // these "frame" numbers are just a sequential index over a batch of
+        // stills (alphabetical filename order for folder jobs, or however
+        // the Immich selection was ordered) - there's no actual video to
+        // scrub, so seekToFrame()/syncAudioToFrame() are the wrong tool
+        // here and silently no-op (they bail out on !currentPreviewId).
+        // Show the already-exported still directly instead.
+        const r = sorted.find(x => x.frame === frame);
+        showStaticFramePreview(r);
+      } else {
+        stopFramePlayback();
+        seekToFrame(frame);
+        syncAudioToFrame(frame);
+      }
       previewContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   });
+}
+
+// draws a stored analysis-job still (folder/Immich source, no real video to
+// scrub) directly into the same preview canvas seekToFrame() uses for
+// video frames, so both cases end up showing something in the same spot.
+function showStaticFramePreview(r) {
+  if (!r) return;
+  frameCounter.textContent = r.filename ? r.filename : `frame ${r.frame}`;
+  if (!r.frameId) {
+    videoStatus.textContent = `Frame ${r.frame} was rejected (no face / didn't pass thresholds) - no stored image to show.`;
+    return;
+  }
+  const img = new Image();
+  img.onload = () => {
+    previewCanvas.width = img.naturalWidth;
+    previewCanvas.height = img.naturalHeight;
+    const ctx = previewCanvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+  };
+  img.onerror = () => {
+    videoStatus.textContent = `Could not load stored image for frame ${r.frame}`;
+  };
+  img.src = `/api/framefile/${r.frameId}?t=${Date.now()}`;
 }
 
 let playTimer = null;
@@ -1795,11 +1889,11 @@ async function pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceTyp
   statusEl.innerHTML = `
     Done — ${passed}/${data.frameCount} kept.
     <div id="sim-sparkline-wrap" style="margin-top:8px;"></div>
-    <button id="export-btn" style="margin-top:6px;width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:11px;">Save kept frames to disk</button>
-    <button id="save-selected-btn" disabled style="margin-top:6px;width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:11px;opacity:0.5;">Save 0 selected frames to disk</button>
-    <button id="view-selected-btn" style="margin-top:6px;width:100%;padding:6px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:6px;cursor:pointer;font-size:11px;">View selected</button>
+    <button id="export-btn" style="margin-top:6px;width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:var(--fs-11);">Save kept frames to disk</button>
+    <button id="save-selected-btn" disabled style="margin-top:6px;width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:var(--fs-11);opacity:0.5;">Save 0 selected frames to disk</button>
+    <button id="view-selected-btn" style="margin-top:6px;width:100%;padding:6px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:6px;cursor:pointer;font-size:var(--fs-11);">View selected</button>
     ${sourceType === 'folder' || sourceType === 'immich' ? '' : `
-    <button id="playback-btn" style="margin-top:6px;width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:11px;">Build playback (rejected frames blanked)</button>
+    <button id="playback-btn" style="margin-top:6px;width:100%;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:var(--fs-11);">Build playback (rejected frames blanked)</button>
     <video id="playback-video" controls style="width:100%;margin-top:8px;display:none;border-radius:6px;"></video>
     <div id="playback-frame-controls" style="display:none;margin-top:6px;gap:6px;">
       <button id="playback-prev-frame" class="btn-seek" style="flex:1;">◀ -1 frame</button>
@@ -1807,18 +1901,18 @@ async function pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceTyp
     </div>
     `}
     <div style="margin-top:12px;padding-top:10px;border-top:1px solid #22222a;">
-      <div id="crosscheck-header" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--dim);margin-bottom:8px;user-select:none;">
-        <span class="chev" id="crosscheck-chev" style="display:inline-block;transition:transform .15s ease;font-size:10px;width:10px;">▾</span>
+      <div id="crosscheck-header" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--fs-11);color:var(--dim);margin-bottom:8px;user-select:none;">
+        <span class="chev" id="crosscheck-chev" style="display:inline-block;transition:transform .15s ease;font-size:var(--fs-10);width:10px;">▾</span>
         <span style="flex:1;">Cross-check vs Immich library</span>
       </div>
       <div style="display:flex;gap:6px;">
-        <input id="crosscheck-frame-input" type="number" min="1" style="width:70px;background:#0c0c10;border:1px solid #2a2a32;color:var(--text);border-radius:6px;padding:4px 6px;font-size:11px;" placeholder="frame #">
-        <button id="crosscheck-btn" style="flex:1;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:11px;">Check vs Immich library</button>
+        <input id="crosscheck-frame-input" type="number" min="1" style="width:70px;background:#0c0c10;border:1px solid #2a2a32;color:var(--text);border-radius:6px;padding:4px 6px;font-size:var(--fs-11);" placeholder="frame #">
+        <button id="crosscheck-btn" style="flex:1;padding:6px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:6px;cursor:pointer;font-size:var(--fs-11);">Check vs Immich library</button>
       </div>
       <div id="crosscheck-results" style="margin-top:8px;"></div>
     </div>
   `;
-  renderSimSparkline(data.results, data.simThreshold, data.blurThreshold);
+  renderSimSparkline(data.results, data.simThreshold, data.blurThreshold, sourceType);
   const ccInput = document.getElementById('crosscheck-frame-input');
   if (ccInput) ccInput.value = currentFrameIdx;
   const ccHeader = document.getElementById('crosscheck-header');
@@ -1848,17 +1942,17 @@ async function pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceTyp
       const res = await fetch(`/api/immich-cross-check/${jobId}/${frameNo}`);
       const result = await res.json();
       if (result.error) {
-        out.innerHTML = `<div style="font-size:11px;color:#d9534f;">${result.error}</div>`;
+        out.innerHTML = `<div style="font-size:var(--fs-11);color:#d9534f;">${result.error}</div>`;
       } else if (!result.results.length) {
-        out.innerHTML = `<div style="font-size:11px;color:var(--dim);">No faces in Immich library yet to compare against.</div>`;
+        out.innerHTML = `<div style="font-size:var(--fs-11);color:var(--dim);">No faces in Immich library yet to compare against.</div>`;
       } else {
-        out.innerHTML = `<div style="font-size:10px;color:var(--dim);margin-bottom:4px;">Closest matches already in Immich:</div>` +
+        out.innerHTML = `<div style="font-size:var(--fs-10);color:var(--dim);margin-bottom:4px;">Closest matches already in Immich:</div>` +
           result.results.slice(0, 8).map((r, i) => `
             <div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid #1a1a20;">
               <img src="/api/thumb/${r.assetId}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;">
-              <div style="flex:1;min-width:0;font-size:10px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.filename}</div>
-              <div style="font-size:10px;color:var(--accent);">${(r.similarity * 100).toFixed(1)}%</div>
-              <button class="cc-add-btn" data-idx="${i}" data-asset-id="${r.assetId}" style="font-size:9px;padding:3px 6px;background:#2a1a3a;border:1px solid #4a2a6a;color:#d4a5ff;border-radius:4px;cursor:pointer;flex-shrink:0;">${extraImmichNodes.some(n => n.assetId === r.assetId) ? 'Remove ✓' : '+ Ring'}</button>
+              <div style="flex:1;min-width:0;font-size:var(--fs-10);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.filename}</div>
+              <div style="font-size:var(--fs-10);color:var(--accent);">${(r.similarity * 100).toFixed(1)}%</div>
+              <button class="cc-add-btn" data-idx="${i}" data-asset-id="${r.assetId}" style="font-size:var(--fs-9);padding:3px 6px;background:#2a1a3a;border:1px solid #4a2a6a;color:#d4a5ff;border-radius:4px;cursor:pointer;flex-shrink:0;">${extraImmichNodes.some(n => n.assetId === r.assetId) ? 'Remove ✓' : '+ Ring'}</button>
             </div>
           `).join('');
         out.querySelectorAll('.cc-add-btn').forEach(btn => {
@@ -1876,7 +1970,7 @@ async function pollAnalysis(jobId, sourceLabel, refFrameIdx, statusEl, sourceTyp
         });
       }
     } catch (e) {
-      out.innerHTML = `<div style="font-size:11px;color:#d9534f;">Request failed: ${e}</div>`;
+      out.innerHTML = `<div style="font-size:var(--fs-11);color:#d9534f;">Request failed: ${e}</div>`;
     }
     btn.textContent = 'Check vs Immich library';
     btn.disabled = false;
@@ -2532,7 +2626,7 @@ document.getElementById('find-neutral-btn').addEventListener('click', () => {
   });
   readout.style.display = 'block';
   readout.innerHTML = `Most neutral: <b>${best.filename}</b> — yaw ${best.yaw.toFixed(1)}° pitch ${best.pitch.toFixed(1)}° roll ${best.roll.toFixed(1)}° (sim ${(best.similarity*100).toFixed(1)}%)
-    <button type="button" id="use-as-reference-btn" style="display:block;width:100%;margin-top:6px;font-size:10px;padding:5px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:4px;cursor:pointer;">Use as reference &amp; re-analyze</button>`;
+    <button type="button" id="use-as-reference-btn" style="display:block;width:100%;margin-top:6px;font-size:var(--fs-10);padding:5px;background:#1a2a3a;border:1px solid #2a4a6a;color:var(--accent);border-radius:4px;cursor:pointer;">Use as reference &amp; re-analyze</button>`;
   flashHighlightFrame(best);
 
   document.getElementById('use-as-reference-btn').onclick = () => {
@@ -2787,3 +2881,4 @@ function removeImmichNodeFromRing(assetId) {
   updateImmichSelectionBar();
   renderVideoRing();
 }
+

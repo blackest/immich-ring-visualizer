@@ -4,7 +4,30 @@
     --text: #e8e8ec;
     --dim: #6b6b76;
     --accent: #7cc4ff;
+
+    /* centralized font-size scale - the whole UI runs on these 8 tiers
+       (confirmed by grepping every font-size across index.html/app.js/
+       style.css), so bumping one value here now reaches every use of that
+       size instead of a find-and-replace across two files. New markup
+       should use the .fs-N utility classes below rather than a hardcoded
+       px value, to keep it that way. */
+    --fs-8: 8px;
+    --fs-9: 9px;
+    --fs-10: 10px;
+    --fs-11: 11px;
+    --fs-12: 12px;
+    --fs-13: 13px;
+    --fs-15: 15px;
+    --fs-16: 16px;
   }
+  .fs-8  { font-size: var(--fs-8); }
+  .fs-9  { font-size: var(--fs-9); }
+  .fs-10 { font-size: var(--fs-10); }
+  .fs-11 { font-size: var(--fs-11); }
+  .fs-12 { font-size: var(--fs-12); }
+  .fs-13 { font-size: var(--fs-13); }
+  .fs-15 { font-size: var(--fs-15); }
+  .fs-16 { font-size: var(--fs-16); }
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -18,7 +41,10 @@
     position: fixed;
     top: 16px;
     right: 356px;
-    z-index: 30;
+    /* above the selection-modal overlay (z-index:100) so the rollover
+       preview still works while that modal is open, not just on the
+       ring/list views behind it */
+    z-index: 110;
     width: 340px;
     height: 355px;
     background: #101015;
@@ -38,7 +64,7 @@
   }
   #preview-hover-panel .preview-caption {
     margin-top: 4px;
-    font-size: 11px;
+    font-size:var(--fs-11);
     color: var(--dim);
     text-align: center;
     white-space: nowrap;
@@ -52,7 +78,7 @@
     left: 16px;
     bottom: 16px;
     z-index: 10;
-    font-size: 13px;
+    font-size:var(--fs-13);
     color: var(--dim);
     background: rgba(10, 10, 14, 0.72);
     backdrop-filter: blur(6px);
@@ -142,7 +168,7 @@
     border-radius: 5px;
     color: var(--dim);
     cursor: pointer;
-    font-size: 11px;
+    font-size:var(--fs-11);
     z-index: 12;
   }
   #left-panel-collapse-all:hover {
@@ -174,7 +200,7 @@
     gap: 6px;
     padding: 8px 10px;
     cursor: pointer;
-    font-size: 11px;
+    font-size:var(--fs-11);
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--dim);
@@ -187,7 +213,7 @@
   .panel-section-header .chev {
     display: inline-block;
     transition: transform 0.15s ease;
-    font-size: 10px;
+    font-size:var(--fs-10);
     width: 10px;
   }
   .panel-section.expanded .panel-section-header .chev {
@@ -209,7 +235,7 @@
   #left-panel .fname {
     color: var(--text);
     font-weight: 600;
-    font-size: 15px;
+    font-size:var(--fs-15);
     margin-bottom: 2px;
   }
   #left-panel .mode {
@@ -218,7 +244,7 @@
     border-radius: 999px;
     background: #1a1a20;
     border: 1px solid #2a2a32;
-    font-size: 11px;
+    font-size:var(--fs-11);
     letter-spacing: 0.03em;
     margin-top: 6px;
   }
@@ -232,7 +258,7 @@
     background: #16161c;
     border: 1px solid #2a2a32;
     color: var(--text);
-    font-size: 12px;
+    font-size:var(--fs-12);
     padding: 7px 10px;
     border-radius: 6px;
     outline: none;
@@ -261,7 +287,7 @@
     gap: 8px;
     padding: 6px 10px;
     cursor: pointer;
-    font-size: 12px;
+    font-size:var(--fs-12);
   }
   .search-result-row:hover { background: #1f1f27; }
   .search-result-row img {
@@ -285,7 +311,7 @@
     border-radius: 6px;
     background: #1a2a3a;
     color: var(--accent);
-    font-size: 11px;
+    font-size:var(--fs-11);
     cursor: pointer;
   }
   #video-drop-zone > div:last-child {
@@ -323,7 +349,7 @@
     padding-right: 4px;
   }
   #preview-help {
-    font-size: 10px;
+    font-size:var(--fs-10);
     color: var(--dim);
     text-align: center;
     margin-top: 5px;
@@ -333,7 +359,7 @@
     align-items: center;
     justify-content: space-between;
     margin-top: 6px;
-    font-size: 11px;
+    font-size:var(--fs-11);
     color: var(--text);
   }
   .btn-seek {
@@ -343,7 +369,7 @@
     border-radius: 4px;
     padding: 3px 8px;
     cursor: pointer;
-    font-size: 11px;
+    font-size:var(--fs-11);
   }
   .btn-seek:hover {
     background: #282834;
@@ -358,7 +384,7 @@
     color: var(--accent);
     border-radius: 6px;
     cursor: pointer;
-    font-size: 11px;
+    font-size:var(--fs-11);
     font-weight: 600;
   }
   .btn-analyze:hover {
@@ -366,7 +392,7 @@
   }
   #video-status {
     margin-top: 6px;
-    font-size: 11px;
+    font-size:var(--fs-11);
     color: var(--dim);
   }
   #video-status .progress-track {
@@ -423,14 +449,14 @@
     min-width: 0;
   }
   #sidebar-current .label {
-    font-size: 10px;
+    font-size:var(--fs-10);
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--dim);
     margin-bottom: 3px;
   }
   #sidebar-current .fname {
-    font-size: 13px;
+    font-size:var(--fs-13);
     font-weight: 600;
     color: var(--text);
     white-space: nowrap;
@@ -438,12 +464,12 @@
     text-overflow: ellipsis;
   }
   #sidebar-current .mode {
-    font-size: 10px;
+    font-size:var(--fs-10);
     color: var(--dim);
     margin-top: 3px;
   }
   #sidebar-current .detail {
-    font-size: 10px;
+    font-size:var(--fs-10);
     color: var(--dim);
     margin-top: 3px;
     line-height: 1.3;
@@ -455,7 +481,7 @@
   }
   #sidebar-header {
     padding: 10px 16px;
-    font-size: 11px;
+    font-size:var(--fs-11);
     letter-spacing: 0.05em;
     color: var(--dim);
     text-transform: uppercase;
@@ -480,7 +506,7 @@
     border-radius: 5px;
     padding: 3px 7px;
     cursor: pointer;
-    font-size: 10px;
+    font-size:var(--fs-10);
     text-transform: none;
     letter-spacing: 0;
     flex-shrink: 0;
@@ -523,7 +549,7 @@
     min-width: 0;
   }
   .list-row .fname {
-    font-size: 12px;
+    font-size:var(--fs-12);
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
@@ -541,7 +567,7 @@
     background: var(--accent);
   }
   .list-row .simpct {
-    font-size: 10px;
+    font-size:var(--fs-10);
     color: var(--dim);
     margin-left: 8px;
     flex-shrink: 0;
@@ -553,7 +579,7 @@
     align-items: center;
     gap: 6px;
     padding: 8px 16px;
-    font-size: 10px;
+    font-size:var(--fs-10);
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--dim);
@@ -567,7 +593,7 @@
     flex: 1;
   }
   .list-section-count {
-    font-size: 10px;
+    font-size:var(--fs-10);
     color: var(--dim);
     text-transform: none;
     letter-spacing: 0;
@@ -581,7 +607,7 @@
     border-radius: 5px;
     padding: 3px 7px;
     cursor: pointer;
-    font-size: 10px;
+    font-size:var(--fs-10);
     text-transform: none;
     letter-spacing: 0;
     flex-shrink: 0;
@@ -599,7 +625,7 @@
     background: #241a3a;
     border: 1px solid #4a2a6a;
     color: #b89aff;
-    font-size: 9px;
+    font-size:var(--fs-9);
     text-transform: none;
     letter-spacing: 0;
     cursor: pointer;
@@ -669,7 +695,7 @@
     border-color: var(--accent);
   }
   .pose-list-item .plabel {
-    font-size: 9px;
+    font-size:var(--fs-9);
     color: var(--dim);
     margin-top: 3px;
     white-space: nowrap;
@@ -729,7 +755,7 @@
     border: 2px solid #0e0e12;
   }
   .pose-scrub-label {
-    font-size: 10px;
+    font-size:var(--fs-10);
     color: var(--dim);
     white-space: nowrap;
     min-width: 60px;
@@ -761,7 +787,7 @@
     bottom: -18px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 9px;
+    font-size:var(--fs-9);
     color: var(--dim);
     white-space: nowrap;
   }
@@ -771,5 +797,5 @@
     left: 50%;
     transform: translate(-50%, -50%);
     color: var(--dim);
-    font-size: 13px;
+    font-size:var(--fs-13);
   }
