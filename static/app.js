@@ -563,6 +563,7 @@ let modalFrameOverride = null;
 
 function openSelectionModal() {
   modalFrameOverride = null;
+  document.getElementById('selection-modal-undo-wrap').style.display = 'none';
   document.getElementById('selection-modal-overlay').style.display = 'flex';
   renderSelectionModal();
 }
@@ -663,6 +664,10 @@ function renderSelectionModal() {
     document.querySelectorAll('.pose-list-item.selected, .node.export-selected').forEach(el => {
       if (el.dataset.filename === it.filename) el.classList.remove('selected', 'export-selected');
     });
+    // a manual edit after a deselect-all makes that undo snapshot stale
+    // (it no longer matches "everything before you cleared it") - hide it
+    // rather than let it silently restore items you've since removed again
+    document.getElementById('selection-modal-undo-wrap').style.display = 'none';
     renderSelectionModal();
   }
 
@@ -925,6 +930,44 @@ document.getElementById('selection-modal-real-preview').addEventListener('change
 document.getElementById('selection-modal-pose-layout').addEventListener('change', (e) => {
   document.getElementById('selection-modal-spread-wrap').style.display = e.target.checked ? 'flex' : 'none';
   renderSelectionModal();
+});
+
+// deselect-all with a one-step undo, rather than a checkbox toggle - this
+// is a one-shot action (clear everything), not a persistent on/off state,
+// so a checkbox wouldn't have a meaningful "checked" meaning afterward.
+// The undo snapshot covers the exact accidental-selection scenario this
+// was built for: clicking it clears the whole export selection, but one
+// more click brings it straight back if that wasn't what you meant.
+let lastDeselectedFrames = null;
+let lastDeselectedAssetIds = null;
+
+document.getElementById('selection-modal-deselect-all').addEventListener('click', () => {
+  const totalCleared = selectedFrames.size + selectedAssetIds.size;
+  if (totalCleared === 0) return;
+  lastDeselectedFrames = new Set(selectedFrames);
+  lastDeselectedAssetIds = new Set(selectedAssetIds);
+  selectedFrames.clear();
+  selectedAssetIds.clear();
+  syncSelectionVisuals();
+  updateSaveSelectedButton();
+  updateImmichSelectionBar();
+  renderSelectionModal();
+
+  const undoWrap = document.getElementById('selection-modal-undo-wrap');
+  document.getElementById('selection-modal-undo-count').textContent = totalCleared;
+  undoWrap.style.display = 'inline-flex';
+});
+
+document.getElementById('selection-modal-undo').addEventListener('click', () => {
+  if (lastDeselectedFrames) lastDeselectedFrames.forEach(f => selectedFrames.add(f));
+  if (lastDeselectedAssetIds) lastDeselectedAssetIds.forEach(a => selectedAssetIds.add(a));
+  lastDeselectedFrames = null;
+  lastDeselectedAssetIds = null;
+  syncSelectionVisuals();
+  updateSaveSelectedButton();
+  updateImmichSelectionBar();
+  renderSelectionModal();
+  document.getElementById('selection-modal-undo-wrap').style.display = 'none';
 });
 
 document.getElementById('selection-modal-close').addEventListener('click', closeSelectionModal);

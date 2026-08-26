@@ -355,6 +355,11 @@
         <input id="selection-modal-real-preview" type="checkbox">
         Show real export crop (slower)
       </label>
+      <button id="selection-modal-deselect-all" title="Clear the export selection" style="background:#2a1a1a;border:1px solid #4a2a2a;color:#e0a0a0;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:var(--fs-10);">Deselect All</button>
+      <span id="selection-modal-undo-wrap" style="display:none;align-items:center;gap:6px;font-size:var(--fs-10);">
+        <span style="color:var(--dim);">Cleared <span id="selection-modal-undo-count"></span> item(s).</span>
+        <button id="selection-modal-undo" style="background:none;border:1px solid var(--accent);color:var(--accent);padding:3px 8px;border-radius:6px;cursor:pointer;font-size:var(--fs-10);">Undo</button>
+      </span>
       <button id="selection-modal-close" style="background:none;border:none;color:var(--dim);font-size:var(--fs-16);cursor:pointer;line-height:1;">✕</button>
     </div>
     <div id="selection-modal-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;padding:14px;overflow-y:auto;"></div>

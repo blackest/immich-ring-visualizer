@@ -562,40 +562,71 @@ def vert_fill_ratio(bbox, frame_w, frame_h):
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
+# Per-job in-memory frame cache: {job_id: {frame_idx: (bytes, mimetype)}}.
+# Analysis used to cv2.imwrite() every passed frame straight to FRAME_STORE
+# on the SSD - for a 700-frame clip where most frames pass, that's 700 real
+# write operations for a scratch cache that mostly just feeds UI thumbnails
+# and gets thrown away on restart. It's unnecessary I/O: /api/export-job
+# already reads the true original source at export time, so this cache
+# only needs to exist in RAM for as long as the job/browser tab is open.
+# A 1080p JPEG q88 frame is ~200KB, so even a few thousand cached frames
+# costs low hundreds of MB - trivial next to a 96GB machine, and zero SSD
+# wear either way. If nothing is ever exported, nothing beyond the single
+# unavoidable source-video/original-image files ever touches disk at all.
+_frame_cache = {}
+_frame_cache_lock = threading.Lock()
+
 
 def write_cache_frame(job_id, frame_idx, img, cache_format="jpg"):
-    """Writes an analysis-pipeline frame to FRAME_STORE in the job's chosen
-    cache format, returning the frame_id (without extension) used to look
-    it up again. PNG is lossless but ~10x the size and ~10x slower to
-    write than JPEG q88 (measured: ~2.2MB/71ms vs ~220KB/6ms per 1080p
-    frame) - real cost for a scratch cache that only feeds the UI, since
-    /api/export-job now reads back the true original source rather than
-    this cache. Opt-in per job via the 'Cache as PNG' checkbox rather than
-    a global default, since JPEG is the sensible default and PNG is for
-    someone who specifically wants to inspect/rely on the cache itself at
-    full fidelity."""
+    """Encodes an analysis-pipeline frame and holds it in RAM (never
+    written to disk), returning the frame_id used to look it up again.
+    PNG is lossless but ~10x the size and ~10x slower to encode than JPEG
+    q88 (measured: ~2.2MB/71ms vs ~220KB/6ms per 1080p frame) - opt-in via
+    the 'Cache as PNG' checkbox rather than a global default, since JPEG
+    is the sensible default and PNG is for someone who specifically wants
+    the cache itself at full fidelity (e.g. inspecting thumbnails closely
+    before deciding what to export)."""
     import cv2
     frame_id = f"{job_id}_{frame_idx:05d}"
     if cache_format == "png":
-        out_path = os.path.join(FRAME_STORE, f"{frame_id}.png")
-        cv2.imwrite(out_path, img)
+        ok, buf = cv2.imencode(".png", img)
+        mimetype = "image/png"
     else:
-        out_path = os.path.join(FRAME_STORE, f"{frame_id}.jpg")
-        cv2.imwrite(out_path, img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        mimetype = "image/jpeg"
+    if ok:
+        with _frame_cache_lock:
+            _frame_cache.setdefault(job_id, {})[frame_idx] = (buf.tobytes(), mimetype)
     return frame_id
 
 
 def find_cache_frame(frame_id):
-    """Locates a cached frame regardless of which format it was written in
-    - callers no longer need to know/guess the extension. Returns
-    (path, mimetype) or (None, None) if neither exists."""
-    jpg_path = os.path.join(FRAME_STORE, f"{frame_id}.jpg")
-    if os.path.exists(jpg_path):
-        return jpg_path, "image/jpeg"
-    png_path = os.path.join(FRAME_STORE, f"{frame_id}.png")
-    if os.path.exists(png_path):
-        return png_path, "image/png"
-    return None, None
+    """Locates a cached frame's bytes by frame_id (format 'jobid_NNNNN'),
+    regardless of which format it was cached in. Returns (bytes, mimetype)
+    or (None, None) if not found (e.g. job/frame never cached, or the
+    server restarted and the in-memory cache was lost - callers already
+    treat a cache miss as "fall back to the true original", which is
+    strictly better data anyway, so losing this cache on restart costs
+    nothing beyond a slower re-read)."""
+    try:
+        job_id, frame_idx_str = frame_id.rsplit("_", 1)
+        frame_idx = int(frame_idx_str)
+    except ValueError:
+        return None, None
+    with _frame_cache_lock:
+        entry = _frame_cache.get(job_id, {}).get(frame_idx)
+    if entry is None:
+        return None, None
+    return entry
+
+
+def clear_frame_cache(job_id):
+    """Frees a job's in-memory frame cache. Call when a job is discarded
+    (new analysis started, tab closed and job GC'd, etc.) so RAM doesn't
+    accumulate indefinitely across a long session the way the old disk
+    cache silently would have on the SSD."""
+    with _frame_cache_lock:
+        _frame_cache.pop(job_id, None)
 
 
 def run_folder_analysis(job_id, image_paths, anchor_path, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg"):
@@ -975,10 +1006,10 @@ def analysis_status(job_id):
 
 @app.route("/api/framefile/<frame_id>")
 def frame_file(frame_id):
-    path, mimetype = find_cache_frame(frame_id)
-    if path is None:
+    img_bytes, mimetype = find_cache_frame(frame_id)
+    if img_bytes is None:
         return "", 404
-    return send_file(path, mimetype=mimetype)
+    return Response(img_bytes, mimetype=mimetype)
 
 
 @app.route("/api/export-job/<job_id>", methods=["POST"])
@@ -1042,15 +1073,16 @@ def export_job(job_id):
                     used_original = True
 
         if img is None:
-            # fall back to the temp cache rather than dropping the frame
-            # entirely - a re-compressed export beats a missing one, but
-            # flag it so it's visible in the response rather than silent.
-            # find_cache_frame handles either extension - the cache could
-            # be JPEG or PNG depending on what this job was started with.
-            src, _mimetype = find_cache_frame(r['frameId'])
-            if src is None:
+            # fall back to the in-memory cache rather than dropping the
+            # frame entirely - a re-compressed export beats a missing one,
+            # but flag it so it's visible in the response rather than
+            # silent. This cache lives in RAM now, not on disk - a miss
+            # here (job cache expired/server restarted) just means falling
+            # further back is impossible, hence the frame gets skipped.
+            cache_bytes, _mimetype = find_cache_frame(r['frameId'])
+            if cache_bytes is None:
                 continue
-            img = cv2.imread(src)
+            img = cv2.imdecode(np.frombuffer(cache_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
             if img is None:
                 continue
             reencoded_count += 1
@@ -1545,10 +1577,10 @@ def export_preview_frame(job_id, frame_no):
     if not r or not (r.get("passed") and r.get("frameId")):
         return "frame not available for preview (not passed / not cached)", 404
 
-    src, _mimetype = find_cache_frame(r['frameId'])
-    if src is None:
+    cache_bytes, _mimetype = find_cache_frame(r['frameId'])
+    if cache_bytes is None:
         return "source frame no longer cached", 404
-    img = cv2.imread(src)
+    img = cv2.imdecode(np.frombuffer(cache_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         return "could not read source frame", 404
 
