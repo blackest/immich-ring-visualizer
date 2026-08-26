@@ -23,6 +23,8 @@ import uuid
 import numpy as np
 import zipfile
 import shutil
+import io
+import av
 
 # ---- CONFIG: edit these to match your setup ----
 PG_HOST = "localhost"
@@ -67,8 +69,8 @@ FRAME_STORE = tempfile.mkdtemp(prefix="ringviz_frames_")
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 os.makedirs(EXPORT_DIR, exist_ok=True)
 _face_app = None
-_analysis_jobs = {}  # jobId -> {"status": ..., "results": [...], "video": ..., "anchor": ...}
-_preview_jobs = {}  # previewId -> {"video": path, "fps": float, "frames": int}
+_analysis_jobs = {}  # jobId -> {"status": ..., "results": [...], "videoBytes": ..., ...}
+_preview_jobs = {}  # previewId -> {"videoBytes": bytes, "fps": float, "frames": int}
 
 
 def get_face_app():
@@ -404,47 +406,35 @@ def export_immich_asset_ids(asset_ids, dest_dir, p):
     }
 
 
-def run_video_analysis(job_id, video_path, anchor_path, sim_threshold, blur_threshold, ref_frame_idx=1, cache_format="jpg"):
-    import cv2
-
+def run_video_analysis(job_id, video_bytes, sim_threshold, blur_threshold, ref_frame_idx=1, cache_format="jpg"):
     job = _analysis_jobs[job_id]
     try:
         face_app = get_face_app()
+        mv = MemoryVideo(video_bytes)
 
-        cap = cv2.VideoCapture(video_path)
-        
         target_frame = max(1, ref_frame_idx)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame - 1)
-        
-        ret, ref_frame = cap.read()
-        if not ret:
+        ref_frame = mv.seek_frame(target_frame)
+        if ref_frame is None:
             job["status"] = "error"
             job["error"] = f"Could not read reference frame {target_frame} from video"
-            cap.release()
             return
 
-        cv2.imwrite(anchor_path, ref_frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        # anchor thumbnail (single small file, not a per-frame cache issue)
+        # kept as the one on-disk artifact for the "Frame N (Anchor)" UI
+        # to load quickly without re-decoding from memory every time
+        anchor_id = write_cache_frame(job_id, "anchor", ref_frame, "jpg")
+        job["anchorFrameId"] = anchor_id
 
         ref_faces = face_app.get(ref_frame)
         if not ref_faces:
             job["status"] = "error"
             job["error"] = f"No face detected in reference frame {target_frame}"
-            cap.release()
             return
         ref_embedding = ref_faces[0].normed_embedding
 
-        cap.release()
-        cap = cv2.VideoCapture(video_path)
-
-        frame_idx = 0
         results = []
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame_idx += 1
-
+        for frame_idx, frame in mv.iter_frames():
             faces = face_app.get(frame)
             fh, fw = frame.shape[:2]
             if not faces:
@@ -471,7 +461,7 @@ def run_video_analysis(job_id, video_path, anchor_path, sim_threshold, blur_thre
                 fail_reason = "sim"
             elif not (blur_score > blur_threshold):
                 fail_reason = "blur"
-            
+
             passed = (fail_reason is None)
 
             if passed:
@@ -491,7 +481,6 @@ def run_video_analysis(job_id, video_path, anchor_path, sim_threshold, blur_thre
             })
             job["results"] = results
 
-        cap.release()
         job["status"] = "done"
         job["resolutionSummary"] = summarize_resolutions(results)
     except Exception as e:
@@ -577,9 +566,13 @@ _frame_cache = {}
 _frame_cache_lock = threading.Lock()
 
 
-def write_cache_frame(job_id, frame_idx, img, cache_format="jpg"):
+def write_cache_frame(job_id, frame_key, img, cache_format="jpg"):
     """Encodes an analysis-pipeline frame and holds it in RAM (never
     written to disk), returning the frame_id used to look it up again.
+    frame_key is either a frame number (int) or the literal string
+    "anchor" for the one reference-frame thumbnail each job has - both
+    are stored under the same string-keyed cache so find_cache_frame()
+    doesn't need to special-case which kind of frame_id it was asked for.
     PNG is lossless but ~10x the size and ~10x slower to encode than JPEG
     q88 (measured: ~2.2MB/71ms vs ~220KB/6ms per 1080p frame) - opt-in via
     the 'Cache as PNG' checkbox rather than a global default, since JPEG
@@ -587,7 +580,8 @@ def write_cache_frame(job_id, frame_idx, img, cache_format="jpg"):
     the cache itself at full fidelity (e.g. inspecting thumbnails closely
     before deciding what to export)."""
     import cv2
-    frame_id = f"{job_id}_{frame_idx:05d}"
+    suffix = "anchor" if frame_key == "anchor" else f"{frame_key:05d}"
+    frame_id = f"{job_id}_{suffix}"
     if cache_format == "png":
         ok, buf = cv2.imencode(".png", img)
         mimetype = "image/png"
@@ -596,25 +590,24 @@ def write_cache_frame(job_id, frame_idx, img, cache_format="jpg"):
         mimetype = "image/jpeg"
     if ok:
         with _frame_cache_lock:
-            _frame_cache.setdefault(job_id, {})[frame_idx] = (buf.tobytes(), mimetype)
+            _frame_cache.setdefault(job_id, {})[suffix] = (buf.tobytes(), mimetype)
     return frame_id
 
 
 def find_cache_frame(frame_id):
-    """Locates a cached frame's bytes by frame_id (format 'jobid_NNNNN'),
-    regardless of which format it was cached in. Returns (bytes, mimetype)
-    or (None, None) if not found (e.g. job/frame never cached, or the
-    server restarted and the in-memory cache was lost - callers already
-    treat a cache miss as "fall back to the true original", which is
-    strictly better data anyway, so losing this cache on restart costs
-    nothing beyond a slower re-read)."""
+    """Locates a cached frame's bytes by frame_id ('jobid_00042' or
+    'jobid_anchor'), regardless of which format it was cached in. Returns
+    (bytes, mimetype) or (None, None) if not found (e.g. job/frame never
+    cached, or the server restarted and the in-memory cache was lost -
+    callers already treat a cache miss as "fall back to the true
+    original", which is strictly better data anyway, so losing this cache
+    on restart costs nothing beyond a slower re-read)."""
     try:
-        job_id, frame_idx_str = frame_id.rsplit("_", 1)
-        frame_idx = int(frame_idx_str)
+        job_id, suffix = frame_id.rsplit("_", 1)
     except ValueError:
         return None, None
     with _frame_cache_lock:
-        entry = _frame_cache.get(job_id, {}).get(frame_idx)
+        entry = _frame_cache.get(job_id, {}).get(suffix)
     if entry is None:
         return None, None
     return entry
@@ -629,7 +622,80 @@ def clear_frame_cache(job_id):
         _frame_cache.pop(job_id, None)
 
 
-def run_folder_analysis(job_id, image_paths, anchor_path, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg"):
+class MemoryVideo:
+    """Wraps a PyAV container opened directly from in-memory bytes - the
+    uploaded video is never written to disk at all. Provides the two
+    access patterns the app actually needs:
+
+    - seek_frame(n): random access to an exact 1-based frame number, for
+      picking a reference/anchor frame or re-reading one specific frame
+      at export time. PyAV seeks by timestamp, not frame index, so this
+      seeks near the target time then decodes forward to the exact frame
+      - verified against cv2.VideoCapture's own frame numbering (pixel-
+      identical results) before relying on it here.
+    - iter_frames(): sequential decode of the whole stream in order, for
+      the main per-frame analysis loop - this is the efficient path
+      PyAV is built for, much cheaper than seeking frame-by-frame.
+
+    fps/frame_count are read once at open time so callers don't need
+    their own cv2.VideoCapture just to ask "how many frames is this and
+    what's its rate" - previously a second full VideoCapture open."""
+
+    def __init__(self, video_bytes):
+        self._video_bytes = video_bytes  # keep the source bytes so a
+                                          # fresh container can be reopened
+                                          # for a new seek/iteration pass -
+                                          # PyAV containers are single-pass
+        self.fps, self.frame_count, self.width, self.height = self._probe()
+
+    def _open_container(self):
+        buf = io.BytesIO(self._video_bytes)
+        container = av.open(buf)
+        stream = next(s for s in container.streams if s.type == "video")
+        stream.thread_type = "AUTO"
+        return container, stream
+
+    def _probe(self):
+        container, stream = self._open_container()
+        fps = float(stream.average_rate) if stream.average_rate else 25.0
+        frame_count = stream.frames or 0
+        width, height = stream.width, stream.height
+        container.close()
+        return fps, frame_count, width, height
+
+    def seek_frame(self, frame_idx_1based):
+        """Returns the exact frame (1-based, matching cv2's numbering
+        convention used throughout the rest of this app) as a BGR numpy
+        array, or None if out of range."""
+        container, stream = self._open_container()
+        try:
+            target_time = max(0, (frame_idx_1based - 1) / self.fps)
+            container.seek(int(target_time / stream.time_base), stream=stream)
+            for frame in container.decode(stream):
+                frame_time = float(frame.pts * stream.time_base)
+                idx = round(frame_time * self.fps) + 1
+                if idx >= frame_idx_1based:
+                    return frame.to_ndarray(format="bgr24")
+            return None
+        finally:
+            container.close()
+
+    def iter_frames(self):
+        """Yields (frame_idx_1based, bgr_ndarray) for every frame in
+        order - the efficient path for a full analysis pass, opens its
+        own container so it doesn't collide with a concurrent seek_frame
+        call on the same MemoryVideo."""
+        container, stream = self._open_container()
+        try:
+            idx = 0
+            for frame in container.decode(stream):
+                idx += 1
+                yield idx, frame.to_ndarray(format="bgr24")
+        finally:
+            container.close()
+
+
+def run_folder_analysis(job_id, image_paths, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg"):
     """Same pipeline as run_video_analysis, but the 'frames' are a set of
     still images from a folder/zip upload instead of decoded video frames.
     image_paths is a pre-sorted list; frame numbering follows that order so
@@ -648,7 +714,8 @@ def run_folder_analysis(job_id, image_paths, anchor_path, sim_threshold, blur_th
             job["error"] = f"Could not read reference image {os.path.basename(image_paths[ref_idx])}"
             return
 
-        cv2.imwrite(anchor_path, ref_frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        anchor_id = write_cache_frame(job_id, "anchor", ref_frame, "jpg")
+        job["anchorFrameId"] = anchor_id
 
         ref_faces = face_app.get(ref_frame)
         if not ref_faces:
@@ -736,7 +803,6 @@ def analyze_folder():
     job_id = uuid.uuid4().hex[:12]
     src_dir = os.path.join(FRAME_STORE, f"{job_id}_srcimgs")
     os.makedirs(src_dir, exist_ok=True)
-    anchor_path = os.path.join(FRAME_STORE, f"{job_id}_anchor.jpg")
 
     saved_paths = []
 
@@ -799,7 +865,7 @@ def analyze_folder():
 
     t = threading.Thread(
         target=run_folder_analysis,
-        args=(job_id, saved_paths, anchor_path, sim_threshold, blur_threshold, ref_index, cache_format),
+        args=(job_id, saved_paths, sim_threshold, blur_threshold, ref_index, cache_format),
         daemon=True
     )
     t.start()
@@ -827,7 +893,6 @@ def analyze_immich():
     job_id = uuid.uuid4().hex[:12]
     src_dir = os.path.join(FRAME_STORE, f"{job_id}_srcimgs")
     os.makedirs(src_dir, exist_ok=True)
-    anchor_path = os.path.join(FRAME_STORE, f"{job_id}_anchor.jpg")
 
     saved_paths = []
     fetch_errors = []
@@ -882,7 +947,7 @@ def analyze_immich():
 
     t = threading.Thread(
         target=run_folder_analysis,
-        args=(job_id, saved_paths, anchor_path, sim_threshold, blur_threshold, ref_index, cache_format),
+        args=(job_id, saved_paths, sim_threshold, blur_threshold, ref_index, cache_format),
         daemon=True
     )
     t.start()
@@ -892,37 +957,37 @@ def analyze_immich():
 
 @app.route("/api/preview-video", methods=["POST"])
 def preview_video():
-    """Prepare a video for exact frame-by-frame preview."""
-    import cv2
+    """Prepare a video for exact frame-by-frame preview - used to scrub
+    around and pick a good reference/anchor frame before committing to a
+    full analysis run. Held entirely in memory: this upload used to write
+    its own separate copy of the video to disk (on top of the second,
+    independent copy analyze-video writes if you go on to run analysis on
+    the same clip) - real duplicate SSD writes for the same source file."""
     if "video" not in request.files:
         return jsonify({"error": "video file required"}), 400
 
     preview_id = uuid.uuid4().hex[:12]
-    video_path = os.path.join(FRAME_STORE, f"{preview_id}_preview.mp4")
-    request.files["video"].save(video_path)
+    video_bytes = request.files["video"].read()
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return jsonify({"error": "Could not open video"}), 400
+    try:
+        mv = MemoryVideo(video_bytes)
+    except Exception as e:
+        return jsonify({"error": f"Could not open video: {e}"}), 400
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    cap.release()
-
-    if fps <= 0 or total_frames <= 0:
+    if mv.fps <= 0 or mv.frame_count <= 0:
         return jsonify({"error": "Could not determine video FPS/frame count"}), 400
 
     _preview_jobs[preview_id] = {
-        "video": video_path,
-        "fps": fps,
-        "frames": total_frames,
+        "videoBytes": video_bytes,
+        "fps": mv.fps,
+        "frames": mv.frame_count,
     }
 
     return jsonify({
         "previewId": preview_id,
-        "fps": fps,
-        "totalFrames": total_frames,
-        "duration": total_frames / fps,
+        "fps": mv.fps,
+        "totalFrames": mv.frame_count,
+        "duration": mv.frame_count / mv.fps,
     })
 
 
@@ -936,15 +1001,9 @@ def preview_frame(preview_id, frame_no):
         return "", 404
 
     frame_no = max(1, min(job["frames"], frame_no))
-    cap = cv2.VideoCapture(job["video"])
-    if not cap.isOpened():
-        return "", 404
-
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no - 1)
-    ret, frame = cap.read()
-    cap.release()
-
-    if not ret:
+    mv = MemoryVideo(job["videoBytes"])
+    frame = mv.seek_frame(frame_no)
+    if frame is None:
         return "", 404
 
     ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -965,14 +1024,18 @@ def analyze_video():
     cache_format = "png" if request.form.get("cacheFormat") == "png" else "jpg"
 
     job_id = uuid.uuid4().hex[:12]
-    video_path = os.path.join(FRAME_STORE, f"{job_id}_source.mp4")
-    anchor_path = os.path.join(FRAME_STORE, f"{job_id}_anchor.jpg")
-    request.files["video"].save(video_path)
+    # read the upload straight into memory rather than saving it to disk -
+    # this is the one file that used to hit the SSD unconditionally on
+    # every video job, whether or not anything ever got exported. It's
+    # held in the job dict for the job's lifetime so export/playback/
+    # re-analysis can all reopen it via MemoryVideo without a second
+    # upload or a disk round-trip.
+    video_bytes = request.files["video"].read()
 
     source_name = os.path.splitext(request.files["video"].filename or "clip")[0]
     _analysis_jobs[job_id] = {
         "status": "running", "results": [], "error": None,
-        "sourceName": source_name, "videoPath": video_path,
+        "sourceName": source_name, "videoBytes": video_bytes,
         "simThreshold": sim_threshold,
         "blurThreshold": blur_threshold,
         "cacheFormat": cache_format,
@@ -980,7 +1043,7 @@ def analyze_video():
 
     t = threading.Thread(
         target=run_video_analysis,
-        args=(job_id, video_path, anchor_path, sim_threshold, blur_threshold, ref_frame, cache_format),
+        args=(job_id, video_bytes, sim_threshold, blur_threshold, ref_frame, cache_format),
         daemon=True
     )
     t.start()
@@ -1031,8 +1094,8 @@ def export_job(job_id):
     p = _export_params_from_body(body)
 
     face_app = None
-    video_cap = None  # lazily opened only if this job has a videoPath - avoids
-                       # opening a video file for folder/immich-sourced jobs
+    mv = None  # lazily opened only if this job has videoBytes - avoids
+               # opening a MemoryVideo for folder/immich-sourced jobs
     saved = []
     errors = []
     skipped_count = 0
@@ -1050,18 +1113,19 @@ def export_job(job_id):
         # cache written during analysis - that cache exists so the ring/list
         # UI has something fast to display and click through, but re-reading
         # it at export time means every export is a re-compression of an
-        # already-lossy copy. A video's original file and a folder job's
-        # source images both still live on disk for the job's lifetime, so
-        # there's no reason to go through the cache when writing final output.
+        # already-lossy copy. A video's bytes and a folder job's source
+        # images both still live for the job's lifetime (in RAM for video,
+        # on disk for folder originals - those are the user's own uploaded
+        # files, not a scratch cache, so keeping them is fine), so there's
+        # no reason to go through the cache when writing final output.
         img = None
         used_original = False
 
-        if job.get("videoPath") and os.path.exists(job["videoPath"]):
-            if video_cap is None:
-                video_cap = cv2.VideoCapture(job["videoPath"])
-            video_cap.set(cv2.CAP_PROP_POS_FRAMES, r["frame"] - 1)
-            ret, raw = video_cap.read()
-            if ret:
+        if job.get("videoBytes"):
+            if mv is None:
+                mv = MemoryVideo(job["videoBytes"])
+            raw = mv.seek_frame(r["frame"])
+            if raw is not None:
                 img = raw
                 used_original = True
         elif job.get("srcDir") and r.get("origName"):
@@ -1117,9 +1181,6 @@ def export_job(job_id):
         cv2.imwrite(dest_path, out_img)
         saved.append(dest_name)
 
-    if video_cap is not None:
-        video_cap.release()
-
     immich_result = {"saved": [], "errors": [], "widened": 0, "padded": 0}
     if selected_asset_ids:
         immich_result = export_immich_asset_ids(selected_asset_ids, dest_dir, p)
@@ -1154,30 +1215,24 @@ def build_playback(job_id):
     if job["status"] != "done":
         return jsonify({"error": "analysis not finished yet"}), 400
 
-    video_path = job.get("videoPath")
-    if not video_path or not os.path.exists(video_path):
+    video_bytes = job.get("videoBytes")
+    if not video_bytes:
         return jsonify({"error": "source video no longer available"}), 400
 
     by_frame = {r["frame"]: r for r in job["results"]}
 
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    mv = MemoryVideo(video_bytes)
+    fps = mv.fps or 24.0
+    width, height = mv.width, mv.height
 
     raw_path = os.path.join(FRAME_STORE, f"{job_id}_playback_raw.mp4")
     out_path = os.path.join(FRAME_STORE, f"{job_id}_playback.mp4")
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(raw_path, fourcc, fps, (width, height))
 
-    frame_idx = 0
     blank = np.zeros((height, width, 3), dtype=np.uint8)
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_idx += 1
+    for frame_idx, frame in mv.iter_frames():
         r = by_frame.get(frame_idx)
 
         if r and r.get("passed"):
@@ -1192,7 +1247,6 @@ def build_playback(job_id):
                         0.7, (60, 60, 200), 2, cv2.LINE_AA)
             writer.write(canvas)
 
-    cap.release()
     writer.release()
 
     import subprocess
