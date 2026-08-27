@@ -406,11 +406,18 @@ def export_immich_asset_ids(asset_ids, dest_dir, p):
     }
 
 
-def run_video_analysis(job_id, video_bytes, sim_threshold, blur_threshold, ref_frame_idx=1, cache_format="jpg"):
+def run_video_analysis(job_id, video_bytes, sim_threshold, blur_threshold, ref_frame_idx=1, cache_format="jpg", start_sec=None, end_sec=None):
     job = _analysis_jobs[job_id]
     try:
         face_app = get_face_app()
         mv = MemoryVideo(video_bytes)
+
+        # start_sec/end_sec (seconds into the clip) are the natural unit for
+        # a person to specify - "skip to minute 54" - but iter_frames()
+        # works in frame numbers, so convert here once fps is known rather
+        # than making every caller do the arithmetic themselves.
+        start_frame = int(start_sec * mv.fps) + 1 if start_sec else None
+        end_frame = int(end_sec * mv.fps) + 1 if end_sec else None
 
         target_frame = max(1, ref_frame_idx)
         ref_frame = mv.seek_frame(target_frame)
@@ -434,7 +441,13 @@ def run_video_analysis(job_id, video_bytes, sim_threshold, blur_threshold, ref_f
 
         results = []
 
-        for frame_idx, frame in mv.iter_frames():
+        # start_frame/end_frame scope the analysis pass to a window of the
+        # clip instead of always walking start-to-finish. iter_frames()
+        # seeks straight to start_frame rather than decoding through
+        # everything before it, so skipping "10 minutes of nobody in
+        # frame yet" on a long clip costs nothing instead of costing a
+        # full decode of the part you already know is unusable.
+        for frame_idx, frame in mv.iter_frames(start_frame=start_frame, end_frame=end_frame):
             faces = face_app.get(frame)
             fh, fw = frame.shape[:2]
             if not faces:
@@ -680,17 +693,47 @@ class MemoryVideo:
         finally:
             container.close()
 
-    def iter_frames(self):
-        """Yields (frame_idx_1based, bgr_ndarray) for every frame in
-        order - the efficient path for a full analysis pass, opens its
-        own container so it doesn't collide with a concurrent seek_frame
-        call on the same MemoryVideo."""
+    def iter_frames(self, start_frame=None, end_frame=None):
+        """Yields (frame_idx_1based, bgr_ndarray) for frames in order,
+        optionally scoped to [start_frame, end_frame] inclusive (both
+        1-based, either end optional). Seeks straight to start_frame
+        rather than decoding through everything before it - the same
+        keyframe-seek-then-decode-forward approach seek_frame() uses, so
+        a 90-minute clip scoped to minute 54-55 doesn't cost decoding the
+        54 minutes before it. Stops as soon as end_frame is passed rather
+        than decoding to EOF and discarding the rest."""
         container, stream = self._open_container()
         try:
             idx = 0
-            for frame in container.decode(stream):
-                idx += 1
-                yield idx, frame.to_ndarray(format="bgr24")
+            if start_frame and start_frame > 1:
+                target_time = max(0, (start_frame - 1) / self.fps)
+                container.seek(int(target_time / stream.time_base), stream=stream)
+                # seeking lands at the nearest keyframe at/before the
+                # target, which is usually earlier than start_frame -
+                # figure out where we actually landed by peeking the
+                # first decoded frame's own timestamp, same idx math
+                # seek_frame() uses, then continue from there.
+                decoder = container.decode(stream)
+                first = next(decoder, None)
+                if first is None:
+                    return
+                frame_time = float(first.pts * stream.time_base)
+                idx = round(frame_time * self.fps) + 1
+                if idx >= start_frame and (end_frame is None or idx <= end_frame):
+                    yield idx, first.to_ndarray(format="bgr24")
+                for frame in decoder:
+                    idx += 1
+                    if idx < start_frame:
+                        continue
+                    if end_frame is not None and idx > end_frame:
+                        return
+                    yield idx, frame.to_ndarray(format="bgr24")
+            else:
+                for frame in container.decode(stream):
+                    idx += 1
+                    if end_frame is not None and idx > end_frame:
+                        return
+                    yield idx, frame.to_ndarray(format="bgr24")
         finally:
             container.close()
 
@@ -1022,6 +1065,13 @@ def analyze_video():
     blur_threshold = float(request.form.get("blurThreshold", 100))
     ref_frame = int(request.form.get("refFrame", 1))
     cache_format = "png" if request.form.get("cacheFormat") == "png" else "jpg"
+    # optional analysis window, in seconds into the clip - lets a long
+    # video skip straight to the section that matters instead of always
+    # decoding from frame 1. Either end can be omitted.
+    start_sec_raw = request.form.get("startSec", "").strip()
+    end_sec_raw = request.form.get("endSec", "").strip()
+    start_sec = float(start_sec_raw) if start_sec_raw else None
+    end_sec = float(end_sec_raw) if end_sec_raw else None
 
     job_id = uuid.uuid4().hex[:12]
     # read the upload straight into memory rather than saving it to disk -
@@ -1039,11 +1089,13 @@ def analyze_video():
         "simThreshold": sim_threshold,
         "blurThreshold": blur_threshold,
         "cacheFormat": cache_format,
+        "startSec": start_sec,
+        "endSec": end_sec,
     }
 
     t = threading.Thread(
         target=run_video_analysis,
-        args=(job_id, video_bytes, sim_threshold, blur_threshold, ref_frame, cache_format),
+        args=(job_id, video_bytes, sim_threshold, blur_threshold, ref_frame, cache_format, start_sec, end_sec),
         daemon=True
     )
     t.start()

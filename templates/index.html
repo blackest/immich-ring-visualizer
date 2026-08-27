@@ -70,6 +70,12 @@
           <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:var(--fs-10);color:var(--dim);margin-bottom:8px;" title="JPEG q88 (default) is ~10x smaller and faster to write. PNG is lossless but costs real temp storage and slower analysis - only matters if you rely on this scratch cache directly, since export now reads the true original source regardless.">
             <input type="checkbox" id="cache-format-png"> Cache frames as PNG (lossless, slower, more temp storage)
           </label>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:var(--fs-10);color:var(--dim);" title="Skip straight to a section of a long video instead of decoding from the start - useful when the useful footage doesn't begin at frame 1. Leave blank to analyze the whole clip.">
+            <span style="white-space:nowrap;">Analyze window (sec):</span>
+            <input id="analysis-start-sec" type="number" step="1" min="0" placeholder="start" style="width:70px;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;">
+            <span>–</span>
+            <input id="analysis-end-sec" type="number" step="1" min="0" placeholder="end" style="width:70px;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;">
+          </div>
           <input type="file" id="video-file-input" accept="video/*" style="display:none">
           <input type="file" id="folder-images-input" accept="image/*" multiple style="display:none">
           <input type="file" id="folder-zip-input" accept=".zip" style="display:none">
@@ -366,6 +372,8 @@
   </div>
 </div>
 
-<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script src="{{ url_for('static', filename='viz-render.js') }}"></script>
+<script src="{{ url_for('static', filename='media-ingest.js') }}"></script>
+<script src="{{ url_for('static', filename='selection-ui.js') }}"></script>
 </body>
 </html>
