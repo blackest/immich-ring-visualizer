@@ -1,7 +1,6 @@
 from flask import Blueprint, request, jsonify, Response, send_file
 from config import FRAME_STORE, IMAGE_EXTS
 from folder_analysis import run_folder_analysis
-from ring_viz import app
 from state import _analysis_jobs
 
 folder_bp = Blueprint('folder', __name__)

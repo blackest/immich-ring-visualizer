@@ -3,7 +3,6 @@ from config import EXPORT_DIR, IMMICH_API_KEY, IMMICH_BASE_URL
 from detection import get_face_app, pick_best_face, pick_largest_face
 from exporter import export_immich_asset_ids
 from image_ops import _export_params_from_body, crop_resize_export, should_skip_for_small_face
-from ring_viz import app
 from state import _analysis_jobs
 from video_analysis import MemoryVideo, find_cache_frame
 

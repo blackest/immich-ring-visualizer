@@ -1,6 +1,5 @@
 from flask import Blueprint, request, jsonify, Response, send_file
 from config import FRAME_STORE
-from ring_viz import app
 from state import _analysis_jobs, _preview_jobs
 from video_analysis import MemoryVideo, find_cache_frame, run_video_analysis
 

@@ -3,7 +3,6 @@ from config import FRAME_STORE, IMAGE_EXTS, IMMICH_API_KEY, IMMICH_BASE_URL
 from db import get_conn, release_conn
 from detection import get_blur_score, get_face_app, pick_best_face, pick_largest_face
 from folder_analysis import run_folder_analysis
-from ring_viz import app
 from state import _analysis_jobs
 from video_analysis import bbox_frame_ratio, vert_fill_ratio
 
