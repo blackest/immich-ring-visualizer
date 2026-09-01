@@ -1,3 +1,7 @@
+import os
+import requests
+import numpy as np
+import cv2
 from flask import Blueprint, request, jsonify, Response, send_file
 from config import EXPORT_DIR, IMMICH_API_KEY, IMMICH_BASE_URL
 from detection import get_face_app, pick_best_face, pick_largest_face
