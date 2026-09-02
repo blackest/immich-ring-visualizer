@@ -301,6 +301,18 @@
       <div class="detail" id="sidebar-current-detail"></div>
     </div>
   </div>
+  <div id="phosphene-sheet-panel" style="padding:10px 16px;border-bottom:1px solid #212127;">
+    <div style="font-size:var(--fs-10);color:var(--dim);margin-bottom:6px;">Character sheet (Phosphene)</div>
+    <input id="phosphene-sheet-name" type="text" placeholder="Character name (optional)"
+           style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-11);margin-bottom:6px;">
+    <button type="button" id="phosphene-sheet-btn" onclick="phosphereGenerateSheet()"
+            style="width:100%;font-size:var(--fs-11);padding:6px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:4px;cursor:pointer;">
+      Generate 3-angle sheet
+    </button>
+    <div id="phosphene-sheet-status" style="font-size:var(--fs-10);color:var(--dim);margin-top:6px;"></div>
+    <img id="phosphene-sheet-img" src="" alt="Character sheet"
+         style="display:none;width:100%;margin-top:8px;border-radius:4px;border:1px solid #2a2a32;">
+  </div>
   <div id="sidebar-scroll">
     <div id="sidebar-header"><span id="sidebar-header-title">Ranked matches</span><button id="toggle-list-btn" title="Hide ranked match list">Hide</button></div>
     <div id="ranked-sort-row" style="display:flex;gap:10px;align-items:center;padding:6px 16px;border-bottom:1px solid #212127;font-size:var(--fs-10);color:var(--dim);">
@@ -375,5 +387,6 @@
 <script src="{{ url_for('static', filename='viz-render.js') }}"></script>
 <script src="{{ url_for('static', filename='media-ingest.js') }}"></script>
 <script src="{{ url_for('static', filename='selection-ui.js') }}"></script>
+<script src="{{ url_for('static', filename='phosphene-sheet.js') }}"></script>
 </body>
 </html>
