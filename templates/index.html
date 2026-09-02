@@ -307,7 +307,13 @@
            style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-11);margin-bottom:6px;">
     <button type="button" id="phosphene-sheet-btn" onclick="phosphereGenerateSheet()"
             style="width:100%;font-size:var(--fs-11);padding:6px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:4px;cursor:pointer;">
-      Generate 3-angle sheet
+      Generate 3-angle sheet (from current reference)
+    </button>
+    <input type="file" id="phosphene-sheet-file" accept="image/*" style="display:none"
+           onchange="phosphereGenerateFromFile(this)">
+    <button type="button" id="phosphene-sheet-file-btn" onclick="document.getElementById('phosphene-sheet-file').click()"
+            style="width:100%;font-size:var(--fs-10);padding:5px;background:#16161c;border:1px solid #2a2a32;color:var(--dim);border-radius:4px;cursor:pointer;margin-top:6px;">
+      or choose a photo from disk…
     </button>
     <div id="phosphene-sheet-status" style="font-size:var(--fs-10);color:var(--dim);margin-top:6px;"></div>
     <img id="phosphene-sheet-img" src="" alt="Character sheet"
