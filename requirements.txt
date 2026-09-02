@@ -6,3 +6,4 @@ opencv-python
 insightface
 onnxruntime
 av>=18.1.0
+Pillow

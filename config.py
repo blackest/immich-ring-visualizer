@@ -14,7 +14,6 @@ IMMICH_BASE_URL = "http://localhost:2283"
 
 IMMICH_API_KEY = "L4mP37A5kNWHPME0024ms2SGep7KR8xP4oAB9UNGqOM"
 
-PHOSPHENE_BASE_URL = os.environ.get("PHOSPHENE_BASE_URL", "http://127.0.0.1:8198")
 
 FRAME_STORE = tempfile.mkdtemp(prefix="ringviz_frames_")
 

@@ -302,12 +302,49 @@
     </div>
   </div>
   <div id="phosphene-sheet-panel" style="padding:10px 16px;border-bottom:1px solid #212127;">
-    <div style="font-size:var(--fs-10);color:var(--dim);margin-bottom:6px;">Character sheet (Phosphene)</div>
+    <div style="font-size:var(--fs-10);color:var(--dim);margin-bottom:6px;">Character sheet</div>
     <input id="phosphene-sheet-name" type="text" placeholder="Character name (optional)"
            style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-11);margin-bottom:6px;">
+
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      <select id="phosphene-preset-select" title="Shot list"
+              style="flex:1;min-width:0;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);">
+        <option value="default">Default — 3-view turnaround</option>
+        <option value="extended">Extended — 15-shot dataset</option>
+      </select>
+      <select id="phosphene-style-select" title="Film / genre look"
+              style="flex:1;min-width:0;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);">
+        <option value="none">No style</option>
+        <option value="cinematic">Cinematic</option>
+        <option value="editorial">Editorial</option>
+        <option value="documentary">Documentary</option>
+        <option value="warm_film">Warm film</option>
+        <option value="dramatic">Dramatic</option>
+      </select>
+    </div>
+
+    <div id="phosphene-settings-toggle"
+         style="font-size:var(--fs-10);color:var(--accent);cursor:pointer;margin-bottom:6px;user-select:none;">
+      ▸ more settings
+    </div>
+    <div id="phosphene-settings-more" style="display:none;margin-bottom:6px;">
+      <input id="phosphene-wardrobe-input" type="text" placeholder="Wardrobe override (optional)"
+             style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);margin-bottom:4px;">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">
+        <input id="phosphene-seed-input" type="number" placeholder="Seed (blank = random)"
+               style="flex:1;min-width:0;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);">
+        <label style="display:flex;align-items:center;gap:4px;font-size:var(--fs-10);color:var(--dim);white-space:nowrap;cursor:pointer;">
+          <input type="checkbox" id="phosphene-identity-lock-cb" checked> identity lock
+        </label>
+      </div>
+      <textarea id="phosphene-custom-prompt-input" rows="2"
+                placeholder="Free prompt (optional) — replaces the preset with one custom shot"
+                style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);resize:vertical;"></textarea>
+    </div>
+
     <button type="button" id="phosphene-sheet-btn" onclick="phosphereGenerateSheet()"
             style="width:100%;font-size:var(--fs-11);padding:6px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:4px;cursor:pointer;">
-      Generate 3-angle sheet (from current reference)
+      Generate sheet (from current reference)
     </button>
     <input type="file" id="phosphene-sheet-file" accept="image/*" style="display:none"
            onchange="phosphereGenerateFromFile(this)">
@@ -315,9 +352,15 @@
             style="width:100%;font-size:var(--fs-10);padding:5px;background:#16161c;border:1px solid #2a2a32;color:var(--dim);border-radius:4px;cursor:pointer;margin-top:6px;">
       or choose a photo from disk…
     </button>
+
     <div id="phosphene-sheet-status" style="font-size:var(--fs-10);color:var(--dim);margin-top:6px;"></div>
+    <div id="phosphene-log-tail"
+         style="display:none;font-family:monospace;font-size:var(--fs-9);color:var(--dim);white-space:pre-wrap;max-height:70px;overflow-y:auto;margin-top:4px;background:#0e0e12;border:1px solid #212127;border-radius:4px;padding:4px;"></div>
+
     <img id="phosphene-sheet-img" src="" alt="Character sheet"
          style="display:none;width:100%;margin-top:8px;border-radius:4px;border:1px solid #2a2a32;">
+    <div id="phosphene-shot-grid"
+         style="display:none;grid-template-columns:repeat(3, 1fr);gap:4px;margin-top:8px;"></div>
   </div>
   <div id="sidebar-scroll">
     <div id="sidebar-header"><span id="sidebar-header-title">Ranked matches</span><button id="toggle-list-btn" title="Hide ranked match list">Hide</button></div>
