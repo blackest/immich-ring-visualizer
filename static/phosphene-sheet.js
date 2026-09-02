@@ -63,7 +63,7 @@ function _phosphereShowError(payload, fallback) {
 }
 
 function _phosphereSubmit(request) {
-  _phosphereStart('Generating (3 views, rendered one after another — can take a few minutes)…');
+  _phosphereStart('Generating (3 views, one after another — roughly 20-30 min on this hardware, not a few)…');
   request
     .then(r => r.json().then(payload => ({ ok: r.ok, payload })))
     .then(({ ok, payload }) => {

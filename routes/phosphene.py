@@ -49,7 +49,13 @@ from config import IMMICH_API_KEY, IMMICH_BASE_URL, PHOSPHENE_BASE_URL
 
 phosphene_bp = Blueprint("phosphene", __name__)
 
-_REQUEST_TIMEOUT_SECONDS = 600
+_REQUEST_TIMEOUT_SECONDS = 3600  # 3 sequential HiDream renders,
+# each its own full 28-step diffusion loop (~20s/it observed on this
+# hardware, so ~9-10 min/view) - the whole sheet is one blocking call
+# for all three, easily 25-30+ min end to end. 600s was copied from
+# elsewhere without checking real render time and timed out mid-render
+# even though Phosphene kept working - this generous ceiling is a
+# safety net, not the expected wait.
 
 
 @phosphene_bp.route("/api/phosphene/status", methods=["GET"])
