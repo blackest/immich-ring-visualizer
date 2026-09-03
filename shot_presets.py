@@ -37,6 +37,17 @@ class ShotSpec:
     "free prompt" per-shot escape hatch; it still gets wrapped in the
     identity-lock clauses unless the caller turns identity_lock off for
     the whole job.
+
+    `use_anchor` -- whether THIS shot may receive the job-level anchor
+    image (see generate_character_sheet's anchor_chain) as a second
+    reference, when anchor_chain is otherwise on. Default True keeps the
+    original behavior. Set False for shots whose pose_phrase asks for a
+    real angle change (profile/three-quarter) -- the anchor is a
+    near-frontal image (the first rendered shot), and HiDream's
+    multi-reference conditioning was found to carry the anchor's pose
+    along with its color, overriding the text instruction to turn to
+    profile. Text alone ("same hair color, same exact hairstyle" in the
+    identity-lock clause) still applies to these shots.
     """
     key: str
     pose_phrase: str = ""
@@ -44,6 +55,7 @@ class ShotSpec:
     background: str = ""
     wardrobe: str = ""
     prompt_override: str = ""
+    use_anchor: bool = True
 
 
 # ---------------------------------------------------------------------
@@ -84,25 +96,25 @@ EXTENDED_PRESET: list[ShotSpec] = [
     ShotSpec("close_three_quarter",
              "an extreme close-up beauty shot of the face and neck only, "
              "turned three-quarters between front and profile",
-             background=_BACKGROUNDS[0]),
+             background=_BACKGROUNDS[0], use_anchor=False),
 
     ShotSpec("chest_front",
              "a chest-up portrait, head and shoulders, facing the camera "
              "directly", background=_BACKGROUNDS[1]),
     ShotSpec("chest_profile_left",
              "a chest-up portrait, head and shoulders, seen from the left "
-             "side in profile", background=_BACKGROUNDS[1]),
+             "side in profile", background=_BACKGROUNDS[1], use_anchor=False),
     ShotSpec("chest_profile_right",
              "a chest-up portrait, head and shoulders, seen from the right "
-             "side in profile", background=_BACKGROUNDS[1]),
+             "side in profile", background=_BACKGROUNDS[1], use_anchor=False),
     ShotSpec("chest_three_quarter_left",
              "a chest-up portrait, head and shoulders, turned "
              "three-quarters to the left, halfway between front and "
-             "profile", background=_BACKGROUNDS[1]),
+             "profile", background=_BACKGROUNDS[1], use_anchor=False),
     ShotSpec("chest_three_quarter_right",
              "a chest-up portrait, head and shoulders, turned "
              "three-quarters to the right, halfway between front and "
-             "profile", background=_BACKGROUNDS[1]),
+             "profile", background=_BACKGROUNDS[1], use_anchor=False),
     ShotSpec("chest_front_smiling",
              "a chest-up portrait, head and shoulders, facing the camera "
              "directly", expression="a warm natural smile",
@@ -114,10 +126,10 @@ EXTENDED_PRESET: list[ShotSpec] = [
     ShotSpec("waist_three_quarter",
              "a waist-up portrait, upper body visible, turned "
              "three-quarters between front and profile",
-             background=_BACKGROUNDS[2]),
+             background=_BACKGROUNDS[2], use_anchor=False),
     ShotSpec("waist_profile_left",
              "a waist-up portrait, upper body visible, seen from the left "
-             "side in profile", background=_BACKGROUNDS[3]),
+             "side in profile", background=_BACKGROUNDS[3], use_anchor=False),
 
     ShotSpec("fullbody_front",
              "a full-body shot from head to feet, standing, facing the "
@@ -125,10 +137,10 @@ EXTENDED_PRESET: list[ShotSpec] = [
     ShotSpec("fullbody_three_quarter",
              "a full-body shot from head to feet, standing, turned "
              "three-quarters between front and profile",
-             background=_BACKGROUNDS[3]),
+             background=_BACKGROUNDS[3], use_anchor=False),
     ShotSpec("fullbody_profile_left",
              "a full-body shot from head to feet, standing, seen from the "
-             "left side in profile", background=_BACKGROUNDS[0]),
+             "left side in profile", background=_BACKGROUNDS[0], use_anchor=False),
     ShotSpec("fullbody_front_dynamic",
              "a full-body shot from head to feet, standing in a relaxed, "
              "natural candid pose, facing generally toward the camera",

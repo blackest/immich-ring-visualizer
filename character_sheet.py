@@ -181,7 +181,7 @@ def create_draft_character(name: str, source_image_path: str, *,
     return bundle
 
 
-def _view_prompt(view_phrase: str, wardrobe: str = "") -> str:
+def _view_prompt(view_phrase: str, wardrobe: str = "", hair_color: str = "") -> str:
     """Verbatim from Phosphene's _character_sheet_view_prompt (the
     session-tuned version) -- every clause below exists because a real
     render defect motivated it; see PHOSPHENE_DECOUPLING_PLAN.md's
@@ -191,10 +191,20 @@ def _view_prompt(view_phrase: str, wardrobe: str = "") -> str:
     function -- rather than folded into _shot_prompt -- so the original
     3-view sheet's output stays provably identical to what's already
     been verified end-to-end on real hardware; _shot_prompt delegates to
-    this for any shot that doesn't use the newer per-shot fields."""
+    this for any shot that doesn't use the newer per-shot fields.
+
+    `hair_color`, if given, names the color explicitly ("blonde", "dark
+    red", ...) instead of the default relative "same hair color as the
+    reference image" clause. Added 2026-09-03 alongside use_anchor=False
+    on the extended preset's angle shots (see ShotSpec's docstring) --
+    hair color is a small enough vocabulary that a concrete name should
+    be a more reliable instruction than "same as reference" once a shot
+    no longer also gets the anchor image as a second, color-carrying
+    reference."""
+    hair_clause = f"{hair_color} hair" if hair_color else "same hair color"
     prompt = (
         "Keep this person exactly as they are in the reference image -- same "
-        "face, same skin tone and complexion, same hair color, same exact "
+        f"face, same skin tone and complexion, {hair_clause}, same exact "
         "hairstyle (do not restyle, tie back, loosen, or otherwise change "
         "how the hair is worn -- keep the same length and the same way it "
         "falls), same build, wearing exactly the same clothes as in "
@@ -209,11 +219,16 @@ def _view_prompt(view_phrase: str, wardrobe: str = "") -> str:
 
 
 def _shot_prompt(spec: ShotSpec, wardrobe: str = "", *,
-                 identity_lock: bool = True, style: str = "none") -> str:
+                 identity_lock: bool = True, style: str = "none",
+                 hair_color: str = "") -> str:
     """General shot-spec prompt builder. For a plain default-preset shot
     (no background/expression/override) with identity_lock on, this
     produces byte-identical output to _view_prompt -- see that
-    function's docstring for why that matters."""
+    function's docstring for why that matters.
+
+    `hair_color`: see _view_prompt's docstring -- same optional explicit
+    color name, job-level only (unlike wardrobe there's no per-shot
+    override; hair color shouldn't vary shot to shot within one sheet)."""
     pose = spec.prompt_override or spec.pose_phrase
     shot_wardrobe = spec.wardrobe or wardrobe
 
@@ -221,7 +236,8 @@ def _shot_prompt(spec: ShotSpec, wardrobe: str = "", *,
         # Power-user / free-prompt escape hatch: no identity clauses at
         # all, just the pose text (or full override) as-is. Chosen over
         # John (2026-09-02): identity-lock stays the default everywhere
-        # else, this is opt-in per job.
+        # else, this is opt-in per job. hair_color is an identity clause
+        # too, so it's correctly skipped here along with the rest.
         prompt = pose
         style_clause = shot_presets.STYLE_PRESETS.get(style, "")
         if spec.background:
@@ -234,16 +250,17 @@ def _shot_prompt(spec: ShotSpec, wardrobe: str = "", *,
 
     if not spec.background and not spec.expression and not spec.prompt_override \
             and style in (None, "none"):
-        return _view_prompt(pose, shot_wardrobe)
+        return _view_prompt(pose, shot_wardrobe, hair_color)
 
     expression_clause = f", {spec.expression}" if spec.expression else ""
     background_clause = spec.background or (
         "Neutral seamless studio background, soft even lighting that "
         "matches the reference image's skin tone")
     style_clause = shot_presets.STYLE_PRESETS.get(style, "")
+    hair_clause = f"{hair_color} hair" if hair_color else "same hair color"
     prompt = (
         "Keep this person exactly as they are in the reference image -- same "
-        "face, same skin tone and complexion, same hair color, same exact "
+        f"face, same skin tone and complexion, {hair_clause}, same exact "
         "hairstyle (do not restyle, tie back, loosen, or otherwise change "
         "how the hair is worn -- keep the same length and the same way it "
         "falls), same build, wearing exactly the same clothes as in "
@@ -335,6 +352,7 @@ def generate_character_sheet(name: str, *,
                              shots: Optional[list] = None,
                              views: Optional[list] = None,
                              wardrobe: str = "",
+                             hair_color: str = "",
                              seed: int = -1,
                              anchor_chain: bool = True,
                              identity_lock: bool = True,
@@ -371,6 +389,7 @@ def generate_character_sheet(name: str, *,
     shot_list = resolve_shots(preset=preset, shots=shots, views=views)
 
     wardrobe = str(wardrobe or "").strip()
+    hair_color = str(hair_color or "").strip()
     try:
         seed = int(seed)
     except (TypeError, ValueError):
@@ -399,11 +418,12 @@ def generate_character_sheet(name: str, *,
         anchor_png = None
         for i, spec in enumerate(shot_list):
             prompt = _shot_prompt(spec, wardrobe, identity_lock=identity_lock,
-                                  style=style)
+                                  style=style, hair_color=hair_color)
             view_dir = char_dir / "sheet_views" / spec.key
             view_dir.mkdir(parents=True, exist_ok=True)
             view_refs = [str(ref)] + (
-                [anchor_png] if (anchor_png and anchor_chain) else [])
+                [anchor_png] if (anchor_png and anchor_chain and spec.use_anchor)
+                else [])
             if on_log:
                 on_log(f"[sheet] {cid}: shot {i + 1}/{len(shot_list)} ({spec.key})")
             candidates = hidream_engine.generate_hidream(
@@ -467,6 +487,7 @@ def generate_character_sheet(name: str, *,
         "reference": str(ref),
         "preset": preset if (shots is None and views is None) else "custom",
         "wardrobe": wardrobe,
+        "hair_color": hair_color,
         "identity_lock": identity_lock,
         "style": style,
         "seed": seed,

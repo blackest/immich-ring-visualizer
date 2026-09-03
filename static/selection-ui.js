@@ -999,6 +999,8 @@ function wireSidebarResizeHandle() {
   let dragging = false;
   let startX = 0;
   let startWidth = 0;
+  let resizeRafPending = false;
+  let pendingWidth = null;
   handle.addEventListener('mousedown', (e) => {
     dragging = true;
     startX = e.clientX;
@@ -1008,8 +1010,20 @@ function wireSidebarResizeHandle() {
   });
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
-    const newWidth = Math.max(260, Math.min(720, startWidth - (e.clientX - startX)));
-    applyWidth(newWidth);
+    pendingWidth = Math.max(260, Math.min(720, startWidth - (e.clientX - startX)));
+    // throttle to one DOM write per animation frame -- previously every
+    // raw mousemove event rewrote stage.style.right directly, forcing a
+    // full layout recompute for every ring node on every tick. On iPad
+    // that layout churn, combined with the ring thumbnails' loading=lazy
+    // (removed separately in viz-render.js), was enough to make WebKit
+    // drop already-inserted <img> elements without reloading them.
+    if (!resizeRafPending) {
+      resizeRafPending = true;
+      requestAnimationFrame(() => {
+        if (pendingWidth !== null) applyWidth(pendingWidth);
+        resizeRafPending = false;
+      });
+    }
   });
   document.addEventListener('mouseup', () => {
     if (!dragging) return;

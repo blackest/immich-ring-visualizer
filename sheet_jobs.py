@@ -51,6 +51,13 @@ class SheetJob:
     thread: Optional[threading.Thread] = None
     log_lines: list = field(default_factory=list)
     _log_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # Resolved prompt text per shot key -- computed up front at job-start
+    # time (prompts don't depend on render output, just on the shot spec
+    # + settings), not pushed from the render loop. Lets the UI offer a
+    # "copy prompt" action -- for reuse in Phosphene, ComfyUI, or
+    # anywhere else -- the moment a job starts, not just once a shot
+    # finishes rendering.
+    shot_prompts: dict = field(default_factory=dict)
 
     def append_log(self, line: str) -> None:
         with self._log_lock:
@@ -107,6 +114,7 @@ def start_job(character_id: str, *,
              shots: Optional[list] = None,
              views: Optional[list] = None,
              wardrobe: str = "",
+             hair_color: str = "",
              seed: int = -1,
              anchor_chain: bool = True,
              identity_lock: bool = True,
@@ -126,16 +134,30 @@ def start_job(character_id: str, *,
             f"avatar under exports/{cid}/character/")
 
     params = {"preset": preset if (shots is None and views is None) else "custom",
-             "wardrobe": wardrobe, "seed": seed, "anchor_chain": anchor_chain,
+             "wardrobe": wardrobe, "hair_color": hair_color, "seed": seed,
+             "anchor_chain": anchor_chain,
              "identity_lock": identity_lock, "style": style}
+
+    # Same prompt-building call generate_character_sheet will make for
+    # each shot -- pure function of (spec, wardrobe, identity_lock,
+    # style), so this can't drift from what actually gets rendered.
+    shot_prompts = {
+        spec.key: character_sheet._shot_prompt(
+            spec, wardrobe, identity_lock=identity_lock, style=style,
+            hair_color=hair_color)
+        for spec in shot_list
+    }
 
     def target(on_log):
         character_sheet.generate_character_sheet(
             cid, preset=preset, shots=shots, views=views, wardrobe=wardrobe,
+            hair_color=hair_color,
             seed=seed, anchor_chain=anchor_chain, identity_lock=identity_lock,
             style=style, on_log=on_log)
 
-    return _launch(cid, [s.key for s in shot_list], params, target)
+    job = _launch(cid, [s.key for s in shot_list], params, target)
+    job.shot_prompts = shot_prompts
+    return job
 
 
 def start_reroll(character_id: str, shot_key: str, *,
@@ -146,14 +168,17 @@ def start_reroll(character_id: str, shot_key: str, *,
     if not character_sheet.character_exists(cid):
         raise LookupError(f"character {cid!r} not found")
     meta = character_sheet.character_sheet_meta(cid)
-    if not any(v.get("key") == shot_key for v in meta.get("views", [])):
+    existing = next((v for v in meta.get("views", []) if v.get("key") == shot_key), None)
+    if existing is None:
         raise LookupError(f"no shot {shot_key!r} in character {cid!r}'s current sheet")
 
     def target(on_log):
         character_sheet.regenerate_shot(cid, shot_key, seed=seed, prompt=prompt,
                                         on_log=on_log)
 
-    return _launch(cid, [shot_key], {"reroll": True, "shot_key": shot_key, "seed": seed}, target)
+    job = _launch(cid, [shot_key], {"reroll": True, "shot_key": shot_key, "seed": seed}, target)
+    job.shot_prompts = {shot_key: prompt if prompt is not None else existing.get("prompt", "")}
+    return job
 
 
 def get_job(job_id: str) -> Optional[SheetJob]:
@@ -200,6 +225,7 @@ def job_status(job_id: str) -> dict:
         shots.append({
             "key": key, "status": status,
             "thumbnail": str(latest_png) if latest_png else None,
+            "prompt": job.shot_prompts.get(key),
         })
 
     if job.finished_at is None:

@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import character_sheet
 import hidream_engine
+import shot_presets
 
 
 def _write_tiny_png(path: Path):
@@ -103,6 +104,36 @@ class CharacterSheetTestCase(unittest.TestCase):
                        "same exact hairstyle", "wearing exactly the same clothes",
                        "side view portrait from the left"):
             self.assertIn(phrase, prompt)
+
+    def test_view_prompt_default_uses_relative_hair_clause(self):
+        prompt = character_sheet._view_prompt("facing the camera directly")
+        self.assertIn("same hair color", prompt)
+
+    def test_view_prompt_explicit_hair_color_names_it(self):
+        prompt = character_sheet._view_prompt("facing the camera directly",
+                                               hair_color="blonde")
+        self.assertIn("blonde hair", prompt)
+        self.assertNotIn("same hair color", prompt)
+
+    def test_shot_prompt_hair_color_flows_through_full_clause_path(self):
+        # exercises the *other* branch of _shot_prompt (background/
+        # expression/style set, so it builds its own prompt rather than
+        # delegating to _view_prompt) -- both branches need the same fix.
+        spec = shot_presets.ShotSpec("custom_test", "turned to the side",
+                                     background="A plain wall.")
+        prompt = character_sheet._shot_prompt(spec, hair_color="dark red")
+        self.assertIn("dark red hair", prompt)
+        self.assertNotIn("same hair color", prompt)
+
+    def test_shot_prompt_identity_lock_false_ignores_hair_color(self):
+        # hair_color is an identity clause -- the free-prompt escape
+        # hatch (identity_lock=False) must skip it like every other
+        # identity clause, not silently append it anyway.
+        spec = shot_presets.ShotSpec("custom_test", "turned to the side")
+        prompt = character_sheet._shot_prompt(spec, identity_lock=False,
+                                              hair_color="blonde")
+        self.assertNotIn("blonde", prompt)
+        self.assertNotIn("hair", prompt)
 
     def test_view_prompt_appends_wardrobe_when_given(self):
         prompt = character_sheet._view_prompt(
@@ -194,6 +225,49 @@ class CharacterSheetTestCase(unittest.TestCase):
             character_sheet.generate_character_sheet("jack", anchor_chain=False)
         self.assertTrue(all(len(c["refs"]) == 1 for c in calls),
                         "anchor_chain=False: every view uses only the avatar ref")
+
+    def test_generate_character_sheet_extended_preset_skips_anchor_on_angle_shots(self):
+        # The extended preset's profile/three-quarter shots have
+        # use_anchor=False (shot_presets.py) precisely because a fixed,
+        # near-frontal anchor reference was found to drag pose toward
+        # frontal along with color -- see character_sheet.py's
+        # docstring on ShotSpec.use_anchor. Confirm the job-level
+        # anchor_chain=True default still skips the anchor exactly on
+        # those shots, and still applies it on the frontal ones.
+        character_sheet.create_draft_character("nadia", self._src.name)
+        calls = []
+        with mock.patch.object(hidream_engine, "generate_hidream",
+                                self._stub_generate_hidream(calls)):
+            character_sheet.generate_character_sheet("nadia", preset="extended",
+                                                      anchor_chain=True)
+        by_key = {spec.key: c for spec, c in zip(shot_presets.EXTENDED_PRESET, calls)}
+        for spec in shot_presets.EXTENDED_PRESET:
+            n_refs = len(by_key[spec.key]["refs"])
+            if spec.key == shot_presets.EXTENDED_PRESET[0].key:
+                continue  # first shot never has an anchor yet regardless
+            if spec.use_anchor:
+                self.assertEqual(n_refs, 2,
+                    f"{spec.key!r} has use_anchor=True, expected avatar+anchor")
+            else:
+                self.assertEqual(n_refs, 1,
+                    f"{spec.key!r} has use_anchor=False, expected avatar ref only")
+
+    def test_generate_character_sheet_extended_preset_angle_shots_still_get_pose_text(self):
+        # use_anchor=False must not affect the *prompt text* -- the pose
+        # instruction and identity-lock clauses (including "same hair
+        # color") still apply; only the second reference image is
+        # withheld.
+        character_sheet.create_draft_character("otis", self._src.name)
+        calls = []
+        with mock.patch.object(hidream_engine, "generate_hidream",
+                                self._stub_generate_hidream(calls)):
+            character_sheet.generate_character_sheet("otis", preset="extended",
+                                                      anchor_chain=True)
+        profile_call = next(c for spec, c in
+                             zip(shot_presets.EXTENDED_PRESET, calls)
+                             if spec.key == "chest_profile_left")
+        self.assertIn("seen from the left side in profile", profile_call["prompt"])
+        self.assertIn("same hair color", profile_call["prompt"])
 
     def test_generate_character_sheet_writes_sheet_png_and_sidecar_json(self):
         character_sheet.create_draft_character("kim", self._src.name)

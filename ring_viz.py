@@ -29,4 +29,12 @@ app.register_blueprint(immich_bp)
 app.register_blueprint(main_bp)
 app.register_blueprint(phosphene_bp)
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5050, debug=False)
+    # use_reloader on its own (without debug=True) restarts the process
+    # when a .py file changes -- picks up backend fixes without a manual
+    # restart -- without also turning on the in-browser interactive
+    # debugger, which would be a real remote-code-execution surface given
+    # this binds 0.0.0.0 and is reachable over Tailscale, not just
+    # localhost. Note: a reload triggered mid-job (HiDream render, video
+    # analysis) still kills it silently -- job state is in-memory only,
+    # nothing here makes that safe.
+    app.run(host="0.0.0.0", port=5050, debug=False, use_reloader=True)

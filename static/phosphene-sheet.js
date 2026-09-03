@@ -28,6 +28,18 @@ const PHOSPHERE_POLL_MS = 2000;
 let _phospherePollTimer = null;
 let _phosphereCurrentTrigger = null;
 
+// key -> { root, imgWrap, actions, imgEl, phEl, copyBtn, rerollBtn,
+//          lastStatus, lastThumbnail }. Persists across polls of the
+// SAME job so unchanged shots are left alone instead of torn down and
+// rebuilt every tick (that rebuild-every-poll -- plus a fresh
+// cache-busting timestamp on every <img> regardless of whether that
+// shot's render actually changed -- was what made the grid visibly
+// flash roughly once per poll). Cleared only when a brand new
+// top-level generate/upload starts (_phosphereStart), NOT on a reroll
+// poll -- a reroll job's status response only lists the one shot being
+// re-rolled, and the rest of the grid should stay exactly as it was.
+let _phosphereGridCells = new Map();
+
 function _phosphereEls() {
   return {
     btn: document.getElementById('phosphene-sheet-btn'),
@@ -40,6 +52,7 @@ function _phosphereEls() {
     presetSelect: document.getElementById('phosphene-preset-select'),
     styleSelect: document.getElementById('phosphene-style-select'),
     wardrobeInput: document.getElementById('phosphene-wardrobe-input'),
+    hairColorInput: document.getElementById('phosphene-hair-color-input'),
     seedInput: document.getElementById('phosphene-seed-input'),
     identityLockCb: document.getElementById('phosphene-identity-lock-cb'),
     customPromptInput: document.getElementById('phosphene-custom-prompt-input'),
@@ -60,13 +73,14 @@ function _phosphereInitSettingsToggle() {
 }
 
 function _phosphereSettings() {
-  const { presetSelect, styleSelect, wardrobeInput, seedInput,
+  const { presetSelect, styleSelect, wardrobeInput, hairColorInput, seedInput,
           identityLockCb, customPromptInput } = _phosphereEls();
   const seedRaw = (seedInput.value || '').trim();
   return {
     preset: presetSelect.value,
     style: styleSelect.value,
     wardrobe: (wardrobeInput.value || '').trim(),
+    hair_color: (hairColorInput.value || '').trim(),
     seed: seedRaw === '' ? -1 : parseInt(seedRaw, 10),
     identity_lock: identityLockCb.checked,
     custom_prompt: (customPromptInput.value || '').trim(),
@@ -87,6 +101,7 @@ function _phosphereStart(message) {
   img.src = '';
   grid.style.display = 'none';
   grid.innerHTML = '';
+  _phosphereGridCells.clear();
   logTail.style.display = 'none';
   logTail.textContent = '';
   if (_phospherePollTimer) {
@@ -107,52 +122,150 @@ const _PHOSPHERE_STATUS_LABEL = {
   failed: 'failed', not_started: 'skipped',
 };
 
+function _phosphereBuildShotCell(trigger, shot) {
+  const cell = document.createElement('div');
+  cell.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
+
+  const imgWrap = document.createElement('div');
+  imgWrap.style.cssText = 'position:relative;aspect-ratio:1;background:#0e0e12;' +
+    'border:1px solid #2a2a32;border-radius:4px;overflow:hidden;';
+  cell.appendChild(imgWrap);
+
+  const label = document.createElement('div');
+  label.style.cssText = 'font-size:var(--fs-9);color:var(--dim);text-align:center;' +
+    'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  label.textContent = shot.key;
+  cell.appendChild(label);
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:2px;';
+  cell.appendChild(actions);
+
+  const entry = {
+    root: cell, imgWrap, actions,
+    imgEl: null, phEl: null, copyBtn: null, rerollBtn: null,
+    lastStatus: null, lastThumbnail: undefined,
+  };
+  _phosphereApplyShotState(trigger, entry, shot);
+  return entry;
+}
+
+// Patches one shot cell in place -- only touches the DOM for the parts
+// that actually changed since the last poll of this same shot. This is
+// the fix for the once-a-second flash: previously every poll replaced
+// every <img> with a brand new one carrying a fresh Date.now() cache
+// buster, so every image re-fetched from the network every tick
+// regardless of whether that shot had actually rendered anything new.
+// `shot.thumbnail` is the backend's resolved file path for that shot's
+// latest render -- it only changes when a new PNG has actually landed
+// (a fresh render or a re-roll), so using IT as the cache-bust value
+// (instead of the current time) means the <img> only gets replaced,
+// and only re-fetches, when there is genuinely something new to show.
+function _phosphereApplyShotState(trigger, entry, shot) {
+  const showsImage = shot.status === 'done' || shot.status === 'failed';
+  const thumbChanged = shot.thumbnail !== entry.lastThumbnail;
+
+  if (showsImage && (thumbChanged || !entry.imgEl)) {
+    entry.imgWrap.innerHTML = '';
+    const im = document.createElement('img');
+    im.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+    im.src = `/api/phosphene/characters/${encodeURIComponent(trigger)}/shots/` +
+             `${encodeURIComponent(shot.key)}?v=${encodeURIComponent(shot.thumbnail || shot.status)}`;
+    im.alt = shot.key;
+    entry.imgWrap.appendChild(im);
+    entry.imgEl = im;
+    entry.phEl = null;
+  } else if (!showsImage && (shot.status !== entry.lastStatus || !entry.phEl)) {
+    entry.imgWrap.innerHTML = '';
+    const ph = document.createElement('div');
+    ph.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;' +
+      'justify-content:center;color:var(--dim);font-size:var(--fs-9);text-align:center;padding:4px;';
+    ph.textContent = _PHOSPHERE_STATUS_LABEL[shot.status] || shot.status;
+    entry.imgWrap.appendChild(ph);
+    entry.phEl = ph;
+    entry.imgEl = null;
+  }
+  entry.lastThumbnail = shot.thumbnail;
+  entry.lastStatus = shot.status;
+
+  // Prompts are resolved at job-start time (see sheet_jobs.py), so this
+  // is available the moment a job starts -- not just once a shot
+  // finishes rendering. Built once; refreshed only if a re-roll gave
+  // this same shot key a different prompt override.
+  if (shot.prompt && !entry.copyBtn) {
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'copy prompt';
+    copy.title = shot.prompt;
+    copy.style.cssText = 'flex:1;font-size:var(--fs-9);padding:2px;background:#16161c;' +
+      'border:1px solid #2a2a32;color:var(--dim);border-radius:3px;cursor:pointer;';
+    copy.onclick = () => _phosphereCopyPrompt(copy, shot.prompt);
+    entry.actions.appendChild(copy);
+    entry.copyBtn = copy;
+  } else if (shot.prompt && entry.copyBtn && entry.copyBtn.title !== shot.prompt) {
+    entry.copyBtn.title = shot.prompt;
+    entry.copyBtn.onclick = () => _phosphereCopyPrompt(entry.copyBtn, shot.prompt);
+  }
+
+  // Reroll/retry -- appears once a shot has something to reroll, label
+  // flips between the two only when status actually crosses that line.
+  if (showsImage) {
+    const wantLabel = shot.status === 'failed' ? 'retry' : 'reroll';
+    if (!entry.rerollBtn) {
+      const reroll = document.createElement('button');
+      reroll.type = 'button';
+      reroll.style.cssText = 'flex:1;font-size:var(--fs-9);padding:2px;background:#16161c;' +
+        'border:1px solid #2a2a32;color:var(--dim);border-radius:3px;cursor:pointer;';
+      entry.actions.appendChild(reroll);
+      entry.rerollBtn = reroll;
+    }
+    if (entry.rerollBtn.textContent !== wantLabel) entry.rerollBtn.textContent = wantLabel;
+    entry.rerollBtn.onclick = () => _phosphereReroll(trigger, shot.key);
+  }
+}
+
 function _phosphereRenderGrid(trigger, shots) {
   const { grid } = _phosphereEls();
   grid.style.display = 'grid';
-  grid.innerHTML = '';
   shots.forEach(shot => {
-    const cell = document.createElement('div');
-    cell.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
-
-    const imgWrap = document.createElement('div');
-    imgWrap.style.cssText = 'position:relative;aspect-ratio:1;background:#0e0e12;' +
-      'border:1px solid #2a2a32;border-radius:4px;overflow:hidden;';
-
-    if (shot.status === 'done' || shot.status === 'failed') {
-      const im = document.createElement('img');
-      im.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
-      im.src = `/api/phosphene/characters/${encodeURIComponent(trigger)}/shots/` +
-               `${encodeURIComponent(shot.key)}?t=${Date.now()}`;
-      im.alt = shot.key;
-      imgWrap.appendChild(im);
+    let entry = _phosphereGridCells.get(shot.key);
+    if (!entry) {
+      entry = _phosphereBuildShotCell(trigger, shot);
+      _phosphereGridCells.set(shot.key, entry);
+      grid.appendChild(entry.root);
     } else {
-      const ph = document.createElement('div');
-      ph.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;' +
-        'justify-content:center;color:var(--dim);font-size:var(--fs-9);text-align:center;padding:4px;';
-      ph.textContent = _PHOSPHERE_STATUS_LABEL[shot.status] || shot.status;
-      imgWrap.appendChild(ph);
+      _phosphereApplyShotState(trigger, entry, shot);
     }
-    cell.appendChild(imgWrap);
-
-    const label = document.createElement('div');
-    label.style.cssText = 'font-size:var(--fs-9);color:var(--dim);text-align:center;' +
-      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    label.textContent = shot.key;
-    cell.appendChild(label);
-
-    if (shot.status === 'done' || shot.status === 'failed') {
-      const reroll = document.createElement('button');
-      reroll.type = 'button';
-      reroll.textContent = shot.status === 'failed' ? 'retry' : 'reroll';
-      reroll.style.cssText = 'font-size:var(--fs-9);padding:2px;background:#16161c;' +
-        'border:1px solid #2a2a32;color:var(--dim);border-radius:3px;cursor:pointer;';
-      reroll.onclick = () => _phosphereReroll(trigger, shot.key);
-      cell.appendChild(reroll);
-    }
-
-    grid.appendChild(cell);
   });
+}
+
+function _phosphereCopyPrompt(button, text) {
+  const flash = (label) => {
+    const original = button.textContent;
+    button.textContent = label;
+    setTimeout(() => { button.textContent = original; }, 1200);
+  };
+  const fallbackCopy = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-1000px;left:-1000px;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      flash(ok ? 'copied!' : 'copy failed');
+    } catch (err) {
+      console.warn('[phosphere] fallback copy failed:', err);
+      flash('copy failed');
+    }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => flash('copied!'), fallbackCopy);
+  } else {
+    fallbackCopy();
+  }
 }
 
 function _phospherePoll(jobId, trigger) {

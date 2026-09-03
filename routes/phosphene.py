@@ -140,6 +140,7 @@ def _generation_settings_from_body(body: dict) -> dict:
         "shots": shots,
         "views": None if shots else body.get("views"),
         "wardrobe": body.get("wardrobe", ""),
+        "hair_color": str(body.get("hair_color") or "").strip(),
         "seed": body.get("seed", -1),
         "anchor_chain": body.get("anchor_chain", True),
         "identity_lock": body.get("identity_lock", True),
@@ -179,7 +180,7 @@ def generate_sheet_from_immich_asset():
 
     Body: {"asset_id": str (required), "name": str (optional - also
     becomes the trigger; falls back to the raw asset_id), plus the
-    optional generation settings: preset/views/wardrobe/seed/
+    optional generation settings: preset/views/wardrobe/hair_color/seed/
     anchor_chain/identity_lock/style}.
     """
     body = request.get_json(silent=True) or {}
@@ -239,7 +240,7 @@ def generate_sheet_from_upload():
     arbitrary photo, so the caller must supply one), name (optional),
     plus the same optional generation-settings fields as
     sheet-from-asset, sent as individual form fields (multipart bodies
-    don't carry nested JSON) -- preset/wardrobe/seed/anchor_chain/
+    don't carry nested JSON) -- preset/wardrobe/hair_color/seed/anchor_chain/
     identity_lock/style. `views` isn't accepted here (JSON-list-shaped,
     awkward over multipart); use the JSON .../sheet/generate route for
     that.
@@ -263,6 +264,7 @@ def generate_sheet_from_upload():
         "shots": shots,
         "views": None,
         "wardrobe": form.get("wardrobe", ""),
+        "hair_color": (form.get("hair_color") or "").strip(),
         "seed": form.get("seed", -1, type=int),
         "anchor_chain": form.get("anchor_chain", "true").lower() != "false",
         "identity_lock": form.get("identity_lock", "true").lower() != "false",

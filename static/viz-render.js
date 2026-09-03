@@ -82,7 +82,7 @@ function render(centerId, data, centerThumbUrl) {
   center.dataset.baseX = 0;
   center.dataset.baseY = 0;
   center.style.transform = 'translate(-50%, -50%)';
-  center.innerHTML = `<img src="${centerThumbUrl || ('/api/thumb/' + centerId)}" loading="lazy">`;
+  center.innerHTML = `<img src="${centerThumbUrl || ('/api/thumb/' + centerId)}">`;
   
   center.addEventListener('mouseenter', () => showHoverPreview({
     assetId: centerId,
@@ -132,7 +132,7 @@ function render(centerId, data, centerThumbUrl) {
       node.dataset.filename = r.filename;
       if (r.assetId) node.dataset.assetId = r.assetId;
       if (r.frame !== undefined) node.dataset.frame = r.frame;
-      node.innerHTML = `<img src="${thumbUrlFor(r)}" loading="lazy">`;
+      node.innerHTML = `<img src="${thumbUrlFor(r)}">`;
       const isSelected = r.assetId ? selectedAssetIds.has(r.assetId) : (r.frame !== undefined && selectedFrames.has(r.frame));
       if (isSelected) node.classList.add('export-selected');
       // single click (debounced) = recenter the ring on this node; double
