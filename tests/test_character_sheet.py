@@ -183,19 +183,26 @@ class CharacterSheetTestCase(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             character_sheet.generate_character_sheet("ghost")
 
-    def test_generate_character_sheet_shares_one_seed_across_views(self):
+    def test_generate_character_sheet_each_view_gets_a_distinct_seed(self):
+        # Regression test: every shot in a job used to receive the literal
+        # identical base_seed (bug -- suppressed pose divergence between
+        # shots on this CFG-free, clean-token-conditioned model). Each
+        # shot must now get its own seed, deterministically derived from
+        # the job's resolved seed plus its position in the shot list.
         character_sheet.create_draft_character("gwen", self._src.name)
         calls = []
         with mock.patch.object(hidream_engine, "generate_hidream",
                                 self._stub_generate_hidream(calls)):
             result = character_sheet.generate_character_sheet("gwen", seed=-1)
-        seeds_used = {c["base_seed"] for c in calls}
-        self.assertEqual(len(seeds_used), 1, "every view should share one resolved seed")
+        seeds_used = [c["base_seed"] for c in calls]
         self.assertEqual(len(calls), 3)  # default view catalogue
+        self.assertEqual(len(set(seeds_used)), len(seeds_used),
+                          "every view should get its own distinct seed")
+        resolved_seed = result["result"]["resolved_seed"]
+        self.assertEqual(seeds_used, [resolved_seed + i for i in range(len(seeds_used))])
         # caller's original seed (-1) preserved verbatim in the sidecar,
         # separate from the resolved value actually sent to the engine
         self.assertEqual(result["result"]["seed"], -1)
-        self.assertEqual(result["result"]["resolved_seed"], next(iter(seeds_used)))
 
     def test_generate_character_sheet_explicit_seed_passed_through(self):
         character_sheet.create_draft_character("hank", self._src.name)
@@ -203,7 +210,8 @@ class CharacterSheetTestCase(unittest.TestCase):
         with mock.patch.object(hidream_engine, "generate_hidream",
                                 self._stub_generate_hidream(calls)):
             result = character_sheet.generate_character_sheet("hank", seed=424242)
-        self.assertTrue(all(c["base_seed"] == 424242 for c in calls))
+        seeds_used = [c["base_seed"] for c in calls]
+        self.assertEqual(seeds_used, [424242 + i for i in range(len(seeds_used))])
         self.assertEqual(result["result"]["seed"], 424242)
         self.assertEqual(result["result"]["resolved_seed"], 424242)
 
@@ -266,8 +274,44 @@ class CharacterSheetTestCase(unittest.TestCase):
         profile_call = next(c for spec, c in
                              zip(shot_presets.EXTENDED_PRESET, calls)
                              if spec.key == "chest_profile_left")
-        self.assertIn("seen from the left side in profile", profile_call["prompt"])
+        self.assertIn("left cheek and left ear", profile_call["prompt"])
         self.assertIn("same hair color", profile_call["prompt"])
+
+    def test_generate_character_sheet_left_right_pairs_have_distinct_prompts(self):
+        # Regression test for the reported "left and right came out the
+        # same" bug: chest_profile_left/right and
+        # chest_three_quarter_left/right must produce genuinely different
+        # prompt text (not just a differently-placed word), grounded in
+        # which cheek/ear is visible rather than the bare word
+        # "left"/"right" alone.
+        character_sheet.create_draft_character("piper", self._src.name)
+        calls = []
+        with mock.patch.object(hidream_engine, "generate_hidream",
+                                self._stub_generate_hidream(calls)):
+            character_sheet.generate_character_sheet("piper", preset="extended",
+                                                      anchor_chain=True)
+        prompts_by_key = {
+            spec.key: c["prompt"]
+            for spec, c in zip(shot_presets.EXTENDED_PRESET, calls)
+        }
+        left_profile = prompts_by_key["chest_profile_left"]
+        right_profile = prompts_by_key["chest_profile_right"]
+        self.assertNotEqual(left_profile, right_profile)
+        # each prompt names the *visible* cheek/ear first (before "hidden
+        # from view") -- that's the side that should differ between the
+        # pair, so check the "sees the ___ cheek" clause specifically
+        # rather than just "cheek" appearing anywhere (both mention both
+        # cheeks, since each also says which one is hidden).
+        self.assertIn("sees the left cheek and left ear", left_profile)
+        self.assertIn("sees the right cheek and right ear", right_profile)
+        self.assertNotIn("sees the right cheek", left_profile)
+        self.assertNotIn("sees the left cheek", right_profile)
+
+        left_3q = prompts_by_key["chest_three_quarter_left"]
+        right_3q = prompts_by_key["chest_three_quarter_right"]
+        self.assertNotEqual(left_3q, right_3q)
+        self.assertIn("left cheek angled toward camera", left_3q)
+        self.assertIn("right cheek angled toward camera", right_3q)
 
     def test_generate_character_sheet_writes_sheet_png_and_sidecar_json(self):
         character_sheet.create_draft_character("kim", self._src.name)
@@ -283,6 +327,43 @@ class CharacterSheetTestCase(unittest.TestCase):
         self.assertEqual(meta["schema"], "ringviz/character_sheet@2")
         self.assertEqual(len(meta["views"]), 3)
         self.assertEqual(character_sheet.character_sheet_png("kim"), sheet_png)
+
+    def test_sheet_shot_image_paths_returns_latest_per_shot_in_order(self):
+        # Regression-adjacent coverage for the new "Add sheet to ring"
+        # feature: sheet_shot_image_paths() is what feeds the ring
+        # analysis pipeline, so it needs to (a) pick up shots even
+        # without a finished sheet.json, (b) return the LATEST candidate
+        # per shot dir (so a rerolled shot doesn't get analyzed against
+        # a stale image), and (c) return them in a stable order.
+        character_sheet.create_draft_character("nia", self._src.name)
+        char_dir = character_sheet._character_dir("nia")
+
+        # No shots yet.
+        self.assertEqual(character_sheet.sheet_shot_image_paths("nia"), [])
+
+        # Two shots, one of them (front) with two candidates at
+        # different mtimes -- the older one first, matching how a
+        # reroll actually produces files (original render, then a
+        # later reroll's file with a newer timestamp).
+        front_dir = char_dir / "sheet_views" / "front"
+        profile_dir = char_dir / "sheet_views" / "profile_left"
+        old_front = front_dir / "cand_00_hidream_1000.png"
+        new_front = front_dir / "cand_00_hidream_2000.png"
+        profile_png = profile_dir / "cand_00_hidream_1500.png"
+        _write_tiny_png(old_front)
+        _write_tiny_png(new_front)
+        _write_tiny_png(profile_png)
+        # Force an unambiguous mtime ordering regardless of how fast
+        # these three writes actually landed on disk.
+        os.utime(old_front, (1000, 1000))
+        os.utime(new_front, (2000, 2000))
+        os.utime(profile_png, (1500, 1500))
+
+        paths = character_sheet.sheet_shot_image_paths("nia")
+        self.assertEqual(len(paths), 2)
+        # front sorts before profile_left alphabetically (shot dir order)
+        self.assertEqual(Path(paths[0]), new_front)
+        self.assertEqual(Path(paths[1]), profile_png)
 
     def test_generate_character_sheet_busy_when_lock_held(self):
         character_sheet.create_draft_character("liam", self._src.name)

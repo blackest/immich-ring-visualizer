@@ -39,6 +39,7 @@ let _phosphereCurrentTrigger = null;
 // poll -- a reroll job's status response only lists the one shot being
 // re-rolled, and the rest of the grid should stay exactly as it was.
 let _phosphereGridCells = new Map();
+let _phosphereShotGridCollapsed = false;
 
 function _phosphereEls() {
   return {
@@ -48,6 +49,9 @@ function _phosphereEls() {
     logTail: document.getElementById('phosphene-log-tail'),
     img: document.getElementById('phosphene-sheet-img'),
     grid: document.getElementById('phosphene-shot-grid'),
+    gridToggle: document.getElementById('phosphene-shot-grid-toggle'),
+    gridWrap: document.getElementById('phosphene-shot-grid-wrap'),
+    addToRingBtn: document.getElementById('phosphene-add-to-ring-btn'),
     nameInput: document.getElementById('phosphene-sheet-name'),
     presetSelect: document.getElementById('phosphene-preset-select'),
     styleSelect: document.getElementById('phosphene-style-select'),
@@ -72,6 +76,31 @@ function _phosphereInitSettingsToggle() {
   });
 }
 
+// Shot grid collapse -- same pattern as "more settings" above, but the
+// grid's own display:none/grid is already actively managed every poll
+// tick by _phosphereStart/_phosphereRenderGrid (data-presence: is
+// there anything to show at all), so the user's collapse preference
+// lives on a separate wrapper element instead of fighting that -- see
+// _phosphereApplyShotGridCollapseState.
+function _phosphereInitShotGridToggle() {
+  const { gridToggle } = _phosphereEls();
+  if (!gridToggle) return;
+  gridToggle.addEventListener('click', () => {
+    _phosphereShotGridCollapsed = !_phosphereShotGridCollapsed;
+    _phosphereApplyShotGridCollapseState();
+  });
+}
+
+function _phosphereApplyShotGridCollapseState() {
+  const { gridToggle, gridWrap } = _phosphereEls();
+  if (!gridToggle || !gridWrap) return;
+  gridToggle.style.display = 'block';
+  gridWrap.style.display = _phosphereShotGridCollapsed ? 'none' : 'block';
+  const count = _phosphereGridCells.size;
+  gridToggle.textContent = (_phosphereShotGridCollapsed ? '▸' : '▾') +
+    ` character sheet shots (${count})`;
+}
+
 function _phosphereSettings() {
   const { presetSelect, styleSelect, wardrobeInput, hairColorInput, seedInput,
           identityLockCb, customPromptInput } = _phosphereEls();
@@ -94,7 +123,7 @@ function _phosphereSetBusy(busy) {
 }
 
 function _phosphereStart(message) {
-  const { status, img, grid, logTail } = _phosphereEls();
+  const { status, img, grid, gridToggle, gridWrap, logTail, addToRingBtn } = _phosphereEls();
   _phosphereSetBusy(true);
   status.textContent = message;
   img.style.display = 'none';
@@ -102,8 +131,11 @@ function _phosphereStart(message) {
   grid.style.display = 'none';
   grid.innerHTML = '';
   _phosphereGridCells.clear();
+  gridToggle.style.display = 'none';
+  gridWrap.style.display = 'none';
   logTail.style.display = 'none';
   logTail.textContent = '';
+  addToRingBtn.style.display = 'none';
   if (_phospherePollTimer) {
     clearInterval(_phospherePollTimer);
     _phospherePollTimer = null;
@@ -237,6 +269,10 @@ function _phosphereRenderGrid(trigger, shots) {
       _phosphereApplyShotState(trigger, entry, shot);
     }
   });
+  // Reveal the toggle once there's anything to show, and keep its
+  // label's shot count and the wrap's collapsed/expanded state current
+  // on every poll tick (cheap -- just two style/text writes).
+  _phosphereApplyShotGridCollapseState();
 }
 
 function _phosphereCopyPrompt(button, text) {
@@ -269,7 +305,7 @@ function _phosphereCopyPrompt(button, text) {
 }
 
 function _phospherePoll(jobId, trigger) {
-  const { status, img, logTail } = _phosphereEls();
+  const { status, img, logTail, addToRingBtn } = _phosphereEls();
   fetch(`/api/phosphene/sheet-jobs/${jobId}`)
     .then(r => r.json())
     .then(job => {
@@ -285,6 +321,11 @@ function _phospherePoll(jobId, trigger) {
       }
 
       _phosphereRenderGrid(trigger, job.shots);
+      // Shown as soon as anything has actually rendered, even mid-job
+      // or after a job that ultimately failed partway through -- reads
+      // sheet_views/ directly (see sheet_shot_image_paths), not
+      // sheet.json, so it doesn't need the whole job to have finished.
+      addToRingBtn.style.display = doneCount > 0 ? 'block' : 'none';
 
       if (job.status !== 'running') {
         clearInterval(_phospherePollTimer);
@@ -328,6 +369,35 @@ function _phosphereSubmit(requestPromise, triggerHint) {
     })
     .catch(err => {
       _phosphereShowError(null, 'request failed: ' + err);
+    });
+}
+
+function phosphereAddToRing() {
+  const trigger = _phosphereCurrentTrigger;
+  if (!trigger) return;
+  const { status, addToRingBtn } = _phosphereEls();
+  addToRingBtn.disabled = true;
+  addToRingBtn.textContent = 'Adding to ring…';
+  fetch(`/api/phosphene/characters/${encodeURIComponent(trigger)}/sheet/add-to-ring`, {
+    method: 'POST',
+  })
+    .then(r => r.json().then(payload => ({ ok: r.ok, payload })))
+    .then(({ ok, payload }) => {
+      addToRingBtn.disabled = false;
+      addToRingBtn.textContent = 'Add sheet to ring';
+      if (!ok || payload.error) {
+        status.textContent = 'Error: ' + (payload && payload.error ? payload.error : 'add-to-ring failed');
+        return;
+      }
+      // Same job shape/poller /api/analyze-folder uses -- see
+      // routes/phosphene.py's add_sheet_to_ring for why 'folder' is the
+      // right sourceType here (it IS one, just generated not uploaded).
+      pollAnalysis(payload.jobId, `${trigger} (character sheet)`, 1, status, 'folder');
+    })
+    .catch(err => {
+      addToRingBtn.disabled = false;
+      addToRingBtn.textContent = 'Add sheet to ring';
+      status.textContent = 'Error: add-to-ring request failed: ' + err;
     });
 }
 
@@ -413,7 +483,11 @@ function phosphereGenerateFromFile(input) {
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', _phosphereInitSettingsToggle);
+  document.addEventListener('DOMContentLoaded', () => {
+    _phosphereInitSettingsToggle();
+    _phosphereInitShotGridToggle();
+  });
 } else {
   _phosphereInitSettingsToggle();
+  _phosphereInitShotGridToggle();
 }

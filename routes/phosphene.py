@@ -26,6 +26,8 @@ file/blueprint too would just be churn for no functional benefit.
 
 import os
 import tempfile
+import threading
+import uuid
 
 from flask import Blueprint, jsonify, request, send_file
 
@@ -34,6 +36,8 @@ import hidream_engine
 import sheet_jobs
 import shot_presets
 from config import IMMICH_API_KEY, IMMICH_BASE_URL
+from folder_analysis import run_folder_analysis
+from state import _analysis_jobs
 
 phosphene_bp = Blueprint("phosphene", __name__)
 
@@ -384,3 +388,58 @@ def serve_shot_thumbnail(character_id, shot_key):
     if not candidates:
         return jsonify({"error": f"shot {shot_key!r} has no rendered image yet"}), 404
     return send_file(candidates[-1], mimetype="image/png")
+
+
+@phosphene_bp.route(
+    "/api/phosphene/characters/<character_id>/sheet/add-to-ring", methods=["POST"]
+)
+def add_sheet_to_ring(character_id):
+    """Feeds a character's avatar (as the reference face) plus every
+    currently-rendered shot into the exact same analysis pipeline
+    /api/analyze-folder drives (folder_analysis.run_folder_analysis) --
+    these files already live on this server's own disk, so this just
+    automates what dragging the avatar + sheet_views/*.png into the
+    folder importer by hand would do, rather than being a new pipeline.
+    Returns the same {jobId, imageCount} shape /api/analyze-folder
+    returns, tagged sourceType "folder" in the job record, so the
+    existing ring/pose-scatter/export frontend needs zero changes to
+    display the result -- it's just another folder-analysis job whose
+    images happen to have been generated instead of uploaded.
+    """
+    try:
+        cid = character_sheet._safe_id(character_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    avatar = character_sheet.character_avatar(cid)
+    if avatar is None:
+        return jsonify({"error": f"character {cid!r} has no reference image"}), 404
+
+    shot_paths = character_sheet.sheet_shot_image_paths(cid)
+    if not shot_paths:
+        return jsonify({"error": f"character {cid!r} has no rendered shots yet"}), 404
+
+    # Avatar first (ref_index=1 below -> run_folder_analysis's first
+    # entry) so the ring scores every generated shot against the real
+    # source photo, not against another generated shot.
+    image_paths = [str(avatar)] + shot_paths
+
+    sim_threshold = float(request.values.get("simThreshold", 0.65))
+    blur_threshold = float(request.values.get("blurThreshold", 50))
+    cache_format = "png" if request.values.get("cacheFormat") == "png" else "jpg"
+
+    job_id = uuid.uuid4().hex[:12]
+    _analysis_jobs[job_id] = {
+        "status": "running", "results": [], "error": None,
+        "sourceName": f"{cid} (character sheet)", "sourceType": "folder",
+        "simThreshold": sim_threshold,
+        "blurThreshold": blur_threshold,
+        "cacheFormat": cache_format,
+    }
+    t = threading.Thread(
+        target=run_folder_analysis,
+        args=(job_id, image_paths, sim_threshold, blur_threshold, 1, cache_format),
+        daemon=True,
+    )
+    t.start()
+    return jsonify({"jobId": job_id, "imageCount": len(image_paths)}), 202

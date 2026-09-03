@@ -101,20 +101,40 @@ EXTENDED_PRESET: list[ShotSpec] = [
     ShotSpec("chest_front",
              "a chest-up portrait, head and shoulders, facing the camera "
              "directly", background=_BACKGROUNDS[1]),
+    # NOTE (2026-09-03): the *_left/*_right pose_phrase wording below was
+    # strengthened after a real generation showed both sides of a pair
+    # rendering the same way -- the model was very likely mixing up
+    # "left"/"right" as an abstract spatial word (a well-documented weak
+    # spot for diffusion models, worse here since HiDream's Dev recipe is
+    # CFG-free and has no guidance term to sharpen adherence to a subtle
+    # text detail like this). The fix grounds each direction in a visible,
+    # concrete anatomical detail (which cheek/ear is toward camera vs.
+    # hidden) instead of relying on the bare word "left"/"right" alone --
+    # concrete visual content is generally learned far more reliably than
+    # abstract spatial relations. Not yet re-verified against a real
+    # render as of this writing -- see progress-report1.md.
     ShotSpec("chest_profile_left",
-             "a chest-up portrait, head and shoulders, seen from the left "
-             "side in profile", background=_BACKGROUNDS[1], use_anchor=False),
+             "a chest-up portrait in full profile, head turned so the "
+             "camera sees the left cheek and left ear -- the right cheek "
+             "and right ear are hidden from view, facing toward the "
+             "left", background=_BACKGROUNDS[1], use_anchor=False),
     ShotSpec("chest_profile_right",
-             "a chest-up portrait, head and shoulders, seen from the right "
-             "side in profile", background=_BACKGROUNDS[1], use_anchor=False),
+             "a chest-up portrait in full profile, head turned so the "
+             "camera sees the right cheek and right ear -- the left cheek "
+             "and left ear are hidden from view, facing toward the "
+             "right", background=_BACKGROUNDS[1], use_anchor=False),
     ShotSpec("chest_three_quarter_left",
-             "a chest-up portrait, head and shoulders, turned "
-             "three-quarters to the left, halfway between front and "
-             "profile", background=_BACKGROUNDS[1], use_anchor=False),
+             "a chest-up three-quarter portrait, head and shoulders, "
+             "turned partway toward profile with the left cheek angled "
+             "toward camera and the right side of the face turned away, "
+             "halfway between front and full profile",
+             background=_BACKGROUNDS[1], use_anchor=False),
     ShotSpec("chest_three_quarter_right",
-             "a chest-up portrait, head and shoulders, turned "
-             "three-quarters to the right, halfway between front and "
-             "profile", background=_BACKGROUNDS[1], use_anchor=False),
+             "a chest-up three-quarter portrait, head and shoulders, "
+             "turned partway toward profile with the right cheek angled "
+             "toward camera and the left side of the face turned away, "
+             "halfway between front and full profile",
+             background=_BACKGROUNDS[1], use_anchor=False),
     ShotSpec("chest_front_smiling",
              "a chest-up portrait, head and shoulders, facing the camera "
              "directly", expression="a warm natural smile",

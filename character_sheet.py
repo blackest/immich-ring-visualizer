@@ -131,6 +131,26 @@ def character_sheet_png(name: str) -> Optional[Path]:
     return p if p.is_file() else None
 
 
+def sheet_shot_image_paths(name: str) -> list:
+    """Every shot's *current* rendered image path -- the latest
+    cand_*.png by mtime in each sheet_views/<key>/ dir, the same "what's
+    actually displayed" rule serve_shot_thumbnail (routes/phosphene.py)
+    uses. Deliberately reads the on-disk sheet_views/ layout rather than
+    sheet.json's views list: sheet.json is only (re)written once a whole
+    generate/reroll job finishes, so it can be stale or missing mid-job,
+    while this reflects rerolls and in-progress shots immediately.
+    Returns [] if the character has no rendered shots yet."""
+    views_dir = _character_dir(_safe_id(name)) / "sheet_views"
+    if not views_dir.is_dir():
+        return []
+    paths = []
+    for shot_dir in sorted(p for p in views_dir.iterdir() if p.is_dir()):
+        candidates = sorted(shot_dir.glob("cand_*.png"), key=lambda p: p.stat().st_mtime)
+        if candidates:
+            paths.append(str(candidates[-1]))
+    return paths
+
+
 def character_sheet_meta(name: str) -> dict:
     p = _character_dir(_safe_id(name)) / "sheet.json"
     if not p.is_file():
@@ -426,10 +446,24 @@ def generate_character_sheet(name: str, *,
                 else [])
             if on_log:
                 on_log(f"[sheet] {cid}: shot {i + 1}/{len(shot_list)} ({spec.key})")
+            # Each shot gets its own seed, derived from the job's resolved
+            # seed plus its position in shot_list. Without this, every shot
+            # in a job rendered from the literal identical seed (base_seed
+            # was passed unmodified) -- combined with HiDream's Dev recipe
+            # being CFG-free and references being conditioned as clean
+            # (unnoised) tokens rather than classic img2img noising, an
+            # identical seed meant every shot's target image started from
+            # the same initial noise, which suppressed genuine pose
+            # divergence regardless of the pose instruction or the anchor
+            # reference. Still fully deterministic/reproducible from one
+            # job-level `seed` input -- same seed + same preset still
+            # reproduces the same sheet, just no longer identical shot to
+            # shot. Mirrors the `base_seed + i` pattern generate_hidream()
+            # already uses internally for multi-candidate batches.
             candidates = hidream_engine.generate_hidream(
                 prompt=prompt, n=1, width=1024, height=1024,
                 output_dir=view_dir,
-                base_seed=resolved_seed,
+                base_seed=resolved_seed + i,
                 refs=view_refs,
                 config=cfg,
                 on_log=on_log,

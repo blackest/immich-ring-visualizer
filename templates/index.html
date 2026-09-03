@@ -362,8 +362,20 @@
 
     <img id="phosphene-sheet-img" src="" alt="Character sheet"
          style="display:none;width:100%;margin-top:8px;border-radius:4px;border:1px solid #2a2a32;">
-    <div id="phosphene-shot-grid"
-         style="display:none;grid-template-columns:repeat(3, 1fr);gap:4px;margin-top:8px;"></div>
+    <div id="phosphene-shot-grid-toggle"
+         style="display:none;font-size:var(--fs-10);color:var(--accent);cursor:pointer;margin-top:8px;margin-bottom:4px;user-select:none;">
+      ▾ character sheet shots
+    </div>
+    <div id="phosphene-shot-grid-wrap"
+         style="display:none;max-height:320px;overflow-y:auto;border:1px solid #212127;border-radius:4px;padding:4px;">
+      <div id="phosphene-shot-grid"
+           style="display:none;grid-template-columns:repeat(3, 1fr);gap:4px;"></div>
+    </div>
+    <button type="button" id="phosphene-add-to-ring-btn" onclick="phosphereAddToRing()"
+            title="Send the avatar + every rendered shot into the ring analysis pipeline, same as importing them as a folder"
+            style="display:none;width:100%;font-size:var(--fs-11);padding:6px;margin-top:6px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:4px;cursor:pointer;">
+      Add sheet to ring
+    </button>
   </div>
   <div id="sidebar-scroll">
     <div id="sidebar-header"><span id="sidebar-header-title">Ranked matches</span><button id="toggle-list-btn" title="Hide ranked match list">Hide</button></div>

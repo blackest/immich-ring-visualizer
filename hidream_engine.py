@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from PIL import Image
+
 
 class ImageJobCancelled(RuntimeError):
     """Raised when the HiDream subprocess is killed by its watchdog
@@ -289,6 +291,30 @@ def generate_hidream(prompt: str, n: int, width: int, height: int,
     for seed, png in zip(seeds, pngs):
         if not png.exists():
             raise RuntimeError(f"HiDream gen finished but no PNG at {png}")
+        # The subprocess exiting with rc==0 only means the *process*
+        # finished cleanly -- it doesn't guarantee the PNG it wrote is a
+        # complete, valid image. A process interrupted mid-write (an OOM
+        # kill, the Metal watchdog, a killed/orphaned subprocess) can
+        # leave a truncated file behind: valid header, a handful of real
+        # scanlines, then nothing -- which decodes as mostly-black rather
+        # than failing outright. Force a full decode (not just
+        # Image.open(), which is lazy) so a truncated file raises here
+        # instead of silently getting composited into the sheet.
+        try:
+            with Image.open(png) as im:
+                im.load()
+                actual_size = im.size
+        except Exception as exc:
+            raise RuntimeError(
+                f"HiDream gen wrote an incomplete/corrupt PNG at {png} "
+                f"({exc}) -- likely the process was interrupted mid-write "
+                f"(OOM kill, a crash, or a killed subprocess). Reroll "
+                f"this shot.") from exc
+        if actual_size != (aligned_w, aligned_h):
+            raise RuntimeError(
+                f"HiDream gen wrote a {actual_size[0]}x{actual_size[1]} "
+                f"image but expected {aligned_w}x{aligned_h} at {png} -- "
+                f"likely a partial write. Reroll this shot.")
         results.append({
             "png_path": str(png),
             "seed": seed,
