@@ -62,6 +62,7 @@ function _phosphereEls() {
     customPromptInput: document.getElementById('phosphene-custom-prompt-input'),
     settingsToggle: document.getElementById('phosphene-settings-toggle'),
     settingsMore: document.getElementById('phosphene-settings-more'),
+    unavailableBanner: document.getElementById('phosphene-unavailable-banner'),
   };
 }
 
@@ -73,6 +74,54 @@ function _phosphereInitSettingsToggle() {
     const open = settingsMore.style.display !== 'none';
     settingsMore.style.display = open ? 'none' : 'block';
     settingsToggle.textContent = (open ? '▸' : '▾') + ' more settings';
+  });
+}
+
+// Gate the character-sheet feature on whether the local HiDream engine
+// is actually reachable from this machine (hidream_engine.hidream_health()
+// via GET /api/phosphene/status). Generation is a subprocess call into a
+// separate Mac-only MLX venv that simply won't exist on Windows/Linux
+// (or a Mac without the HiDream lab installed) -- previously the panel
+// gave no warning at all: fill in settings, click Generate, wait for the
+// background job to spin up, and only then find out (via a
+// FileNotFoundError surfaced through job polling) that it could never
+// have worked here. Checked once at page load. Fails OPEN (leaves the
+// button enabled, hides the banner) if the status call itself errors --
+// a network hiccup isn't evidence the feature is unavailable.
+function _phosphereCheckAvailability() {
+  const { btn, fileBtn, unavailableBanner } = _phosphereEls();
+  if (!unavailableBanner) return;
+  fetch('/api/phosphene/status')
+    .then(r => r.json())
+    .then(health => {
+      const unavailable = health && health.reachable === false;
+      _phosphereSetGenerationDisabled(unavailable, health);
+    })
+    .catch(() => { /* fail open */ });
+}
+
+function _phosphereSetGenerationDisabled(disabled, health) {
+  const { btn, fileBtn, unavailableBanner } = _phosphereEls();
+  if (!unavailableBanner) return;
+  if (disabled) {
+    const missing = [];
+    if (health && !health.python_ok) missing.push('HiDream venv');
+    if (health && !health.model_ok) missing.push('HiDream model');
+    if (health && !health.script_ok) missing.push('generator script');
+    unavailableBanner.textContent =
+      'Character-sheet generation needs the local HiDream engine, which ' +
+      "isn't set up on this machine" +
+      (missing.length ? ` (missing: ${missing.join(', ')})` : '') +
+      '. This feature only runs where the HiDream-O1 MLX lab is installed.';
+    unavailableBanner.style.display = 'block';
+  } else {
+    unavailableBanner.style.display = 'none';
+  }
+  [btn, fileBtn].forEach(el => {
+    if (!el) return;
+    el.disabled = disabled;
+    el.style.opacity = disabled ? '0.5' : '';
+    el.style.cursor = disabled ? 'not-allowed' : 'pointer';
   });
 }
 
@@ -486,8 +535,10 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     _phosphereInitSettingsToggle();
     _phosphereInitShotGridToggle();
+    _phosphereCheckAvailability();
   });
 } else {
   _phosphereInitSettingsToggle();
   _phosphereInitShotGridToggle();
+  _phosphereCheckAvailability();
 }
