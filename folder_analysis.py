@@ -13,12 +13,26 @@ from detection import get_blur_score, get_face_app, pick_best_face
 from state import _analysis_jobs
 from video_analysis import bbox_frame_ratio, summarize_resolutions, vert_fill_ratio, write_cache_frame
 
-def run_folder_analysis(job_id, image_paths, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg"):
+def run_folder_analysis(job_id, image_paths, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg", always_cache=False):
     """Same pipeline as run_video_analysis, but the 'frames' are a set of
     still images from a folder/zip upload instead of decoded video frames.
     image_paths is a pre-sorted list; frame numbering follows that order so
     the rest of the app (ring, pose strip, export, cross-check) can treat
-    this exactly like a video analysis job with zero changes."""
+    this exactly like a video analysis job with zero changes.
+
+    always_cache: normally a frame that fails sim/blur never gets
+    write_cache_frame()'d, so it has no viewable/exportable image in the
+    ring (frameId stays None) -- fine for real photo/video curation,
+    where most candidate frames are expected to fail and caching all of
+    them would be wasteful. Character-sheet shots (routes/phosphene.py's
+    add_sheet_to_ring) are the opposite case: a handful of already-
+    expensive HiDream renders that already exist as real files on disk,
+    where a side/three-quarter shot scoring under the similarity
+    threshold is often the intended, successful result (side profiles
+    inherently score lower against a front-facing reference -- see the
+    README's training-profile notes), not noise. Set True there so every
+    shot is always cached and viewable regardless of pass/fail,
+    independent of whatever the thresholds are set to."""
     import cv2
 
     job = _analysis_jobs[job_id]
@@ -84,7 +98,7 @@ def run_folder_analysis(job_id, image_paths, sim_threshold, blur_threshold, ref_
 
             passed = (fail_reason is None)
 
-            if passed:
+            if passed or always_cache:
                 frame_id = write_cache_frame(job_id, frame_idx, frame, cache_format)
                 job.setdefault("frame_embeddings", {})[frame_idx] = face.normed_embedding.tolist()
             else:
@@ -93,7 +107,7 @@ def run_folder_analysis(job_id, image_paths, sim_threshold, blur_threshold, ref_
             results.append({
                 "frame": frame_idx, "sim": sim_score, "blur": blur_score,
                 "passed": passed, "failReason": fail_reason, "hasFace": True,
-                "frameId": frame_id if passed else None,
+                "frameId": frame_id if (passed or always_cache) else None,
                 "yaw": yaw, "pitch": pitch, "roll": roll,
                 "bbox": [x1, y1, x2, y2], "origName": orig_name, "width": fw, "height": fh,
                 "bboxRatio": bbox_frame_ratio([x1, y1, x2, y2], fw, fh),

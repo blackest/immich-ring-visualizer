@@ -24,8 +24,8 @@ def analyze_immich():
     downloading images out of Immich by hand just to re-upload them."""
     body = request.get_json(force=True) or {}
     asset_ids = body.get("assetIds") or []
-    sim_threshold = float(body.get("simThreshold", 0.65))
-    blur_threshold = float(body.get("blurThreshold", 50))
+    sim_threshold = float(body.get("simThreshold", 0.1))
+    blur_threshold = float(body.get("blurThreshold", 1))
     ref_index = int(body.get("refIndex", 1))
     cache_format = "png" if body.get("cacheFormat") == "png" else "jpg"
 

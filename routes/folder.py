@@ -15,8 +15,8 @@ def analyze_folder():
     """Accepts either multiple image files (folder picker / multi-select)
     under the 'images' field, or a single 'zip' file containing images.
     Runs the exact same analysis pipeline as video, just over stills."""
-    sim_threshold = float(request.form.get("simThreshold", 0.65))
-    blur_threshold = float(request.form.get("blurThreshold", 50))
+    sim_threshold = float(request.form.get("simThreshold", 0.1))
+    blur_threshold = float(request.form.get("blurThreshold", 1))
     ref_index = int(request.form.get("refIndex", 1))
     cache_format = "png" if request.form.get("cacheFormat") == "png" else "jpg"
 

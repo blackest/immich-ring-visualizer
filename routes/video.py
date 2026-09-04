@@ -71,7 +71,7 @@ def analyze_video():
     if "video" not in request.files:
         return jsonify({"error": "video file required"}), 400
 
-    sim_threshold = float(request.form.get("simThreshold", 0.65))
+    sim_threshold = float(request.form.get("simThreshold", 0.1))
     blur_threshold = float(request.form.get("blurThreshold", 100))
     ref_frame = int(request.form.get("refFrame", 1))
     cache_format = "png" if request.form.get("cacheFormat") == "png" else "jpg"
@@ -122,8 +122,8 @@ def analysis_status(job_id):
         "error": job.get("error"),
         "frameCount": len(job["results"]),
         "results": job["results"],
-        "simThreshold": job.get("simThreshold", 0.65),
-        "blurThreshold": job.get("blurThreshold", 50),
+        "simThreshold": job.get("simThreshold", 0.1),
+        "blurThreshold": job.get("blurThreshold", 1),
         "resolutionSummary": job.get("resolutionSummary"),
     })
 

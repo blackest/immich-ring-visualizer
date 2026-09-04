@@ -64,8 +64,8 @@
       <div class="panel-section-body">
         <div id="video-drop" style="width:100%;">
           <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-            <input id="sim-threshold" type="number" step="0.05" value="0.65" title="Similarity Threshold" style="width: 47%; background: #16161c; border: 1px solid #2a2a32; color: var(--text); padding: 4px; border-radius: 4px;">
-            <input id="blur-threshold" type="number" step="1" value="50" title="Blur Threshold" style="width: 47%; background: #16161c; border: 1px solid #2a2a32; color: var(--text); padding: 4px; border-radius: 4px;">
+            <input id="sim-threshold" type="number" step="0.05" value="0.1" title="Similarity Threshold" style="width: 47%; background: #16161c; border: 1px solid #2a2a32; color: var(--text); padding: 4px; border-radius: 4px;">
+            <input id="blur-threshold" type="number" step="1" value="1" title="Blur Threshold" style="width: 47%; background: #16161c; border: 1px solid #2a2a32; color: var(--text); padding: 4px; border-radius: 4px;">
           </div>
           <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:var(--fs-10);color:var(--dim);margin-bottom:8px;" title="JPEG q88 (default) is ~10x smaller and faster to write. PNG is lossless but costs real temp storage and slower analysis - only matters if you rely on this scratch cache directly, since export now reads the true original source regardless.">
             <input type="checkbox" id="cache-format-png"> Cache frames as PNG (lossless, slower, more temp storage)

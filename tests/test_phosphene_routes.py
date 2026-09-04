@@ -82,7 +82,8 @@ class AddSheetToRingRouteTestCase(unittest.TestCase):
             _analysis_jobs.pop(jid, None)
 
     def _fake_run_folder_analysis(self, job_id, image_paths, sim_threshold,
-                                   blur_threshold, ref_index, cache_format):
+                                   blur_threshold, ref_index, cache_format,
+                                   always_cache=False):
         # Runs synchronously in the request thread in these tests (the
         # route still launches it via threading.Thread, but a fast fake
         # finishes long before the test asserts anything) -- record what
@@ -92,6 +93,7 @@ class AddSheetToRingRouteTestCase(unittest.TestCase):
             "job_id": job_id, "image_paths": list(image_paths),
             "sim_threshold": sim_threshold, "blur_threshold": blur_threshold,
             "ref_index": ref_index, "cache_format": cache_format,
+            "always_cache": always_cache,
         })
         _analysis_jobs[job_id]["status"] = "done"
 
@@ -141,6 +143,13 @@ class AddSheetToRingRouteTestCase(unittest.TestCase):
         self.assertEqual(set(call["image_paths"][1:]),
                           {str(front_png), str(profile_png)})
         self.assertEqual(call["ref_index"], 1)
+        # Generated shots must always end up cached/viewable in the ring
+        # regardless of sim/blur result -- a side/three-quarter angle
+        # scoring under the similarity threshold is often the intended
+        # outcome, not a bad candidate, and these are expensive renders
+        # already sitting on disk (see run_folder_analysis's always_cache
+        # docstring).
+        self.assertTrue(call["always_cache"])
 
         # Job record shape matches what /api/analyze-folder produces, so
         # the existing frontend polling/rendering code needs no changes.

@@ -424,8 +424,8 @@ def add_sheet_to_ring(character_id):
     # source photo, not against another generated shot.
     image_paths = [str(avatar)] + shot_paths
 
-    sim_threshold = float(request.values.get("simThreshold", 0.65))
-    blur_threshold = float(request.values.get("blurThreshold", 50))
+    sim_threshold = float(request.values.get("simThreshold", 0.1))
+    blur_threshold = float(request.values.get("blurThreshold", 1))
     cache_format = "png" if request.values.get("cacheFormat") == "png" else "jpg"
 
     job_id = uuid.uuid4().hex[:12]
@@ -439,6 +439,15 @@ def add_sheet_to_ring(character_id):
     t = threading.Thread(
         target=run_folder_analysis,
         args=(job_id, image_paths, sim_threshold, blur_threshold, 1, cache_format),
+        # always_cache=True: these shots are expensive HiDream renders
+        # already sitting on disk, and a low sim score here is often the
+        # intended outcome (a genuine side/three-quarter angle), not a
+        # bad candidate -- see folder_analysis.run_folder_analysis's
+        # always_cache docstring. Without this, a shot that fails
+        # threshold gets no cached image and is invisible in the ring
+        # regardless of what simThreshold/blurThreshold happen to be set
+        # to for this run.
+        kwargs={"always_cache": True},
         daemon=True,
     )
     t.start()
