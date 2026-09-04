@@ -67,9 +67,11 @@ class ShotSpec:
 DEFAULT_PRESET: list[ShotSpec] = [
     ShotSpec("front", "a chest-up front portrait, facing the camera directly"),
     ShotSpec("profile_left", "a side view portrait from the left, head and "
-                             "shoulders, the face seen from the side"),
+                             "shoulders, the face seen from the side",
+             use_anchor=False),
     ShotSpec("three_quarter", "a three-quarter view, head and shoulders "
-                              "turned halfway between front and profile"),
+                              "turned halfway between front and profile",
+             use_anchor=False),
 ]
 
 # A handful of simple background/lighting variants, rotated across the
