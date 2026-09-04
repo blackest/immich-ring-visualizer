@@ -50,10 +50,9 @@ def export_job(job_id):
         # cache written during analysis - that cache exists so the ring/list
         # UI has something fast to display and click through, but re-reading
         # it at export time means every export is a re-compression of an
-        # already-lossy copy. A video's bytes and a folder job's source
-        # images both still live for the job's lifetime (in RAM for video,
-        # on disk for folder originals - those are the user's own uploaded
-        # files, not a scratch cache, so keeping them is fine), so there's
+        # already-lossy copy. A video's bytes and a folder/Immich job's
+        # source images both live in RAM for the job's lifetime (never
+        # written to disk at all -- see folder.py/immich.py), so there's
         # no reason to go through the cache when writing final output.
         img = None
         used_original = False
@@ -65,10 +64,10 @@ def export_job(job_id):
             if raw is not None:
                 img = raw
                 used_original = True
-        elif job.get("srcDir") and r.get("origName"):
-            orig_path = os.path.join(job["srcDir"], r["origName"])
-            if os.path.exists(orig_path):
-                raw = cv2.imread(orig_path)
+        elif job.get("srcImages") and r.get("origName"):
+            raw_bytes = job["srcImages"].get(r["origName"])
+            if raw_bytes is not None:
+                raw = cv2.imdecode(np.frombuffer(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if raw is not None:
                     img = raw
                     used_original = True

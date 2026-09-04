@@ -13,12 +13,31 @@ from detection import get_blur_score, get_face_app, pick_best_face
 from state import _analysis_jobs
 from video_analysis import bbox_frame_ratio, summarize_resolutions, vert_fill_ratio, write_cache_frame
 
-def run_folder_analysis(job_id, image_paths, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg", always_cache=False):
+
+def _read_image(item):
+    """item is either a filesystem path (str) -- used for sources that
+    legitimately already live on disk, e.g. character-sheet shots under
+    exports/<name>/character/ -- or an (orig_name, bytes) tuple for a
+    source held only in memory (folder/zip upload, Immich download),
+    which should never touch disk before export. Returns
+    (frame_ndarray_or_None, orig_name)."""
+    import cv2
+    if isinstance(item, tuple):
+        orig_name, data = item
+        frame = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        return frame, orig_name
+    return cv2.imread(item), os.path.basename(item)
+
+
+def run_folder_analysis(job_id, images, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg", always_cache=False):
     """Same pipeline as run_video_analysis, but the 'frames' are a set of
-    still images from a folder/zip upload instead of decoded video frames.
-    image_paths is a pre-sorted list; frame numbering follows that order so
-    the rest of the app (ring, pose strip, export, cross-check) can treat
-    this exactly like a video analysis job with zero changes.
+    still images -- a folder/zip upload, an Immich selection, or a
+    character sheet's rendered shots -- instead of decoded video frames.
+    images is a pre-sorted list, each entry either a filesystem path (str)
+    or an in-memory (orig_name, bytes) tuple -- see _read_image(). Frame
+    numbering follows list order so the rest of the app (ring, pose strip,
+    export, cross-check) can treat this exactly like a video analysis job
+    with zero changes.
 
     always_cache: normally a frame that fails sim/blur never gets
     write_cache_frame()'d, so it has no viewable/exportable image in the
@@ -33,17 +52,15 @@ def run_folder_analysis(job_id, image_paths, sim_threshold, blur_threshold, ref_
     README's training-profile notes), not noise. Set True there so every
     shot is always cached and viewable regardless of pass/fail,
     independent of whatever the thresholds are set to."""
-    import cv2
-
     job = _analysis_jobs[job_id]
     try:
         face_app = get_face_app()
 
-        ref_idx = max(1, min(ref_index, len(image_paths))) - 1
-        ref_frame = cv2.imread(image_paths[ref_idx])
+        ref_idx = max(1, min(ref_index, len(images))) - 1
+        ref_frame, ref_name = _read_image(images[ref_idx])
         if ref_frame is None:
             job["status"] = "error"
-            job["error"] = f"Could not read reference image {os.path.basename(image_paths[ref_idx])}"
+            job["error"] = f"Could not read reference image {ref_name}"
             return
 
         anchor_id = write_cache_frame(job_id, "anchor", ref_frame, "jpg")
@@ -52,15 +69,14 @@ def run_folder_analysis(job_id, image_paths, sim_threshold, blur_threshold, ref_
         ref_faces = face_app.get(ref_frame)
         if not ref_faces:
             job["status"] = "error"
-            job["error"] = f"No face detected in reference image {os.path.basename(image_paths[ref_idx])}"
+            job["error"] = f"No face detected in reference image {ref_name}"
             return
         ref_embedding = ref_faces[0].normed_embedding
 
         results = []
-        for i, img_path in enumerate(image_paths):
+        for i, item in enumerate(images):
             frame_idx = i + 1
-            orig_name = os.path.basename(img_path)
-            frame = cv2.imread(img_path)
+            frame, orig_name = _read_image(item)
             if frame is None:
                 results.append({
                     "frame": frame_idx, "sim": 0.0, "blur": 0.0, "passed": False, "hasFace": False,

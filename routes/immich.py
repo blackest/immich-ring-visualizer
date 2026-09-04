@@ -4,9 +4,8 @@ import threading
 import requests
 import numpy as np
 import cv2
-import shutil
 from flask import Blueprint, request, jsonify, Response, send_file
-from config import FRAME_STORE, IMAGE_EXTS, IMMICH_API_KEY, IMMICH_BASE_URL
+from config import IMMICH_API_KEY, IMMICH_BASE_URL
 from db import get_conn, release_conn
 from detection import get_blur_score, get_face_app, pick_best_face, pick_largest_face
 from folder_analysis import run_folder_analysis
@@ -21,7 +20,17 @@ def analyze_immich():
     gating), but sourced from Immich asset IDs already known to the app -
     a selection, a person cluster, or cross-check matches - instead of
     files uploaded from the local filesystem. Saves the round trip of
-    downloading images out of Immich by hand just to re-upload them."""
+    downloading images out of Immich by hand just to re-upload them.
+
+    Downloaded assets are held in memory as (orig_name, bytes) and handed
+    to run_folder_analysis directly -- nothing here is written to disk.
+    Previously every downloaded original was written to a temp directory
+    under FRAME_STORE and never cleaned up on a successful job (only on
+    the early "nothing fetched" failure path) -- an unbounded disk leak
+    for content that's cheap to just re-fetch from Immich, unlike
+    character-sheet generation, which deliberately does persist to disk
+    since redoing a 30-minute render is the expensive case worth
+    protecting against."""
     body = request.get_json(force=True) or {}
     asset_ids = body.get("assetIds") or []
     sim_threshold = float(body.get("simThreshold", 0.1))
@@ -33,10 +42,8 @@ def analyze_immich():
         return jsonify({"error": "provide 'assetIds' (non-empty list)"}), 400
 
     job_id = uuid.uuid4().hex[:12]
-    src_dir = os.path.join(FRAME_STORE, f"{job_id}_srcimgs")
-    os.makedirs(src_dir, exist_ok=True)
 
-    saved_paths = []
+    images = []  # list of (orig_name, bytes), in fetch order
     fetch_errors = []
     for asset_id in asset_ids:
         try:
@@ -46,14 +53,10 @@ def analyze_immich():
                 timeout=20,
             ).json()
             orig_name = meta.get("originalFileName") or f"{asset_id}.jpg"
-            ext = os.path.splitext(orig_name)[1].lower()
-            if ext not in IMAGE_EXTS:
-                ext = ".jpg"
 
             r = requests.get(
                 f"{IMMICH_BASE_URL}/api/assets/{asset_id}/original",
                 headers={"x-api-key": IMMICH_API_KEY},
-                stream=True,
                 timeout=60,
             )
             if r.status_code != 200:
@@ -64,24 +67,19 @@ def analyze_immich():
             # assets and so the exported frame stays traceable back to the
             # Immich library item it came from
             safe_name = f"{asset_id}_{os.path.basename(orig_name)}"
-            out_path = os.path.join(src_dir, safe_name)
-            with open(out_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=65536):
-                    f.write(chunk)
-            saved_paths.append(out_path)
+            images.append((safe_name, r.content))
         except Exception as e:
             fetch_errors.append(f"{asset_id}: {e}")
 
-    if not saved_paths:
-        shutil.rmtree(src_dir, ignore_errors=True)
+    if not images:
         return jsonify({"error": "could not fetch any of the requested Immich assets", "fetchErrors": fetch_errors}), 400
 
-    saved_paths.sort(key=lambda p: os.path.basename(p).lower())
+    images.sort(key=lambda pair: pair[0].lower())
 
     _analysis_jobs[job_id] = {
         "status": "running", "results": [], "error": None,
-        "sourceName": f"immich_selection_{len(saved_paths)}", "sourceType": "immich",
-        "srcDir": src_dir,
+        "sourceName": f"immich_selection_{len(images)}", "sourceType": "immich",
+        "srcImages": dict(images),
         "simThreshold": sim_threshold,
         "blurThreshold": blur_threshold,
         "cacheFormat": cache_format,
@@ -89,12 +87,12 @@ def analyze_immich():
 
     t = threading.Thread(
         target=run_folder_analysis,
-        args=(job_id, saved_paths, sim_threshold, blur_threshold, ref_index, cache_format),
+        args=(job_id, images, sim_threshold, blur_threshold, ref_index, cache_format),
         daemon=True
     )
     t.start()
 
-    return jsonify({"jobId": job_id, "imageCount": len(saved_paths), "fetchErrors": fetch_errors})
+    return jsonify({"jobId": job_id, "imageCount": len(images), "fetchErrors": fetch_errors})
 
 @immich_bp.route("/api/random-face")
 def random_face():
