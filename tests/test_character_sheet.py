@@ -216,14 +216,28 @@ class CharacterSheetTestCase(unittest.TestCase):
         self.assertEqual(result["result"]["resolved_seed"], 424242)
 
     def test_generate_character_sheet_anchor_chain_adds_second_ref(self):
+        # Explicit shot list rather than DEFAULT_PRESET: which preset shots
+        # have use_anchor=True/False is preset data (shot_presets.py), not
+        # part of the anchor_chain mechanism itself -- pinning this test to
+        # DEFAULT_PRESET's current values is what let a real preset change
+        # (commit 20da4e1, DEFAULT_PRESET's profile_left/three_quarter
+        # switched to use_anchor=False) silently desync from this test
+        # instead of documenting the mechanism directly.
+        shots = [
+            shot_presets.ShotSpec("front", "facing the camera directly"),
+            shot_presets.ShotSpec("angled", "turned toward profile", use_anchor=True),
+            shot_presets.ShotSpec("no_anchor", "turned toward profile", use_anchor=False),
+        ]
         character_sheet.create_draft_character("iris", self._src.name)
         calls = []
         with mock.patch.object(hidream_engine, "generate_hidream",
                                 self._stub_generate_hidream(calls)):
-            character_sheet.generate_character_sheet("iris", anchor_chain=True)
+            character_sheet.generate_character_sheet("iris", shots=shots, anchor_chain=True)
         self.assertEqual(len(calls[0]["refs"]), 1, "first view: avatar only")
-        self.assertEqual(len(calls[1]["refs"]), 2, "later views: avatar + rendered front")
-        self.assertEqual(len(calls[2]["refs"]), 2)
+        self.assertEqual(len(calls[1]["refs"]), 2,
+                          "use_anchor=True later view: avatar + rendered front")
+        self.assertEqual(len(calls[2]["refs"]), 1,
+                          "use_anchor=False later view: avatar only, no anchor added")
 
     def test_generate_character_sheet_anchor_chain_disabled(self):
         character_sheet.create_draft_character("jack", self._src.name)
@@ -456,8 +470,8 @@ class CharacterSheetTestCase(unittest.TestCase):
         with mock.patch.object(hidream_engine, "generate_hidream",
                                 self._stub_generate_hidream(calls)):
             first = character_sheet.generate_character_sheet("sam")
-        original_refs = first["result"]["views"][1]["refs"]  # profile_left: avatar + front anchor
-        self.assertEqual(len(original_refs), 2)
+        original_refs = first["result"]["views"][1]["refs"]  # profile_left: use_anchor=False (as of 20da4e1) -> avatar only
+        self.assertEqual(len(original_refs), 1)
 
         reroll_calls = []
         with mock.patch.object(hidream_engine, "generate_hidream",

@@ -59,10 +59,14 @@ class ShotSpec:
 
 
 # ---------------------------------------------------------------------
-# "default" -- the original 3-view identity turnaround. Framing/angle
-# phrases are byte-identical to the old CHARACTER_SHEET_VIEWS so this
-# preset's output is provably unchanged from what's already been
-# verified end-to-end on real hardware.
+# "default" -- the original 3-view identity turnaround. pose_phrase text
+# is byte-identical to the old CHARACTER_SHEET_VIEWS, but use_anchor was
+# later set False on profile_left/three_quarter (2026-09-04, "small
+# bugs") to fix the same anchor-driven pose-divergence bug found in the
+# extended preset -- confirmed by a real render actually showing side/
+# three-quarter divergence afterward. So: prompt text unchanged, ref
+# handling deliberately changed. Not byte-for-byte identical output
+# anymore -- update this note again if that changes.
 # ---------------------------------------------------------------------
 DEFAULT_PRESET: list[ShotSpec] = [
     ShotSpec("front", "a chest-up front portrait, facing the camera directly"),

@@ -394,7 +394,9 @@ def generate_character_sheet(name: str, *,
 
     Shot list resolution: `shots` (explicit ShotSpec list) > `views`
     (legacy, default-preset keys only) > `preset` (by name, default
-    "default" = the original 3-view turnaround, unchanged output).
+    "default" = the original 3-view turnaround; prompt text unchanged,
+    but see shot_presets.py's DEFAULT_PRESET comment -- its use_anchor
+    values were tuned since the original version).
 
     Raises:
       ValueError               -- bad name / preset / shots / views / seed
