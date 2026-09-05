@@ -191,6 +191,131 @@
     heightInput.addEventListener("input", () => applyResolutionSummaryNG());
   }
 
+  // ---- Person Clusters, ported from selection-ui.js's IIFE inside
+  // wireImmichSearchModal(). Pure-DB query (via dbNG.py -> Immich's
+  // Postgres, same instance the rest of NG's Immich search hits) --
+  // ranks named persons by how tightly their tagged faces cluster, no
+  // analysis job or video/folder ingest involved. Clicking a person row
+  // loads their tagged assets into a thumbnail grid; single-click toggles
+  // an asset into the active project's export selection, double-click
+  // loads it as a face-similarity anchor (same as a Search result).
+  //
+  // `lastClusterRows` is deliberately a plain module-level list, not
+  // per-project state: the clusters themselves are a property of the
+  // Immich library, not of any one character tab, so there's nothing to
+  // isolate per-project here -- only the resulting export selection
+  // (project.selectedAssetIds) is per-project.
+  let lastClusterRowsNG = [];
+
+  function wirePersonClustersNG() {
+    const loadBtn = document.getElementById("ng-pc-load-btn");
+    const minFacesInput = document.getElementById("ng-pc-min-faces");
+    const tightThresholdInput = document.getElementById("ng-pc-tight-threshold");
+    const statusEl = document.getElementById("ng-pc-status");
+    const listEl = document.getElementById("ng-pc-cluster-list");
+    const gridEl = document.getElementById("ng-pc-thumb-grid");
+
+    function renderClusterRows() {
+      const threshold = parseFloat(tightThresholdInput.value);
+      const tightCutoff = isNaN(threshold) ? 0.85 : threshold;
+      listEl.innerHTML = "";
+      lastClusterRowsNG.forEach((p) => {
+        const row = document.createElement("div");
+        row.className = "ng-pc-cluster-row";
+        const pct = (p.avgSim * 100).toFixed(1);
+        const tight = p.avgSim > tightCutoff;
+        row.innerHTML = `
+          <div class="ng-pc-cluster-info">
+            <div class="ng-pc-cluster-fname">${p.name}${tight ? ' <span class="ng-pc-tight-flag">&#9679; tight cluster</span>' : ""}</div>
+            <div class="ng-pc-simbar-track"><div class="ng-pc-simbar-fill" style="width:${pct}%"></div></div>
+          </div>
+          <div class="ng-pc-simpct">${pct}%</div>
+          <div class="ng-pc-facecount">${p.faceCount}</div>
+        `;
+        row.addEventListener("click", () => loadPersonAssetsNG(p.personId, row));
+        listEl.appendChild(row);
+      });
+    }
+
+    async function loadClustersNG() {
+      statusEl.textContent = "Loading\u2026";
+      listEl.innerHTML = "";
+      gridEl.innerHTML = "";
+      try {
+        const minFaces = parseInt(minFacesInput.value, 10) || 5;
+        const res = await fetch(`/api/ng/person-clusters?minFaces=${minFaces}&limit=40`);
+        const rows = await res.json();
+        if (rows.error) {
+          statusEl.textContent = "Error: " + rows.error;
+          return;
+        }
+        lastClusterRowsNG = rows;
+        statusEl.textContent = `${rows.length} person${rows.length === 1 ? "" : "s"} (sorted tightest-cluster first)`;
+        renderClusterRows();
+      } catch (e) {
+        statusEl.textContent = "Request failed: " + e.message;
+      }
+    }
+
+    async function loadPersonAssetsNG(personId, rowEl) {
+      listEl.querySelectorAll(".ng-pc-cluster-row").forEach((r) => r.classList.remove("ng-pc-row-active"));
+      if (rowEl) rowEl.classList.add("ng-pc-row-active");
+      gridEl.innerHTML = "Loading\u2026";
+      try {
+        const res = await fetch(`/api/ng/person-assets/${personId}?limit=200`);
+        const assets = await res.json();
+        gridEl.innerHTML = "";
+        assets.forEach((a) => {
+          const cell = document.createElement("div");
+          let clickTimer = null;
+          const isSelected = () => { const p = ProjectManager.getActive(); return !!p && p.selectedAssetIds.has(a.assetId); };
+          const img = document.createElement("img");
+          img.src = `/api/ng/thumb/${a.assetId}`;
+          img.loading = "lazy";
+          img.title = a.filename;
+          img.style.outline = isSelected() ? "2px solid var(--ng-accent)" : "none";
+          cell.appendChild(img);
+
+          const toggleExportSelection = () => {
+            const p = ProjectManager.getActive();
+            if (!p) return;
+            if (p.selectedAssetIds.has(a.assetId)) {
+              p.selectedAssetIds.delete(a.assetId);
+              img.style.outline = "none";
+            } else {
+              p.selectedAssetIds.add(a.assetId);
+              img.style.outline = "2px solid var(--ng-accent)";
+            }
+            ProjectManager.render();
+          };
+          cell.onclick = () => {
+            clearTimeout(clickTimer);
+            clickTimer = setTimeout(toggleExportSelection, 220);
+          };
+          cell.ondblclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            clearTimeout(clickTimer);
+            const p = ProjectManager.getActive();
+            if (!p) return;
+            // this is an Immich-sourced action regardless of which task
+            // tab you were on when you clicked -- switch so the resulting
+            // neighbor ring is actually visible (mirrors setTask()).
+            if (p.task === "video") p.stopPlayIfRunning();
+            p.task = "immich";
+            p.recenterImmich(a.assetId, a.filename);
+          };
+          gridEl.appendChild(cell);
+        });
+      } catch (e) {
+        gridEl.innerHTML = "Failed to load assets: " + e.message;
+      }
+    }
+
+    tightThresholdInput.addEventListener("change", renderClusterRows);
+    loadBtn.addEventListener("click", loadClustersNG);
+  }
+
   // ---- DOM refs: top bar / tabs / bottom bar ----
   const tabsEl = document.getElementById("ng-tabs");
   const mainEl = document.getElementById("ng-main");
@@ -361,6 +486,21 @@
       this.selectedFrames = new Set();
       this.staticPreviewFrame = null; // folder/image-set jobs only -- a chart-click result row, since there's no live decode to scrub (see renderFramePreview)
 
+      // Pose Picker / Shot Scale Picker state -- ported from viz-render.js's
+      // pose/scale picker pools. Per-project (not shared globals) so each
+      // tab keeps its own dialed-in target pitch/yaw/scale and its own
+      // sticky 3x3 grid slots when you switch tabs. _posePickerRingRef/
+      // _scalePickerRingRef are identity markers (not persisted) used to
+      // detect "this project just got a freshly-built ring" so the picker
+      // resets sliders/pool exactly once per analysis run, not on every
+      // render tick.
+      this.posePickerPool = [];
+      this.posePickerDisplayed = new Array(9).fill(null);
+      this._posePickerRingRef = null;
+      this.scalePickerPool = [];
+      this.scalePickerDisplayed = new Array(9).fill(null);
+      this._scalePickerRingRef = null;
+
       // Immich ingest state -- independent of the video state above, so a
       // project can have a video ring AND an Immich ring at once, each
       // with its own selection set. Built the same slice-by-slice way as
@@ -473,6 +613,14 @@
       p.ring = data.ring || null;
       p.rankedSortMetric = data.rankedSortMetric || "sim";
       p.selectedFrames = new Set(Array.isArray(data.selectedFrames) ? data.selectedFrames : []);
+      // transient, rebuilt on first render from p.ring -- see the
+      // _posePickerRingRef/_scalePickerRingRef comment in the constructor.
+      p.posePickerPool = [];
+      p.posePickerDisplayed = new Array(9).fill(null);
+      p._posePickerRingRef = null;
+      p.scalePickerPool = [];
+      p.scalePickerDisplayed = new Array(9).fill(null);
+      p._scalePickerRingRef = null;
       p.immichSearchQuery = "";
       p.immichSearchResults = [];
       p.immichSearching = false;
@@ -769,7 +917,7 @@
           similarity: r.sim,
           thumbUrl: `/api/ng/framefile/${r.frameId}`,
           pitch: r.pitch, yaw: r.yaw, roll: r.roll, blur: r.blur,
-          bboxRatio: r.bboxRatio, vertFillPct: r.vertFillPct,
+          bboxRatio: r.bboxRatio, vertFillPct: r.vertFillPct, bbox: r.bbox,
         }))
         .sort((a, b) => b.similarity - a.similarity);
 
@@ -1570,6 +1718,21 @@
       if (videoRangeRowEl) videoRangeRowEl.style.display = active.task === "video" ? "" : "none";
       if (folderRowEl) folderRowEl.style.display = active.task === "folderzip" ? "" : "none";
 
+      // Pose Picker / Shot Scale Picker: re-run setup (reset sliders to the
+      // pool's centroid, reset sticky grid slots) only when this project's
+      // ring identity actually changed since we last looked -- not on
+      // every render tick (polling, unrelated toggles, etc.).
+      if (active.ring !== active._posePickerRingRef) {
+        active._posePickerRingRef = active.ring;
+        setupPosePickerNG(active);
+      }
+      if (active.ring !== active._scalePickerRingRef) {
+        active._scalePickerRingRef = active.ring;
+        setupScalePickerNG(active);
+      }
+      renderPosePickerGridNG(active);
+      renderScalePickerGridNG(active);
+
       ringScaleInput.value = active.ringScale;
       ringScaleVal.textContent = active.ringScale + "%";
       squeezeSlider.value = active.squeezeMinPct;
@@ -2085,6 +2248,298 @@
       previewHintEl.textContent = `Could not load stored image for frame ${r.frame}`;
     };
     img.src = `/api/ng/framefile/${r.frameId}?t=${Date.now()}`;
+  }
+
+  // ---- Pose Picker + Shot Scale Picker, ported from viz-render.js's
+  // setupPosePicker/renderPosePickerGrid and setupScalePicker/
+  // renderScalePickerGrid. Both search the current project's analyzed
+  // pool (project.ring.baseResults) for the 9 frames closest to a
+  // dialed-in target, with a 3x3 grid that keeps a frame in its slot as
+  // long as it's still in the nearest-9 (so the grid doesn't visually
+  // reshuffle every tiny slider nudge). Grid cells are built once and
+  // reused across projects/re-renders; the pool/displayed-slot state is
+  // per-project (see the constructor/fromPlain comments).
+  //
+  // Deliberately NOT ported: the original's "Preview these 9" button
+  // opened a dedicated spread-layout preview modal (selection-modal's
+  // pose-layout mode) that NG has no equivalent infrastructure for.
+  // Repurposed here as "Add these 9 to selection" instead, which covers
+  // the actual underlying need (get these frames into your export
+  // selection) without that modal machinery.
+  const posePickerGridEl = document.getElementById("ng-pose-picker-grid");
+  const posePickerEmptyEl = document.getElementById("ng-pose-picker-empty");
+  const posePickerControlsEl = document.getElementById("ng-pose-picker-controls");
+  const posePickerPitchSlider = document.getElementById("ng-pose-picker-pitch");
+  const posePickerYawSlider = document.getElementById("ng-pose-picker-yaw");
+  const posePickerPitchNum = document.getElementById("ng-pose-picker-pitch-num");
+  const posePickerYawNum = document.getElementById("ng-pose-picker-yaw-num");
+  const posePickerToleranceEnable = document.getElementById("ng-pose-picker-tolerance-enable");
+  const posePickerToleranceVal = document.getElementById("ng-pose-picker-tolerance-val");
+  const posePickerCountEl = document.getElementById("ng-pose-picker-count");
+  const posePickerSelectBtn = document.getElementById("ng-pose-picker-select-btn");
+  const posePickerCellsNG = buildPickerCellsNG(posePickerGridEl);
+
+  const scalePickerGridEl = document.getElementById("ng-scale-picker-grid");
+  const scalePickerEmptyEl = document.getElementById("ng-scale-picker-empty");
+  const scalePickerControlsEl = document.getElementById("ng-scale-picker-controls");
+  const scalePickerSlider = document.getElementById("ng-scale-picker-slider");
+  const scalePickerNum = document.getElementById("ng-scale-picker-num");
+  const scalePickerToleranceEnable = document.getElementById("ng-scale-picker-tolerance-enable");
+  const scalePickerToleranceVal = document.getElementById("ng-scale-picker-tolerance-val");
+  const scalePickerCountEl = document.getElementById("ng-scale-picker-count");
+  const scalePickerSelectBtn = document.getElementById("ng-scale-picker-select-btn");
+  const scalePickerCellsNG = buildPickerCellsNG(scalePickerGridEl);
+
+  function buildPickerCellsNG(gridEl) {
+    const cells = [];
+    for (let i = 0; i < 9; i++) {
+      const cell = document.createElement("div");
+      cell.innerHTML = `<img loading="lazy">`;
+      gridEl.appendChild(cell);
+      cells.push(cell);
+    }
+    return cells;
+  }
+
+  function updatePickerCellVisualNG(project, cell, it, dist, onClick) {
+    cell.style.visibility = "visible";
+    const isSelected = project.selectedFrames.has(it.frame);
+    const img = cell.querySelector("img");
+    if (img.dataset.frame !== String(it.frame)) {
+      img.src = it.thumbUrl;
+      img.dataset.frame = it.frame;
+    }
+    img.title = it.titleText(dist, isSelected);
+    img.style.borderColor = isSelected ? "var(--ng-accent)" : "var(--ng-border)";
+    cell.onclick = onClick;
+  }
+
+  function setupPosePickerNG(project) {
+    project.posePickerPool = (project.ring ? project.ring.baseResults : [])
+      .filter((r) => r.frameId && typeof r.pitch === "number" && typeof r.yaw === "number")
+      .map((r) => ({
+        frame: r.frame,
+        thumbUrl: r.thumbUrl,
+        pitch: r.pitch,
+        yaw: r.yaw,
+        blur: typeof r.blur === "number" ? r.blur : 0,
+        vertFillPct: r.vertFillPct,
+        titleText(dist, isSelected) {
+          const scaleTxt = typeof this.vertFillPct === "number" ? `, face ${(this.vertFillPct * 100).toFixed(0)}% frame ht` : "";
+          return `pitch ${this.pitch.toFixed(1)}, yaw ${this.yaw.toFixed(1)} (\u0394${dist.toFixed(1)} from target), sharpness ${this.blur.toFixed(0)}${scaleTxt} \u2014 click to ${isSelected ? "remove from" : "add to"} selection`;
+        },
+      }));
+    project.posePickerDisplayed = new Array(9).fill(null);
+
+    if (!project.posePickerPool.length) {
+      if (project.isActive) { posePickerEmptyEl.style.display = "block"; posePickerControlsEl.style.display = "none"; }
+      return;
+    }
+    if (project.isActive) { posePickerEmptyEl.style.display = "none"; posePickerControlsEl.style.display = "flex"; }
+
+    const pitchVals = project.posePickerPool.map((it) => it.pitch);
+    const yawVals = project.posePickerPool.map((it) => it.yaw);
+    // start centered on the pool's own centroid rather than an arbitrary 0,
+    // same convention the original uses.
+    project._posePickerPitchTarget = Math.round(pitchVals.reduce((s, v) => s + v, 0) / pitchVals.length);
+    project._posePickerYawTarget = Math.round(yawVals.reduce((s, v) => s + v, 0) / yawVals.length);
+  }
+
+  function renderPosePickerGridNG(project) {
+    if (!project.posePickerPool.length) {
+      posePickerEmptyEl.style.display = "block";
+      posePickerControlsEl.style.display = "none";
+      return;
+    }
+    posePickerEmptyEl.style.display = "none";
+    posePickerControlsEl.style.display = "flex";
+
+    const pitchTarget = typeof project._posePickerPitchTarget === "number" ? project._posePickerPitchTarget : 0;
+    const yawTarget = typeof project._posePickerYawTarget === "number" ? project._posePickerYawTarget : 0;
+    posePickerPitchSlider.value = pitchTarget;
+    posePickerYawSlider.value = yawTarget;
+    posePickerPitchNum.value = pitchTarget;
+    posePickerYawNum.value = yawTarget;
+    posePickerToleranceEnable.checked = !!project._posePickerToleranceOn;
+    posePickerToleranceVal.disabled = !project._posePickerToleranceOn;
+    posePickerToleranceVal.value = typeof project._posePickerTolerance === "number" ? project._posePickerTolerance : 5;
+
+    let ranked = project.posePickerPool
+      .map((it) => ({ it, dist: Math.hypot(it.pitch - pitchTarget, it.yaw - yawTarget) }))
+      .sort((a, b) => a.dist - b.dist);
+    if (project._posePickerToleranceOn) {
+      ranked = ranked.filter((r) => r.dist <= posePickerToleranceVal.value);
+    }
+    ranked = ranked.slice(0, 9);
+    const rankedFrames = ranked.map((r) => r.it.frame);
+
+    const displayed = project.posePickerDisplayed;
+    const keepSlot = displayed.map((frame) => frame !== null && rankedFrames.includes(frame));
+    const toPlace = ranked.filter((r) => !displayed.includes(r.it.frame));
+    let placeIdx = 0;
+
+    for (let i = 0; i < 9; i++) {
+      if (keepSlot[i]) {
+        const match = ranked.find((r) => r.it.frame === displayed[i]);
+        updatePickerCellVisualNG(project, posePickerCellsNG[i], match.it, match.dist, () => {
+          project.toggleFrameSelection(match.it.frame);
+          ProjectManager.render();
+        });
+      } else if (placeIdx < toPlace.length) {
+        const { it, dist } = toPlace[placeIdx++];
+        displayed[i] = it.frame;
+        updatePickerCellVisualNG(project, posePickerCellsNG[i], it, dist, () => {
+          project.toggleFrameSelection(it.frame);
+          ProjectManager.render();
+        });
+      } else {
+        displayed[i] = null;
+        posePickerCellsNG[i].style.visibility = "hidden";
+      }
+    }
+
+    posePickerCountEl.textContent = project._posePickerToleranceOn
+      ? `${ranked.length} within ${posePickerToleranceVal.value}\u00b0 of target (${project.posePickerPool.length} in pool)`
+      : `${project.posePickerPool.length} in analyzed pool`;
+  }
+
+  function wirePosePickerControlsNG() {
+    function onChange() {
+      const active = ProjectManager.getActive();
+      if (!active) return;
+      active._posePickerPitchTarget = Math.max(-90, Math.min(90, parseFloat(posePickerPitchNum.value) || 0));
+      active._posePickerYawTarget = Math.max(-90, Math.min(90, parseFloat(posePickerYawNum.value) || 0));
+      active._posePickerToleranceOn = posePickerToleranceEnable.checked;
+      active._posePickerTolerance = parseFloat(posePickerToleranceVal.value) || 5;
+      renderPosePickerGridNG(active);
+    }
+    posePickerPitchSlider.addEventListener("input", () => { posePickerPitchNum.value = posePickerPitchSlider.value; onChange(); });
+    posePickerYawSlider.addEventListener("input", () => { posePickerYawNum.value = posePickerYawSlider.value; onChange(); });
+    posePickerPitchNum.addEventListener("input", onChange);
+    posePickerYawNum.addEventListener("input", onChange);
+    posePickerToleranceEnable.addEventListener("change", onChange);
+    posePickerToleranceVal.addEventListener("input", onChange);
+    posePickerSelectBtn.addEventListener("click", () => {
+      const active = ProjectManager.getActive();
+      if (!active) return;
+      active.posePickerDisplayed.filter((f) => f !== null).forEach((frame) => active.selectedFrames.add(frame));
+      ProjectManager.render();
+    });
+  }
+
+  function setupScalePickerNG(project) {
+    const minFacePxEl = document.getElementById("ng-export-min-face");
+    const minFacePx = parseFloat(minFacePxEl ? minFacePxEl.value : 0) || 0;
+
+    project.scalePickerPool = (project.ring ? project.ring.baseResults : [])
+      .filter((r) => {
+        if (!r.frameId) return false;
+        const scaleVal = typeof r.vertFillPct === "number" ? r.vertFillPct : (typeof r.bboxRatio === "number" ? Math.sqrt(r.bboxRatio) : null);
+        if (scaleVal === null) return false;
+        // honor the same "too distant to be useful" floor Export Settings
+        // uses, so this picker doesn't surface frames the export pipeline
+        // would just skip anyway.
+        if (minFacePx > 0 && r.bbox) {
+          const faceH = r.bbox[3] - r.bbox[1];
+          if (faceH < minFacePx) return false;
+        }
+        return true;
+      })
+      .map((r) => ({
+        frame: r.frame,
+        thumbUrl: r.thumbUrl,
+        scalePct: (typeof r.vertFillPct === "number" ? r.vertFillPct : Math.sqrt(r.bboxRatio)) * 100,
+        blur: typeof r.blur === "number" ? r.blur : 0,
+        titleText(dist, isSelected) {
+          return `${this.scalePct.toFixed(0)}% frame ht (\u0394${dist.toFixed(1)} from target), sharpness ${this.blur.toFixed(0)} \u2014 click to ${isSelected ? "remove from" : "add to"} selection`;
+        },
+      }));
+    project.scalePickerDisplayed = new Array(9).fill(null);
+
+    if (!project.scalePickerPool.length) {
+      if (project.isActive) { scalePickerEmptyEl.style.display = "block"; scalePickerControlsEl.style.display = "none"; }
+      return;
+    }
+    if (project.isActive) { scalePickerEmptyEl.style.display = "none"; scalePickerControlsEl.style.display = "flex"; }
+
+    const scaleVals = project.scalePickerPool.map((it) => it.scalePct);
+    project._scalePickerTarget = Math.round(scaleVals.reduce((s, v) => s + v, 0) / scaleVals.length);
+  }
+
+  function renderScalePickerGridNG(project) {
+    if (!project.scalePickerPool.length) {
+      scalePickerEmptyEl.style.display = "block";
+      scalePickerControlsEl.style.display = "none";
+      return;
+    }
+    scalePickerEmptyEl.style.display = "none";
+    scalePickerControlsEl.style.display = "flex";
+
+    const target = typeof project._scalePickerTarget === "number" ? project._scalePickerTarget : 30;
+    scalePickerSlider.value = target;
+    scalePickerNum.value = target;
+    scalePickerToleranceEnable.checked = !!project._scalePickerToleranceOn;
+    scalePickerToleranceVal.disabled = !project._scalePickerToleranceOn;
+    scalePickerToleranceVal.value = typeof project._scalePickerTolerance === "number" ? project._scalePickerTolerance : 10;
+
+    let ranked = project.scalePickerPool
+      .map((it) => ({ it, dist: Math.abs(it.scalePct - target) }))
+      .sort((a, b) => a.dist - b.dist);
+    if (project._scalePickerToleranceOn) {
+      ranked = ranked.filter((r) => r.dist <= scalePickerToleranceVal.value);
+    }
+    ranked = ranked.slice(0, 9);
+    const rankedFrames = ranked.map((r) => r.it.frame);
+
+    const displayed = project.scalePickerDisplayed;
+    const keepSlot = displayed.map((frame) => frame !== null && rankedFrames.includes(frame));
+    const toPlace = ranked.filter((r) => !displayed.includes(r.it.frame));
+    let placeIdx = 0;
+
+    for (let i = 0; i < 9; i++) {
+      if (keepSlot[i]) {
+        const match = ranked.find((r) => r.it.frame === displayed[i]);
+        updatePickerCellVisualNG(project, scalePickerCellsNG[i], match.it, match.dist, () => {
+          project.toggleFrameSelection(match.it.frame);
+          ProjectManager.render();
+        });
+      } else if (placeIdx < toPlace.length) {
+        const { it, dist } = toPlace[placeIdx++];
+        displayed[i] = it.frame;
+        updatePickerCellVisualNG(project, scalePickerCellsNG[i], it, dist, () => {
+          project.toggleFrameSelection(it.frame);
+          ProjectManager.render();
+        });
+      } else {
+        displayed[i] = null;
+        scalePickerCellsNG[i].style.visibility = "hidden";
+      }
+    }
+
+    scalePickerCountEl.textContent = project._scalePickerToleranceOn
+      ? `${ranked.length} within ${scalePickerToleranceVal.value}% of target (${project.scalePickerPool.length} in pool)`
+      : `${project.scalePickerPool.length} in analyzed pool`;
+  }
+
+  function wireScalePickerControlsNG() {
+    function onChange() {
+      const active = ProjectManager.getActive();
+      if (!active) return;
+      active._scalePickerTarget = Math.max(0, Math.min(100, parseFloat(scalePickerNum.value) || 0));
+      active._scalePickerToleranceOn = scalePickerToleranceEnable.checked;
+      active._scalePickerTolerance = parseFloat(scalePickerToleranceVal.value) || 10;
+      renderScalePickerGridNG(active);
+    }
+    scalePickerSlider.addEventListener("input", () => { scalePickerNum.value = scalePickerSlider.value; onChange(); });
+    scalePickerNum.addEventListener("input", onChange);
+    scalePickerToleranceEnable.addEventListener("change", onChange);
+    scalePickerToleranceVal.addEventListener("input", onChange);
+    scalePickerSelectBtn.addEventListener("click", () => {
+      const active = ProjectManager.getActive();
+      if (!active) return;
+      active.scalePickerDisplayed.filter((f) => f !== null).forEach((frame) => active.selectedFrames.add(frame));
+      ProjectManager.render();
+    });
   }
 
   // ---- pose-list view (yaw/pitch/roll/blur ring-sort modes), ported from
@@ -2627,6 +3082,9 @@
 
   wireLeftRailChrome();
   wireExportSettingsNG();
+  wirePersonClustersNG();
+  wirePosePickerControlsNG();
+  wireScalePickerControlsNG();
   ProjectManager.loadState();
   ProjectManager.render();
 

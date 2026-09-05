@@ -1234,3 +1234,151 @@ html, body {
   margin-top: 6px;
 }
 .ng-immich-export-row .ng-btn:disabled { opacity: 0.5; }
+
+/* ---- Pose Picker / Shot Scale Picker panel sections ---- */
+.ng-picker-blurb {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.ng-picker-empty {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  padding: 8px 0;
+}
+.ng-picker-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ng-picker-slider-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-bottom: 2px;
+}
+.ng-picker-num {
+  width: 52px;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  text-align: right;
+}
+.ng-picker-num:disabled { color: var(--ng-text-dim); }
+.ng-picker-range { width: 100%; }
+.ng-picker-tolerance-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ng-picker-tolerance-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  cursor: pointer;
+}
+.ng-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.ng-picker-grid > div {
+  cursor: pointer;
+  visibility: hidden;
+}
+.ng-picker-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 2px solid var(--ng-border);
+  display: block;
+}
+.ng-picker-count {
+  font-size: 9px;
+  color: var(--ng-text-dim);
+  text-align: center;
+}
+
+/* ---- Person Clusters panel section ---- */
+.ng-pc-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--ng-text-dim);
+}
+.ng-pc-label { white-space: nowrap; }
+.ng-pc-num { width: 56px; flex: 0 0 auto; }
+.ng-pc-cluster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.ng-pc-cluster-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ng-pc-cluster-row:hover { background: var(--ng-panel-raised); }
+.ng-pc-cluster-row.ng-pc-row-active { background: rgba(124, 196, 255, 0.12); }
+.ng-pc-cluster-info { flex: 1; min-width: 0; }
+.ng-pc-cluster-fname {
+  font-size: 12px;
+  color: var(--ng-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ng-pc-tight-flag { color: #d4a544; font-size: 9px; }
+.ng-pc-simbar-track {
+  height: 3px;
+  background: #1c1c22;
+  border-radius: 2px;
+  margin-top: 5px;
+  overflow: hidden;
+}
+.ng-pc-simbar-fill { height: 100%; background: var(--ng-accent); }
+.ng-pc-simpct {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-left: 6px;
+  flex-shrink: 0;
+  width: 34px;
+  text-align: right;
+}
+.ng-pc-facecount {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.ng-pc-thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 4px;
+  margin-top: 8px;
+}
+.ng-pc-thumb-grid > div { cursor: pointer; position: relative; }
+.ng-pc-thumb-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 3px;
+  display: block;
+}

@@ -5,13 +5,13 @@ to configNG/dbNG/detectionNG/video_analysisNG instead of the originals,
 per the NG duplication rule in APP_ARCHITECTURE_NOTES.md -- does not
 import from or call into routes/immich.py or any non-NG module.
 
-Scope ported so far (per "go ahead with immich next"): filename search,
-pgvector nearest-neighbors (face embedding, CLIP fallback), lazy
-pose/blur for one asset, thumb/preview image proxying. NOT ported yet:
+Scope ported so far (per "go ahead with immich next" and later "port
+person clusters"): filename search, pgvector nearest-neighbors (face
+embedding, CLIP fallback), lazy pose/blur for one asset, thumb/preview
+image proxying, person-clusters, person-assets. NOT ported yet:
 analyze-immich (batch folder-style analysis over a selection),
 random-face, immich-cross-check / immich-face-pose (job-scoped -- those
-belong with the video analysis ring, a later slice), person-clusters,
-person-assets.
+belong with the video analysis ring, a later slice).
 """
 
 import numpy as np
@@ -169,3 +169,73 @@ def preview_ng(asset_id):
         stream=True,
     )
     return Response(r.content, mimetype=r.headers.get("Content-Type", "image/jpeg"))
+
+
+@immichNG_bp.route("/api/ng/person-clusters")
+def person_clusters_ng():
+    """Rank named Immich persons by how tightly their faces cluster in
+    embedding space. High avg_sim usually means either very consistent
+    real-world photos of that person, or a pile of near-duplicate stills
+    (e.g. screenshotted from video) -- worth eyeballing before using as a
+    LoRA source. No video job or upload required, pure Immich DB query."""
+    min_faces = int(request.args.get("minFaces", 5))
+    limit = int(request.args.get("limit", 30))
+
+    conn = get_conn_ng()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT af."personId", p.name,
+                   COUNT(*) AS face_count,
+                   AVG(1 - (fs.embedding <=> centroid.emb)) AS avg_sim
+            FROM asset_face af
+            JOIN face_search fs ON fs."faceId" = af.id
+            JOIN person p ON p.id = af."personId"
+            CROSS JOIN LATERAL (
+                SELECT AVG(fs2.embedding) AS emb
+                FROM face_search fs2
+                JOIN asset_face af2 ON af2.id = fs2."faceId"
+                WHERE af2."personId" = af."personId"
+            ) centroid
+            WHERE af."personId" IS NOT NULL
+            GROUP BY af."personId", p.name
+            HAVING COUNT(*) >= %s
+            ORDER BY avg_sim DESC
+            LIMIT %s;
+        """, (min_faces, limit))
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        release_conn_ng(conn)
+
+    return jsonify([
+        {"personId": r[0], "name": r[1] or "(unnamed)", "faceCount": r[2], "avgSim": float(r[3])}
+        for r in rows
+    ])
+
+
+@immichNG_bp.route("/api/ng/person-assets/<person_id>")
+def person_assets_ng(person_id):
+    """All (or up to `limit`) assets Immich has tagged for a given
+    personId. Used to populate the thumbnail grid when a person-cluster
+    row is opened, and as the source list for building a selection to
+    export."""
+    limit = int(request.args.get("limit", 200))
+
+    conn = get_conn_ng()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT a.id, a."originalFileName"
+            FROM asset_face af
+            JOIN asset a ON a.id = af."assetId"
+            WHERE af."personId" = %s
+            LIMIT %s;
+        """, (person_id, limit))
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        release_conn_ng(conn)
+
+    return jsonify([{"assetId": r[0], "filename": r[1]} for r in rows])
+

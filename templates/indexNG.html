@@ -131,21 +131,62 @@
           <div class="panel-section" data-section="person-clusters">
             <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Person Clusters</span></div>
             <div class="panel-section-body">
-              <p class="ng-stub-note">(stub -- not ported yet)</p>
+              <div class="ng-pc-row">
+                <label class="ng-pc-label">Min faces</label>
+                <input id="ng-pc-min-faces" type="number" step="1" min="1" value="5" class="ng-num-input ng-pc-num">
+                <label class="ng-pc-label" title="Avg similarity above which a cluster is flagged as suspiciously tight (e.g. duplicate stills)">Tight &ge;</label>
+                <input id="ng-pc-tight-threshold" type="number" step="0.01" min="0" max="1" value="0.85" class="ng-num-input ng-pc-num">
+              </div>
+              <button type="button" id="ng-pc-load-btn" class="ng-btn ng-btn-full">Load clusters</button>
+              <div id="ng-pc-status" class="ng-stub-note"></div>
+              <div id="ng-pc-cluster-list" class="ng-pc-cluster-list"></div>
+              <div id="ng-pc-thumb-grid" class="ng-pc-thumb-grid"></div>
             </div>
           </div>
 
           <div class="panel-section" data-section="pose-picker">
             <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Pose Picker</span></div>
             <div class="panel-section-body">
-              <p class="ng-stub-note">(stub -- not ported yet)</p>
+              <div class="ng-picker-blurb">Dial in a target pitch/yaw &mdash; shows the 9 closest matches from the analyzed pool. Click a thumbnail to add or remove it from your export selection.</div>
+              <div id="ng-pose-picker-empty" class="ng-picker-empty">Run an analysis first (Video or Folder/Zip) &mdash; this searches the analyzed pool, not the whole library.</div>
+              <div id="ng-pose-picker-controls" class="ng-picker-controls" style="display:none;">
+                <div class="ng-picker-slider-row">
+                  <div class="ng-picker-slider-label"><span>Pitch</span><input type="number" id="ng-pose-picker-pitch-num" min="-90" max="90" step="1" value="0" class="ng-picker-num"></div>
+                  <input type="range" id="ng-pose-picker-pitch" min="-90" max="90" value="0" step="1" class="ng-picker-range">
+                </div>
+                <div class="ng-picker-slider-row">
+                  <div class="ng-picker-slider-label"><span>Yaw</span><input type="number" id="ng-pose-picker-yaw-num" min="-90" max="90" step="1" value="0" class="ng-picker-num"></div>
+                  <input type="range" id="ng-pose-picker-yaw" min="-90" max="90" value="0" step="1" class="ng-picker-range">
+                </div>
+                <div class="ng-picker-tolerance-row">
+                  <label class="ng-picker-tolerance-label"><input type="checkbox" id="ng-pose-picker-tolerance-enable"> Tolerance (max distance from target)</label>
+                  <input type="number" id="ng-pose-picker-tolerance-val" min="0.5" step="0.5" value="5" disabled class="ng-picker-num">
+                </div>
+                <div id="ng-pose-picker-grid" class="ng-picker-grid"></div>
+                <button type="button" id="ng-pose-picker-select-btn" class="ng-btn ng-btn-full">Add these 9 to selection</button>
+                <div id="ng-pose-picker-count" class="ng-picker-count"></div>
+              </div>
             </div>
           </div>
 
           <div class="panel-section" data-section="scale-picker">
             <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Shot Scale Picker</span></div>
             <div class="panel-section-body">
-              <p class="ng-stub-note">(stub -- not ported yet)</p>
+              <div class="ng-picker-blurb">Dial in a target face-to-frame ratio &mdash; 0% is a distant/wide shot, 100% is an extreme close-up. Frames below Export Settings' "Min face" are excluded, since too-distant shots are too small to be useful regardless of match.</div>
+              <div id="ng-scale-picker-empty" class="ng-picker-empty">Run an analysis first &mdash; this searches the analyzed pool, not the whole library.</div>
+              <div id="ng-scale-picker-controls" class="ng-picker-controls" style="display:none;">
+                <div class="ng-picker-slider-row">
+                  <div class="ng-picker-slider-label"><span>Face % of frame</span><input type="number" id="ng-scale-picker-num" min="0" max="100" step="1" value="30" class="ng-picker-num"></div>
+                  <input type="range" id="ng-scale-picker-slider" min="0" max="100" value="30" step="1" class="ng-picker-range">
+                </div>
+                <div class="ng-picker-tolerance-row">
+                  <label class="ng-picker-tolerance-label"><input type="checkbox" id="ng-scale-picker-tolerance-enable"> Tolerance (max distance from target)</label>
+                  <input type="number" id="ng-scale-picker-tolerance-val" min="0.5" step="0.5" value="10" disabled class="ng-picker-num">
+                </div>
+                <div id="ng-scale-picker-grid" class="ng-picker-grid"></div>
+                <button type="button" id="ng-scale-picker-select-btn" class="ng-btn ng-btn-full">Add these 9 to selection</button>
+                <div id="ng-scale-picker-count" class="ng-picker-count"></div>
+              </div>
             </div>
           </div>
 
