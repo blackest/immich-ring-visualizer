@@ -97,9 +97,10 @@
             <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Search</span></div>
             <div class="panel-section-body">
               <input id="ng-immich-search-input" type="text" class="ng-search-input" placeholder="Search Immich by filename&hellip;" autocomplete="off">
+              <button type="button" id="ng-immich-random-face-btn" class="ng-btn ng-btn-full">Random Face</button>
               <div id="ng-immich-search-status" class="ng-stub-note"></div>
               <div id="ng-immich-search-results" class="ng-search-results" style="display:none;"></div>
-              <p class="ng-stub-note">(person clusters / cross-check / random-face not ported yet -- filename search only, click a result to load its Immich neighbors)</p>
+              <p class="ng-stub-note">(person clusters / cross-check not ported yet -- filename search and random-face, click a result to load its Immich neighbors)</p>
               <div class="ng-immich-analyze-row">
                 <button type="button" id="ng-immich-analyze-btn" class="ng-btn ng-btn-full" disabled>Analyze 0 selected assets</button>
                 <label class="ng-folder-ref">Ref position <input id="ng-immich-analyze-ref-index" type="number" min="1" value="1" class="ng-num-input" title="Which selected asset (by fetched filename, sorted alphabetically) is the reference face"></label>

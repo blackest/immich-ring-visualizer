@@ -443,6 +443,7 @@
 
   // ---- DOM refs: Search section (Immich filename search) ----
   const immichSearchInput = document.getElementById("ng-immich-search-input");
+  const immichRandomFaceBtn = document.getElementById("ng-immich-random-face-btn");
   const immichSearchStatusEl = document.getElementById("ng-immich-search-status");
   const immichSearchResultsEl = document.getElementById("ng-immich-search-results");
   const immichAnalyzeBtn = document.getElementById("ng-immich-analyze-btn");
@@ -1107,6 +1108,30 @@
         this.immichSearchResults = Array.isArray(data) ? data : [];
       } catch (e) {
         this.immichSearchResults = [];
+      } finally {
+        this.immichSearching = false;
+        if (this.isActive) ProjectManager.renderLeftRail();
+      }
+    }
+
+    async loadRandomImmichFace() {
+      // Explicit button per John's call -- the original app used
+      // random-face as a silent init() fallback when no ?assetId= was
+      // in the URL; NG has no such default-landing concept, so this is
+      // click-to-reroll only.
+      this.immichError = null;
+      this.immichSearching = true;
+      if (this.isActive) ProjectManager.renderLeftRail();
+      try {
+        const res = await fetch(`/api/ng/random-face`);
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          this.immichError = data.error || res.status;
+          return;
+        }
+        await this.loadImmichNeighbors(data.assetId, data.filename);
+      } catch (e) {
+        this.immichError = e.message;
       } finally {
         this.immichSearching = false;
         if (this.isActive) ProjectManager.renderLeftRail();
@@ -1884,6 +1909,7 @@
       if (document.activeElement !== immichSearchInput) {
         immichSearchInput.value = project.immichSearchQuery;
       }
+      if (immichRandomFaceBtn) immichRandomFaceBtn.disabled = project.immichSearching;
       immichSearchStatusEl.textContent = project.immichSearching ? "Searching…" : "";
       immichSearchResultsEl.innerHTML = "";
       if (!project.immichSearchResults.length) {
@@ -3049,6 +3075,13 @@
       if (!active || !active.selectedAssetIds.size) return;
       if (active.job && active.job.status === "running") return;
       active.startImmichAnalysis(Array.from(active.selectedAssetIds));
+    });
+  }
+  if (immichRandomFaceBtn) {
+    immichRandomFaceBtn.addEventListener("click", () => {
+      const active = ProjectManager.getActive();
+      if (!active || active.immichSearching) return;
+      active.loadRandomImmichFace();
     });
   }
 

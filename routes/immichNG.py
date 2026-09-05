@@ -6,13 +6,14 @@ per the NG duplication rule in APP_ARCHITECTURE_NOTES.md -- does not
 import from or call into routes/immich.py or any non-NG module.
 
 Scope ported so far (per "go ahead with immich next", later "port
-person clusters", and later "port analyze-immich"): filename search,
-pgvector nearest-neighbors (face embedding, CLIP fallback), lazy
-pose/blur for one asset, thumb/preview image proxying, person-clusters,
-person-assets, analyze-immich (batch folder-style pose/blur analysis
-over a selection of Immich assets). NOT ported yet: random-face,
-immich-cross-check / immich-face-pose (job-scoped -- those belong with
-the video analysis ring, a later slice).
+person clusters", later "port analyze-immich", and later "port
+random-face"): filename search, random-face (explicit button, not
+auto-loaded on init like the original), pgvector nearest-neighbors
+(face embedding, CLIP fallback), lazy pose/blur for one asset,
+thumb/preview image proxying, person-clusters, person-assets,
+analyze-immich (batch folder-style pose/blur analysis over a selection
+of Immich assets). NOT ported yet: immich-cross-check / immich-face-pose
+(job-scoped -- those belong with the video analysis ring, a later slice).
 """
 
 import os
@@ -113,6 +114,28 @@ def analyze_immich_ng():
     t.start()
 
     return jsonify({"jobId": job_id, "imageCount": len(images), "fetchErrors": fetch_errors})
+
+
+@immichNG_bp.route("/api/ng/random-face")
+def random_face_ng():
+    conn = get_conn_ng()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT a.id, a."originalFileName"
+            FROM asset_face af
+            JOIN asset a ON a.id = af."assetId"
+            WHERE af."personId" IS NOT NULL
+            ORDER BY random()
+            LIMIT 1;
+        """)
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return jsonify({"error": "no faces found"}), 404
+        return jsonify({"assetId": row[0], "filename": row[1]})
+    finally:
+        release_conn_ng(conn)
 
 
 @immichNG_bp.route("/api/ng/find-by-filename")
