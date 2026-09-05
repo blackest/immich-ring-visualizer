@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>immichRingNG</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='styleNG.css') }}">
+</head>
+<body>
+
+<div id="ng-preview-hover-panel"><img id="ng-preview-hover-img"><div class="ng-preview-caption" id="ng-preview-hover-caption"></div></div>
+
+<!--
+  immichRingNG shell.
+
+  Top bar: Load Project / tab strip (one tab per character project) / +
+  Bottom bar: task buttons (which "section" is active for the current tab)
+  Left rail: ported wholesale from the original app's #left-panel (see
+    templates/index.html) at John's request, so we can see the whole
+    original toolset in place and trim it down rather than rebuilding it
+    from scratch. Sections with no NG-side logic yet are left in place
+    but flagged "(stub)" -- only Video/Image-Set Analysis's video picker
+    and Frame Preview are actually wired, reusing the video/audio logic
+    already built for NG.
+  Main: content area for whatever the left rail's active tool shows.
+
+  No persistence/ingest logic beyond video wired yet -- see
+  APP_ARCHITECTURE_NOTES.md. This file/appNG.js/styleNG.css are NG-only,
+  no shared code with index.html/style.css/selection-ui.js.
+-->
+
+<div id="ng-app">
+
+  <header id="ng-topbar">
+    <button id="ng-load-project" class="ng-btn" title="Load an existing project" disabled>
+      Load Project
+    </button>
+    <div id="ng-tabs" role="tablist" aria-label="Character projects"></div>
+    <button id="ng-new-project" class="ng-btn ng-btn-add" title="Start a new blank project">+</button>
+  </header>
+
+  <div id="ng-body">
+    <aside id="ng-leftrail" aria-label="Tools for the current task">
+      <div id="ng-leftrail-resize-handle" title="Drag to resize"></div>
+      <button id="ng-leftrail-collapse-all" title="Collapse panel">&#9668;</button>
+
+      <p id="ng-leftrail-empty" class="ng-placeholder">No project open. Press + to start one.</p>
+
+      <div id="ng-leftrail-body">
+        <div id="ng-controls-pane">
+
+          <div class="panel-section expanded" data-section="identity">
+            <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Anchor</span></div>
+            <div class="panel-section-body">
+              <div class="ng-anchor-row">
+                <label for="ng-ring-scale-input">Ring Scale:</label>
+                <input id="ng-ring-scale-input" type="range" min="25" max="400" value="100">
+                <span id="ng-ring-scale-val">100%</span>
+              </div>
+              <div class="ng-anchor-row">
+                <label for="ng-ring-squeeze-slider">Min sim</label>
+                <input id="ng-ring-squeeze-slider" type="range" min="0" max="100" value="65">
+                <span id="ng-ring-squeeze-val">65% (0/0)</span>
+              </div>
+              <p class="ng-stub-note">(sort-by-yaw/pitch/roll pose-list view, sharpness cutoff, and calibration-frame finder not ported yet -- ring is similarity-banded only for now)</p>
+            </div>
+          </div>
+
+          <div class="panel-section expanded" data-section="search">
+            <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Search</span></div>
+            <div class="panel-section-body">
+              <input id="ng-immich-search-input" type="text" class="ng-search-input" placeholder="Search Immich by filename&hellip;" autocomplete="off">
+              <div id="ng-immich-search-status" class="ng-stub-note"></div>
+              <div id="ng-immich-search-results" class="ng-search-results" style="display:none;"></div>
+              <p class="ng-stub-note">(person clusters / cross-check / random-face not ported yet -- filename search only, click a result to load its Immich neighbors)</p>
+            </div>
+          </div>
+
+          <div class="panel-section expanded" data-section="video-analysis">
+            <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Video / Image-Set Analysis</span></div>
+            <div class="panel-section-body">
+              <div id="ng-video-analysis-body"></div>
+              <div class="ng-video-thresh-row">
+                <label>Sim &gt; <input id="ng-sim-threshold" type="number" step="0.05" value="0.1" title="Similarity Threshold" class="ng-num-input"></label>
+                <label>Blur &gt; <input id="ng-blur-threshold" type="number" step="1" value="1" title="Blur Threshold" class="ng-num-input"></label>
+              </div>
+              <label class="ng-checkbox-row"><input type="checkbox" id="ng-cache-format-png"> Cache frames as PNG (lossless, slower, more temp storage)</label>
+              <div class="ng-video-range">
+                <span>Analyze window (sec):</span>
+                <input id="ng-analysis-start-sec" type="number" min="0" step="1" placeholder="start" class="ng-video-range-input">
+                <span>-</span>
+                <input id="ng-analysis-end-sec" type="number" min="0" step="1" placeholder="end" class="ng-video-range-input">
+              </div>
+              <div id="ng-analysis-status"></div>
+              <p class="ng-stub-note">(stub -- folder/zip load not ported yet)</p>
+            </div>
+          </div>
+
+          <div class="panel-section" data-section="person-clusters">
+            <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Person Clusters</span></div>
+            <div class="panel-section-body">
+              <p class="ng-stub-note">(stub -- not ported yet)</p>
+            </div>
+          </div>
+
+          <div class="panel-section" data-section="pose-picker">
+            <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Pose Picker</span></div>
+            <div class="panel-section-body">
+              <p class="ng-stub-note">(stub -- not ported yet)</p>
+            </div>
+          </div>
+
+          <div class="panel-section" data-section="scale-picker">
+            <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Shot Scale Picker</span></div>
+            <div class="panel-section-body">
+              <p class="ng-stub-note">(stub -- not ported yet)</p>
+            </div>
+          </div>
+
+          <div class="panel-section" data-section="export-settings">
+            <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Export Settings</span></div>
+            <div class="panel-section-body">
+              <p class="ng-stub-note">(stub -- not ported yet)</p>
+            </div>
+          </div>
+
+        </div>
+        <div id="ng-splitter" title="Resize controls and frame preview"></div>
+        <div id="ng-preview-pane">
+
+          <div class="panel-section grow expanded" data-section="frame-preview">
+            <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Frame Preview</span></div>
+            <div class="panel-section-body">
+              <div id="ng-preview-container">
+                <p id="ng-preview-hint" class="ng-video-hint">No video loaded for this project yet.</p>
+                <canvas id="ng-preview-canvas" style="display:none;"></canvas>
+                <div id="ng-preview-controls-scroll" style="display:none;">
+                  <div class="preview-controls">
+                    <button class="btn-seek" id="ng-btn-rewind-frame" title="Rewind to frame 1">|&#9668; 1</button>
+                    <button class="btn-seek" id="ng-btn-prev-frame" title="Previous frame">&#9668; -1</button>
+                    <button class="btn-seek ng-video-play-btn" id="ng-btn-play-frames" title="Play (audio-synced)">&#9658; Play</button>
+                    <button class="btn-seek" id="ng-btn-stop-frames" title="Stop">&#9632; Stop</button>
+                    <span id="ng-frame-counter">Frame: 1</span>
+                    <button class="btn-seek" id="ng-btn-next-frame" title="Next frame">+1 &#9658;</button>
+                  </div>
+                  <div id="ng-preview-help">Use &#8592; / &#8594; keys to scrub one actual decoded frame at a time.</div>
+                  <button class="btn-analyze" id="ng-btn-start-analysis" disabled title="Load a video and pick a frame first">Run Analysis with Selected Frame</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </aside>
+    <main id="ng-main">
+      <p id="ng-main-placeholder" class="ng-placeholder">No project open. Press + to start one.</p>
+      <div id="ng-stage-wrap" style="display:none;">
+        <div id="ng-hud"><span id="ng-hud-mode"></span> &middot; <span id="ng-hud-filename"></span></div>
+        <div id="ng-stage"></div>
+      </div>
+      <aside id="ng-sidebar" style="display:none;">
+        <div id="ng-sidebar-current">
+          <img id="ng-sidebar-current-img" src="" alt="">
+          <div class="info">
+            <div class="label">Currently selected</div>
+            <div class="fname" id="ng-sidebar-current-fname">&mdash;</div>
+            <div class="mode" id="ng-sidebar-current-mode"></div>
+            <div class="detail" id="ng-sidebar-current-detail"></div>
+          </div>
+        </div>
+        <div id="ng-sidebar-scroll">
+          <div id="ng-sidebar-header"><span>Ranked matches</span></div>
+          <div id="ng-ranked-sort-row">
+            <span>Sort:</span>
+            <label><input type="radio" name="ng-ranked-sort" class="ng-ranked-sort-cb" value="sim" checked> Similarity</label>
+            <label><input type="radio" name="ng-ranked-sort" class="ng-ranked-sort-cb" value="blur"> Sharpness</label>
+            <label><input type="radio" name="ng-ranked-sort" class="ng-ranked-sort-cb" value="vertFillPct"> Vertical %</label>
+          </div>
+          <div id="ng-frames-section" class="ng-list-section" style="display:none;">
+            <div class="ng-list-section-header">
+              <span class="ng-list-section-title">Local frames</span>
+              <span class="ng-list-section-count" id="ng-frames-section-count"></span>
+              <button class="ng-section-select-all-btn" id="ng-frames-select-all">Select All</button>
+              <button class="ng-section-deselect-all-btn" id="ng-frames-deselect-all">Deselect All</button>
+            </div>
+            <div id="ng-list-body-frames"></div>
+          </div>
+          <div id="ng-immich-section" class="ng-list-section" style="display:none;">
+            <div class="ng-list-section-header">
+              <span class="ng-list-section-title">Immich matches</span>
+              <span class="ng-list-section-count" id="ng-immich-section-count"></span>
+              <button class="ng-section-select-all-btn" id="ng-immich-select-all">Select All</button>
+              <button class="ng-section-deselect-all-btn" id="ng-immich-deselect-all">Deselect All</button>
+            </div>
+            <div id="ng-list-body-immich"></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <footer id="ng-bottombar">
+    <button class="ng-task-btn" data-task="video" disabled>Video</button>
+    <button class="ng-task-btn" data-task="immich" disabled>Immich</button>
+    <button class="ng-task-btn" data-task="folderzip" disabled>Folder / Zip</button>
+  </footer>
+
+</div>
+
+<audio id="ng-video-audio" preload="auto" style="display:none"></audio>
+<script src="{{ url_for('static', filename='appNG.js') }}"></script>
+</body>
+</html>

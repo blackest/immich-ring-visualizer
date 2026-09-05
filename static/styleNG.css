@@ -1,0 +1,856 @@
+/* immichRingNG -- shell styling. Same palette as the original app
+   (static/style.css's :root + its hardcoded panel/button/border colors),
+   just applied to NG's docked-bar layout instead of the original's
+   floating blurred panel. NG-only, no shared rules with static/style.css. */
+
+:root {
+  --ng-bg: #0b0b0e;        /* original --bg */
+  --ng-panel: #0f0f13;     /* dock background -- a shade above --bg for separation, original's floating panel used blur instead */
+  --ng-panel-raised: #16161c; /* original's input/button background */
+  --ng-border: #2a2a32;    /* original's border color */
+  --ng-text: #e8e8ec;      /* original --text */
+  --ng-text-dim: #6b6b76;  /* original --dim */
+  --ng-accent: #7cc4ff;    /* original --accent */
+  --ng-accent-active: #9ed4ff;
+  --ng-danger: #c9605f;
+  --bar-height: 48px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--ng-bg);
+  color: var(--ng-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font-size: 14px;
+}
+
+#ng-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---- top bar: Load Project / tabs / + ---- */
+#ng-topbar {
+  height: var(--bar-height);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  background: var(--ng-panel);
+  border-bottom: 1px solid var(--ng-border);
+}
+
+#ng-tabs {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  height: 100%;
+}
+
+.ng-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--ng-panel-raised);
+  border: 1px solid transparent;
+  color: var(--ng-text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.ng-tab.ng-tab-active {
+  color: var(--ng-text);
+  border-color: var(--ng-accent);
+  background: var(--ng-panel);
+}
+
+.ng-tab-dragging {
+  opacity: 0.4;
+}
+
+.ng-tab-label {
+  outline: none;
+}
+
+.ng-tab-label[contenteditable="true"] {
+  cursor: text;
+}
+
+.ng-tab-close {
+  color: var(--ng-text-dim);
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.ng-tab-close:hover {
+  color: var(--ng-danger);
+  background: rgba(216, 79, 79, 0.15);
+}
+
+/* ---- generic buttons ---- */
+.ng-btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--ng-border);
+  background: var(--ng-panel-raised);
+  color: var(--ng-text);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.ng-btn:hover:not(:disabled) {
+  border-color: var(--ng-accent);
+}
+
+.ng-btn:disabled {
+  color: var(--ng-text-dim);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ng-btn-add {
+  width: 32px;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* ---- body: left rail + main ---- */
+#ng-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* ---- left rail: ported from the original app's #left-panel ---- */
+#ng-leftrail {
+  position: relative;
+  flex: 0 0 auto;
+  width: 320px;
+  max-width: 60vw;
+  background: var(--ng-panel);
+  border-right: 1px solid var(--ng-border);
+  padding: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#ng-leftrail.collapsed-all {
+  width: 44px !important;
+  padding: 10px 4px;
+}
+
+#ng-leftrail.collapsed-all #ng-leftrail-body,
+#ng-leftrail.collapsed-all #ng-leftrail-empty {
+  display: none !important;
+}
+
+#ng-leftrail-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 5;
+}
+
+#ng-leftrail-resize-handle:hover,
+#ng-leftrail-resize-handle.dragging {
+  background: rgba(124, 196, 255, 0.25); /* same rgba the original uses for its resize handle hover */
+}
+
+#ng-leftrail-collapse-all {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  border-radius: 5px;
+  color: var(--ng-text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  z-index: 6;
+  padding: 0;
+}
+
+#ng-leftrail-collapse-all:hover {
+  color: var(--ng-accent-active);
+  border-color: var(--ng-accent);
+}
+
+#ng-leftrail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+  padding-top: 20px;
+}
+
+#ng-controls-pane {
+  flex: 0 0 46%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+#ng-preview-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#ng-splitter {
+  height: 9px;
+  flex: 0 0 9px;
+  cursor: ns-resize;
+  position: relative;
+  margin: -2px 0;
+}
+
+#ng-splitter::before {
+  content: "";
+  position: absolute;
+  left: 36%;
+  right: 36%;
+  top: 4px;
+  height: 1px;
+  background: #32323e; /* matches the original's splitter line exactly */
+}
+
+#ng-splitter:hover::before,
+#ng-splitter.dragging::before {
+  background: var(--ng-accent);
+}
+
+/* ---- panel sections (collapsible), ported from the original ---- */
+.panel-section {
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  background: var(--ng-panel-raised);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex-shrink: 0;
+}
+
+.panel-section.expanded.grow {
+  flex: 1;
+  min-height: 160px;
+}
+
+#ng-preview-pane .panel-section {
+  flex: 1;
+}
+
+#ng-preview-pane .panel-section.expanded {
+  min-height: 0;
+}
+
+.panel-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ng-text-dim);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.panel-section-header:hover {
+  color: var(--ng-text);
+}
+
+.panel-section-header .chev {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  font-size: 10px;
+  width: 10px;
+}
+
+.panel-section.expanded .panel-section-header .chev {
+  transform: rotate(90deg);
+}
+
+.panel-section-header .sec-title {
+  flex: 1;
+}
+
+.panel-section-body {
+  display: none;
+  padding: 0 10px 10px 10px;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-section.expanded .panel-section-body {
+  display: flex;
+}
+
+/* ---- frame preview (ported from #preview-container) ---- */
+#ng-preview-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+#ng-preview-canvas {
+  width: 100%;
+  height: auto;
+  flex: 0 1 auto;
+  min-height: 80px;
+  max-height: calc(100% - 82px);
+  object-fit: contain;
+  border-radius: 6px;
+  background: #050507; /* matches the original's #preview-canvas */
+  display: block;
+}
+
+#ng-preview-controls-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
+  margin-top: 6px;
+  padding-right: 4px;
+}
+
+#ng-preview-help {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  text-align: center;
+  margin-top: 5px;
+}
+
+.preview-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--ng-text);
+}
+
+.btn-seek {
+  background: #1e1e26; /* matches the original's .btn-seek exactly */
+  border: 1px solid #32323e;
+  color: var(--ng-text);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.btn-seek:hover {
+  background: #282834;
+  border-color: var(--ng-accent);
+}
+
+.btn-seek.ng-video-play-btn.ng-video-play-active {
+  border-color: var(--ng-accent);
+  background: rgba(124, 196, 255, 0.15);
+  color: var(--ng-accent-active);
+}
+
+#ng-frame-counter {
+  color: var(--ng-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.btn-analyze {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px;
+  background: #1a2a3a; /* matches the original's .btn-analyze exactly */
+  border: 1px solid #2a4a6a;
+  color: var(--ng-accent);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.btn-analyze:hover:not(:disabled) {
+  background: #22384d;
+}
+
+.btn-analyze:disabled {
+  color: var(--ng-text-dim);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+#ng-main {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ng-placeholder {
+  color: var(--ng-text-dim);
+  font-style: italic;
+  padding: 20px;
+}
+
+.ng-video-hint {
+  color: var(--ng-text-dim);
+  font-size: 12px;
+  margin: 0 0 8px 0;
+}
+
+.ng-video-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ng-text-dim);
+  flex-wrap: wrap;
+}
+
+.ng-video-range-input {
+  width: 64px;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text);
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.ng-stub-note {
+  font-style: italic;
+  opacity: 0.7;
+  font-size: 12px;
+  margin: 0;
+  color: var(--ng-text-dim);
+}
+
+/* ---- bottom bar: task buttons ---- */
+#ng-bottombar {
+  height: var(--bar-height);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: var(--ng-panel);
+  border-top: 1px solid var(--ng-border);
+}
+
+.ng-task-btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid var(--ng-border);
+  background: var(--ng-panel-raised);
+  color: var(--ng-text);
+  cursor: pointer;
+}
+
+.ng-task-btn:hover:not(:disabled) {
+  border-color: var(--ng-accent);
+}
+
+.ng-task-btn.ng-task-active {
+  border-color: var(--ng-accent);
+  background: rgba(124, 196, 255, 0.15);
+  color: var(--ng-accent-active);
+}
+
+.ng-task-btn:disabled {
+  color: var(--ng-text-dim);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+
+/* ---- ring stage + sidebar (Run Analysis -> ring + ranked matches),
+   ported from static/style.css's #stage/#sidebar/.node/.ring/.list-row
+   -- NG-only, own IDs/classes, no shared rules with style.css. Deferred
+   from this port: fisheye lens hover-zoom, pose-list-view (yaw/pitch/
+   roll ring-sort switches to a different layout in the original --
+   here the ring-sort checkboxes are not ported yet, ring stays
+   similarity-banded always), sharpness-cutoff squeeze, Immich nodes/
+   linked badges, selection-modal/export flow. ---- */
+
+#ng-preview-hover-panel {
+  display: none;
+  position: fixed;
+  top: 16px;
+  right: 356px;
+  z-index: 110;
+  width: 340px;
+  height: 355px;
+  background: #101015;
+  border: 1px solid var(--ng-border);
+  border-radius: 10px;
+  padding: 8px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+#ng-preview-hover-panel.active { display: block; }
+#ng-preview-hover-panel img {
+  width: 100%;
+  height: calc(100% - 38px);
+  object-fit: contain;
+  border-radius: 6px;
+  background: #050507;
+}
+#ng-preview-hover-panel .ng-preview-caption {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ng-text-dim);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#ng-stage-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+#ng-hud {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  z-index: 4;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ng-text-dim);
+}
+#ng-hud-filename { color: var(--ng-text); text-transform: none; letter-spacing: 0; }
+
+#ng-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.ng-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border: 1px solid var(--ng-border);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.ng-node {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: #111;
+  border: 2px solid #26262e;
+  transition: box-shadow 0.15s ease;
+  will-change: transform, z-index;
+}
+.ng-node img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ng-node.ng-node-center {
+  border-color: var(--ng-accent);
+  box-shadow: 0 0 0 3px var(--ng-accent), 0 0 24px rgba(124,196,255,0.4);
+  cursor: default;
+}
+.ng-node:hover {
+  box-shadow: 0 0 0 3px var(--ng-accent);
+  z-index: 5;
+}
+.ng-node.ng-node-selected {
+  outline: 3px solid var(--ng-accent);
+  outline-offset: -1px;
+}
+
+#ng-sidebar {
+  flex: 0 0 340px;
+  width: 340px;
+  background: #0e0e12;
+  border-left: 1px solid var(--ng-border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#ng-sidebar-current {
+  flex-shrink: 0;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--ng-border);
+  background: #12121a;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+#ng-sidebar-current img {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #1a1a20;
+  border: 2px solid var(--ng-accent);
+}
+#ng-sidebar-current .info { flex: 1; min-width: 0; }
+#ng-sidebar-current .label {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ng-text-dim);
+  margin-bottom: 3px;
+}
+#ng-sidebar-current .fname {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ng-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#ng-sidebar-current .mode { font-size: 10px; color: var(--ng-text-dim); margin-top: 3px; }
+#ng-sidebar-current .detail { font-size: 10px; color: var(--ng-text-dim); margin-top: 3px; line-height: 1.3; }
+
+#ng-sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+
+#ng-sidebar-header {
+  padding: 10px 16px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--ng-text-dim);
+  text-transform: uppercase;
+  border-bottom: 1px solid #1c1c22;
+  position: sticky;
+  top: 0;
+  background: #0e0e12;
+  z-index: 1;
+}
+
+#ng-ranked-sort-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 16px;
+  border-bottom: 1px solid #212127;
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  flex-wrap: wrap;
+}
+#ng-ranked-sort-row label { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+
+.ng-list-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ng-text-dim);
+  border-bottom: 1px solid #1c1c22;
+  position: sticky;
+  top: 0;
+  background: #0e0e12;
+  z-index: 1;
+}
+.ng-list-section-title { flex: 1; }
+.ng-list-section-count { font-size: 10px; color: var(--ng-text-dim); margin-right: 2px; }
+.ng-section-select-all-btn, .ng-section-deselect-all-btn {
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text-dim);
+  border-radius: 5px;
+  padding: 3px 7px;
+  cursor: pointer;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.ng-section-select-all-btn:hover, .ng-section-deselect-all-btn:hover {
+  color: var(--ng-accent);
+  border-color: var(--ng-accent);
+}
+
+.ng-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #16161b;
+}
+.ng-list-row:hover { background: var(--ng-panel-raised); }
+.ng-list-row img {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #1a1a20;
+}
+.ng-list-row .info { flex: 1; min-width: 0; }
+.ng-list-row .fname {
+  font-size: 12px;
+  color: var(--ng-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ng-list-row .simbar-track {
+  height: 3px;
+  background: #1c1c22;
+  border-radius: 2px;
+  margin-top: 5px;
+  overflow: hidden;
+}
+.ng-list-row .simbar-fill { height: 100%; background: var(--ng-accent); }
+.ng-list-row .simpct {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-left: 8px;
+  flex-shrink: 0;
+  width: 34px;
+  text-align: right;
+}
+
+.ng-anchor-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ng-text-dim);
+}
+.ng-anchor-row input[type="range"] { flex: 1; }
+.ng-anchor-row span { min-width: 70px; text-align: right; white-space: nowrap; }
+
+.ng-video-thresh-row {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ng-text-dim);
+}
+.ng-video-thresh-row label { display: flex; align-items: center; gap: 4px; flex: 1; }
+.ng-num-input {
+  width: 100%;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text);
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.ng-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ng-text-dim);
+  cursor: pointer;
+}
+
+#ng-analysis-status {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  line-height: 1.4;
+}
+#ng-analysis-status .ng-progress-track {
+  height: 4px;
+  background: var(--ng-panel);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+#ng-analysis-status .ng-progress-fill {
+  height: 100%;
+  background: var(--ng-accent);
+}
+
+/* ---- Immich search (Search panel section) ---- */
+.ng-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.ng-search-results {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--ng-border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+.ng-search-result-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.ng-search-result-row:hover { background: var(--ng-panel-raised); }
+.ng-search-result-row img {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: #1a1a20;
+}
+.ng-search-result-fname {
+  font-size: 11px;
+  color: var(--ng-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
