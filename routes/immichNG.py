@@ -5,14 +5,19 @@ to configNG/dbNG/detectionNG/video_analysisNG instead of the originals,
 per the NG duplication rule in APP_ARCHITECTURE_NOTES.md -- does not
 import from or call into routes/immich.py or any non-NG module.
 
-Scope ported so far (per "go ahead with immich next" and later "port
-person clusters"): filename search, pgvector nearest-neighbors (face
-embedding, CLIP fallback), lazy pose/blur for one asset, thumb/preview
-image proxying, person-clusters, person-assets. NOT ported yet:
-analyze-immich (batch folder-style analysis over a selection),
-random-face, immich-cross-check / immich-face-pose (job-scoped -- those
-belong with the video analysis ring, a later slice).
+Scope ported so far (per "go ahead with immich next", later "port
+person clusters", and later "port analyze-immich"): filename search,
+pgvector nearest-neighbors (face embedding, CLIP fallback), lazy
+pose/blur for one asset, thumb/preview image proxying, person-clusters,
+person-assets, analyze-immich (batch folder-style pose/blur analysis
+over a selection of Immich assets). NOT ported yet: random-face,
+immich-cross-check / immich-face-pose (job-scoped -- those belong with
+the video analysis ring, a later slice).
 """
+
+import os
+import threading
+import uuid
 
 import numpy as np
 import requests
@@ -21,9 +26,93 @@ from flask import Blueprint, request, jsonify, Response
 from configNG import IMMICH_API_KEY, IMMICH_BASE_URL
 from dbNG import get_conn_ng, release_conn_ng
 from detectionNG import get_blur_score_ng, get_face_app_ng, pick_largest_face_ng
+from folder_analysisNG import run_folder_analysis_ng
+from stateNG import _analysis_jobs_ng
 from video_analysisNG import bbox_frame_ratio_ng, vert_fill_ratio_ng
 
 immichNG_bp = Blueprint('immichNG', __name__)
+
+
+@immichNG_bp.route("/api/ng/analyze-immich", methods=["POST"])
+def analyze_immich_ng():
+    """NG twin of routes/immich.py's analyze_immich -- same analysis
+    pipeline as analyze-folder (pose extraction, sim/blur gating), but
+    sourced from Immich asset IDs already known to the project (a ticked
+    selection built from search-result neighbors or a person-cluster
+    grid -- see appNG.js's selectedAssetIds) instead of files uploaded
+    from the local filesystem. This is what lets an Immich-sourced set
+    feed the Pose Picker / Shot Scale Picker, which read project.ring
+    the same way a video or folder/zip analysis does -- until this
+    route existed, "immich" task results (immichRing) carried no pose
+    data up front and never populated project.ring at all.
+
+    Downloaded assets are held in memory as (orig_name, bytes) and
+    handed to run_folder_analysis_ng directly -- nothing here is
+    written to disk, matching the no-disk-writes-for-ingest principle
+    already used by videoNG.py / folderNG.py.
+    """
+    body = request.get_json(force=True) or {}
+    asset_ids = body.get("assetIds") or []
+    sim_threshold = float(body.get("simThreshold", 0.1))
+    blur_threshold = float(body.get("blurThreshold", 1))
+    ref_index = int(body.get("refIndex", 1))
+    cache_format = "png" if body.get("cacheFormat") == "png" else "jpg"
+
+    if not asset_ids:
+        return jsonify({"error": "provide 'assetIds' (non-empty list)"}), 400
+
+    job_id = uuid.uuid4().hex[:12]
+
+    images = []  # list of (orig_name, bytes), in fetch order
+    fetch_errors = []
+    for asset_id in asset_ids:
+        try:
+            meta = requests.get(
+                f"{IMMICH_BASE_URL}/api/assets/{asset_id}",
+                headers={"x-api-key": IMMICH_API_KEY},
+                timeout=20,
+            ).json()
+            orig_name = meta.get("originalFileName") or f"{asset_id}.jpg"
+
+            r = requests.get(
+                f"{IMMICH_BASE_URL}/api/assets/{asset_id}/original",
+                headers={"x-api-key": IMMICH_API_KEY},
+                timeout=60,
+            )
+            if r.status_code != 200:
+                fetch_errors.append(f"{asset_id}: HTTP {r.status_code}")
+                continue
+
+            # prefix with the asset id so filenames can't collide across
+            # assets and so the exported frame stays traceable back to
+            # the Immich library item it came from
+            safe_name = f"{asset_id}_{os.path.basename(orig_name)}"
+            images.append((safe_name, r.content))
+        except Exception as e:
+            fetch_errors.append(f"{asset_id}: {e}")
+
+    if not images:
+        return jsonify({"error": "could not fetch any of the requested Immich assets", "fetchErrors": fetch_errors}), 400
+
+    images.sort(key=lambda pair: pair[0].lower())
+
+    _analysis_jobs_ng[job_id] = {
+        "status": "running", "results": [], "error": None,
+        "sourceName": f"immich_selection_{len(images)}", "sourceType": "immich",
+        "srcImages": dict(images),
+        "simThreshold": sim_threshold,
+        "blurThreshold": blur_threshold,
+        "cacheFormat": cache_format,
+    }
+
+    t = threading.Thread(
+        target=run_folder_analysis_ng,
+        args=(job_id, images, sim_threshold, blur_threshold, ref_index, cache_format),
+        daemon=True
+    )
+    t.start()
+
+    return jsonify({"jobId": job_id, "imageCount": len(images), "fetchErrors": fetch_errors})
 
 
 @immichNG_bp.route("/api/ng/find-by-filename")

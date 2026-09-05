@@ -939,6 +939,33 @@ html, body {
   white-space: nowrap;
 }
 
+/* ---- Analyze selected Immich assets row (Search panel section) ---- */
+.ng-immich-analyze-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+.ng-immich-analyze-row .ng-btn-full { width: auto; flex: 2 1 auto; }
+
+#ng-immich-analysis-status {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  line-height: 1.4;
+}
+#ng-immich-analysis-status .ng-progress-track {
+  height: 4px;
+  background: var(--ng-panel);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+#ng-immich-analysis-status .ng-progress-fill {
+  height: 100%;
+  background: var(--ng-accent);
+}
+
 /* ---- Load folder / .zip row (Video/Image-Set Analysis section) ---- */
 .ng-folder-row {
   display: flex;

@@ -100,6 +100,16 @@
               <div id="ng-immich-search-status" class="ng-stub-note"></div>
               <div id="ng-immich-search-results" class="ng-search-results" style="display:none;"></div>
               <p class="ng-stub-note">(person clusters / cross-check / random-face not ported yet -- filename search only, click a result to load its Immich neighbors)</p>
+              <div class="ng-immich-analyze-row">
+                <button type="button" id="ng-immich-analyze-btn" class="ng-btn ng-btn-full" disabled>Analyze 0 selected assets</button>
+                <label class="ng-folder-ref">Ref position <input id="ng-immich-analyze-ref-index" type="number" min="1" value="1" class="ng-num-input" title="Which selected asset (by fetched filename, sorted alphabetically) is the reference face"></label>
+              </div>
+              <div class="ng-video-thresh-row">
+                <label>Sim &gt; <input id="ng-immich-sim-threshold" type="number" step="0.05" value="0.1" title="Similarity Threshold" class="ng-num-input"></label>
+                <label>Blur &gt; <input id="ng-immich-blur-threshold" type="number" step="1" value="1" title="Blur Threshold" class="ng-num-input"></label>
+              </div>
+              <p class="ng-stub-note">(tick assets in the Immich matches list or a person-cluster grid below, then Analyze -- runs full pose/blur analysis over the selection, same pipeline as Folder / Zip, feeding the Pose Picker &amp; Shot Scale Picker)</p>
+              <div id="ng-immich-analysis-status"></div>
             </div>
           </div>
 
@@ -324,7 +334,7 @@
           </div>
           <div id="ng-frames-section" class="ng-list-section" style="display:none;">
             <div class="ng-list-section-header">
-              <span class="ng-list-section-title">Local frames</span>
+              <span class="ng-list-section-title" id="ng-frames-section-title">Local frames</span>
               <span class="ng-list-section-count" id="ng-frames-section-count"></span>
               <button class="ng-section-select-all-btn" id="ng-frames-select-all">Select All</button>
               <button class="ng-section-deselect-all-btn" id="ng-frames-deselect-all">Deselect All</button>
@@ -335,6 +345,7 @@
             <div class="ng-list-section-header">
               <span class="ng-list-section-title">Immich matches</span>
               <span class="ng-list-section-count" id="ng-immich-section-count"></span>
+              <button class="ng-section-select-all-btn" id="ng-immich-refresh-btn" title="Re-pull fresh neighbor results from Immich for the current center asset (page refresh no longer re-fetches automatically, per the no-auto-fetch rule)">Refresh</button>
               <button class="ng-section-select-all-btn" id="ng-immich-select-all">Select All</button>
               <button class="ng-section-deselect-all-btn" id="ng-immich-deselect-all">Deselect All</button>
             </div>
