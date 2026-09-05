@@ -15,3 +15,13 @@ _preview_jobs_ng = {}  # previewId -> {"videoBytes": bytes, "fps": float, "frame
 _frame_cache_ng = {}
 
 _frame_cache_lock_ng = threading.Lock()
+
+# InsightFace's FaceAnalysis wraps ONNXRuntime sessions that are not safe
+# to call concurrently from multiple threads. Now that each project tab
+# runs its analysis in its own background thread (see routes/videoNG.py),
+# two projects analyzing at once would otherwise hit the same model
+# object simultaneously and corrupt each other's results. This lock
+# serializes actual inference calls; job orchestration (threads, per-job
+# dicts, polling) stays fully parallel -- only the model call itself is
+# single-file.
+_face_app_lock_ng = threading.Lock()

@@ -1,0 +1,49 @@
+diff --git a/APP_ARCHITECTURE_NOTES.md b/APP_ARCHITECTURE_NOTES.md
+index 4800431..6b76218 100644
+--- a/APP_ARCHITECTURE_NOTES.md
++++ b/APP_ARCHITECTURE_NOTES.md
+@@ -298,6 +298,44 @@ maintenance fixes never share a commit or a file. Old modules are expected
+ to be retired once their NG twin has proven out and replaces them — this
+ isn't meant to be permanent parallel maintenance.
+ 
++## Status log
++
++- **Video ingest tab isolation — confirmed working.** Suspected bug: Sue's
++  and Mary's tabs both showing the same video. Root cause investigation
++  found the actual `CharacterProject` state (video, videoFile, job, ring)
++  was already correctly isolated per-instance; the observed symptom was
++  stale/leftover `localStorage` state from before the class-per-project
++  model existed. Clearing `immichRingNG:state` and creating fresh tabs
++  resolved it. Confirmed clean across repeated tab switches with two
++  different videos loaded.
++- **Real bug found and fixed along the way:** `detectionNG.py`'s
++  `get_face_app_ng()` returns one shared `FaceAnalysis` (InsightFace)
++  model instance. Harmless in the original single-project app, but NG
++  runs each project's analysis in its own background thread so two
++  projects can analyze in parallel — meaning two threads could call into
++  that same ONNXRuntime session concurrently, which isn't safe and can
++  cross-contaminate results between jobs. Fixed with a lock
++  (`_face_app_lock_ng` in `stateNG.py`) around the `face_app.get(...)`
++  calls in `video_analysisNG.py`. Job orchestration stays fully parallel;
++  only the actual model inference call is serialized. Worth deliberately
++  testing: load videos into two tabs and hit "Start Analysis" on both
++  within a second of each other, confirm both results look sane.
++- **Playback pop-out — ported.** The original app's "Build playback
++  (rejected frames blanked)" feature (`routes/video.py`'s
++  `build_playback`/`playback_file`) is now ported to
++  `routes/videoNG.py` as near-identical NG twins
++  (`build-playback`/`playback-file`, `_analysis_jobs_ng` /
++  `configNG.FRAME_STORE`). Frontend differs from the original by design:
++  instead of embedding the result inline in the left rail, it opens in a
++  modal (`PlaybackModal` in `appNG.js`) so it's not fighting the ring/list
++  for space. The modal auto-closes if the owning tab is switched away
++  from or closed, and tracks fps/jobId per the project that built it, so
++  it can't end up showing one project's clip while a different tab is
++  active. Playback state isn't persisted to `localStorage` (the built
++  file lives in `FRAME_STORE`, a server tempdir that doesn't survive a
++  restart, and a new analysis/video load invalidates any previous build,
++  matching how `ring` is already treated).
++
+ ## Open questions / not yet decided
+ 
+ - Curate page: landing behavior specifics beyond "no auto-fetch."

@@ -19,8 +19,10 @@ import threading
 import uuid
 
 import cv2
-from flask import Blueprint, request, jsonify, Response
+import numpy as np
+from flask import Blueprint, request, jsonify, Response, send_file
 
+from configNG import FRAME_STORE
 from stateNG import _analysis_jobs_ng, _preview_jobs_ng
 from video_analysisNG import MemoryVideo, run_video_analysis_ng, find_cache_frame_ng
 
@@ -145,3 +147,82 @@ def frame_file_ng(frame_id):
     if img_bytes is None:
         return "", 404
     return Response(img_bytes, mimetype=mimetype)
+
+
+@videoNG_bp.route("/api/ng/build-playback/<job_id>", methods=["POST"])
+def build_playback_ng(job_id):
+    """Reassemble the full clip with rejected frames replaced by a labeled
+    blank frame (NO FACE / BLURRY / LOW MATCH), so you can scrub the whole
+    take and see exactly where similarity or blur dropped out. Ported
+    from routes/video.py's build_playback -- NG-only twin, writes to
+    configNG.FRAME_STORE and reads from _analysis_jobs_ng."""
+    job = _analysis_jobs_ng.get(job_id)
+    if not job:
+        return jsonify({"error": "unknown job"}), 404
+    if job["status"] != "done":
+        return jsonify({"error": "analysis not finished yet"}), 400
+
+    video_bytes = job.get("videoBytes")
+    if not video_bytes:
+        return jsonify({"error": "source video no longer available"}), 400
+
+    by_frame = {r["frame"]: r for r in job["results"]}
+
+    mv = MemoryVideo(video_bytes)
+    fps = mv.fps or 24.0
+    width, height = mv.width, mv.height
+
+    raw_path = os.path.join(FRAME_STORE, f"{job_id}_playback_raw.mp4")
+    out_path = os.path.join(FRAME_STORE, f"{job_id}_playback.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(raw_path, fourcc, fps, (width, height))
+
+    blank = np.zeros((height, width, 3), dtype=np.uint8)
+
+    for frame_idx, frame in mv.iter_frames():
+        r = by_frame.get(frame_idx)
+
+        if r and r.get("passed"):
+            writer.write(frame)
+        else:
+            canvas = blank.copy()
+            reason = "NO FACE"
+            if r:
+                reason = "BLURRY" if r.get("failReason") == "blur" else "LOW MATCH" if r.get("failReason") == "sim" else "NO FACE"
+            label = f"{reason}  (frame {frame_idx})"
+            cv2.putText(canvas, label, (24, height - 24), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (60, 60, 200), 2, cv2.LINE_AA)
+            writer.write(canvas)
+
+    writer.release()
+
+    import subprocess
+    import shutil as _shutil
+    ffmpeg_bin = _shutil.which("ffmpeg")
+    if ffmpeg_bin:
+        try:
+            subprocess.run(
+                [ffmpeg_bin, "-y", "-i", raw_path,
+                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                 "-movflags", "+faststart", out_path],
+                check=True, capture_output=True
+            )
+            os.remove(raw_path)
+        except subprocess.CalledProcessError as e:
+            job["playbackPath"] = raw_path
+            return jsonify({
+                "error": f"ffmpeg transcode failed: {e.stderr.decode(errors='ignore')[-400:]}"
+            }), 500
+    else:
+        out_path = raw_path
+
+    job["playbackPath"] = out_path
+    return jsonify({"ready": True, "url": f"/api/ng/playback-file/{job_id}", "fps": fps})
+
+
+@videoNG_bp.route("/api/ng/playback-file/<job_id>")
+def playback_file_ng(job_id):
+    job = _analysis_jobs_ng.get(job_id)
+    if not job or not job.get("playbackPath") or not os.path.exists(job["playbackPath"]):
+        return "", 404
+    return send_file(job["playbackPath"], mimetype="video/mp4")

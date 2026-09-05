@@ -209,6 +209,22 @@
 </div>
 
 <audio id="ng-video-audio" preload="auto" style="display:none"></audio>
+
+<div id="ng-playback-modal" class="ng-playback-modal" style="display:none;">
+  <div class="ng-playback-modal-backdrop"></div>
+  <div class="ng-playback-modal-body">
+    <div class="ng-playback-modal-header">
+      <span id="ng-playback-modal-title"></span>
+      <button id="ng-playback-modal-close" class="ng-btn" aria-label="Close">✕</button>
+    </div>
+    <video id="ng-playback-video" controls></video>
+    <div class="ng-playback-modal-controls">
+      <button id="ng-playback-prev-frame" class="ng-btn">◀ -1 frame</button>
+      <button id="ng-playback-next-frame" class="ng-btn">+1 frame ▶</button>
+    </div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='appNG.js') }}"></script>
 </body>
 </html>

@@ -99,6 +99,14 @@
   const nextFrameBtn = document.getElementById("ng-btn-next-frame");
   const startAnalysisBtn = document.getElementById("ng-btn-start-analysis");
 
+  // ---- DOM refs: playback modal (pop-out, rejected frames blanked) ----
+  const playbackModalEl = document.getElementById("ng-playback-modal");
+  const playbackModalTitleEl = document.getElementById("ng-playback-modal-title");
+  const playbackModalCloseBtn = document.getElementById("ng-playback-modal-close");
+  const playbackVideoEl = document.getElementById("ng-playback-video");
+  const playbackPrevFrameBtn = document.getElementById("ng-playback-prev-frame");
+  const playbackNextFrameBtn = document.getElementById("ng-playback-next-frame");
+
   // ---- DOM refs: hover preview ----
   const hoverPanel = document.getElementById("ng-preview-hover-panel");
   const hoverImg = document.getElementById("ng-preview-hover-img");
@@ -183,6 +191,8 @@
       // analysis job + ring state
       this.job = null; // { jobId, status, error, sourceName, frameCount, passed, failedSim, failedBlur }
       this.ring = null; // { anchorUrl, refFrameIdx, baseResults, sourceType }
+      this.playback = null; // { url, fps, jobId } -- rejected-frames-blanked reassembly, popped out in a modal
+      this.playbackBuilding = false;
       this.rankedSortMetric = "sim";
       this.selectedFrames = new Set();
 
@@ -272,6 +282,11 @@
       p.ringScale = typeof data.ringScale === "number" ? data.ringScale : 100;
       p.squeezeMinPct = typeof data.squeezeMinPct === "number" ? data.squeezeMinPct : 65;
       p.job = data.job || null;
+      // playback builds live in a server tempdir (FRAME_STORE) that doesn't
+      // survive a server restart, and the modal itself is a transient UI
+      // concern -- neither is worth persisting across a page reload.
+      p.playback = null;
+      p.playbackBuilding = false;
       if (p.job && p.job.status === "running") {
         // a page reload orphaned the in-browser poll loop -- the backend
         // job may have finished or may not even exist anymore (server
@@ -327,6 +342,7 @@
         this.stopPolling();
         this.job = null;
         this.ring = null;
+        this.playback = null;
         this.selectedFrames = new Set();
       } catch (e) {
         alert("Could not load video: " + e.message);
@@ -433,6 +449,7 @@
       if (!this.video || !this.videoFile) return;
       this.stopPolling();
       this.selectedFrames = new Set();
+      this.playback = null; // a new analysis run invalidates any previous playback build
       this.job = {
         status: "running",
         sourceName: this.videoFile.name,
@@ -523,6 +540,31 @@
         baseResults,
         sourceType: "video",
       };
+    }
+
+    // ---- playback: reassemble the clip with rejected frames blanked out,
+    // popped out in a modal so it's not fighting the ring for rail space.
+    // Ported from the original app's inline "Build playback" button. ----
+    async buildPlayback() {
+      if (!this.job || this.job.status !== "done" || this.playbackBuilding) return;
+      this.playbackBuilding = true;
+      if (this.isActive) ProjectManager.render();
+
+      try {
+        const res = await fetch(`/api/ng/build-playback/${this.job.jobId}`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          alert("Could not build playback: " + (data.error || res.status));
+          return;
+        }
+        this.playback = { url: data.url, fps: data.fps || 24, jobId: this.job.jobId };
+        if (this.isActive) PlaybackModal.open(this);
+      } catch (e) {
+        alert("Could not build playback: " + e.message);
+      } finally {
+        this.playbackBuilding = false;
+        if (this.isActive) ProjectManager.render();
+      }
     }
 
     sortedRanked() {
@@ -693,6 +735,7 @@
       // plan), so this just removes it from the in-memory tab list for now.
       const closing = this.projects.find((p) => p.id === id);
       if (closing) closing.destroy();
+      if (typeof PlaybackModal !== "undefined" && PlaybackModal.projectId === id) PlaybackModal.close();
       const idx = this.projects.findIndex((p) => p.id === id);
       if (idx === -1) return;
       this.projects.splice(idx, 1);
@@ -706,6 +749,12 @@
       if (this.activeId === id) return;
       const outgoing = this.getActive();
       if (outgoing) outgoing.stopPlayIfRunning();
+      // the playback modal is a pop-out for one specific project's build --
+      // don't leave it open showing the outgoing project's clip once a
+      // different tab becomes active.
+      if (typeof PlaybackModal !== "undefined" && PlaybackModal.projectId && PlaybackModal.projectId !== id) {
+        PlaybackModal.close();
+      }
       this.activeId = id;
       this.render();
     },
@@ -1279,6 +1328,21 @@
         return;
       }
       analysisStatusEl.innerHTML = `Done — ${j.passed}/${j.frameCount} kept.`;
+      const btn = document.createElement("button");
+      btn.className = "ng-btn";
+      btn.style.marginTop = "6px";
+      btn.style.width = "100%";
+      btn.disabled = project.playbackBuilding;
+      btn.textContent = project.playbackBuilding
+        ? "Building playback…"
+        : project.playback
+          ? "Reopen playback"
+          : "Pop out playback (rejected frames blanked)";
+      btn.addEventListener("click", () => {
+        if (project.playback) PlaybackModal.open(project);
+        else project.buildPlayback();
+      });
+      analysisStatusEl.appendChild(btn);
     },
 
     renderFramePreview(project) {
@@ -1307,6 +1371,39 @@
 
       frameCounterEl.textContent = "Frame: " + project.video.currentFrame + " / " + project.video.totalFrames;
       drawFrame(project, project.video.currentFrame);
+    },
+  };
+
+  // ---- Playback modal: shows the rejected-frames-blanked reassembly for
+  // whichever project's playback was most recently built. Closes itself
+  // if that project stops being the active tab, so it can never end up
+  // showing one project's clip while another tab is selected. ----
+  const PlaybackModal = {
+    projectId: null,
+
+    open(project) {
+      if (!project.playback) return;
+      this.projectId = project.id;
+      playbackModalTitleEl.textContent = `${project.name} — playback (rejected frames blanked)`;
+      playbackVideoEl.src = project.playback.url;
+      playbackModalEl.style.display = "flex";
+    },
+
+    close() {
+      this.projectId = null;
+      playbackModalEl.style.display = "none";
+      playbackVideoEl.pause();
+      playbackVideoEl.removeAttribute("src");
+      playbackVideoEl.load();
+    },
+
+    stepFrame(delta) {
+      if (playbackModalEl.style.display === "none") return;
+      const project = ProjectManager.projects.find((p) => p.id === this.projectId);
+      const fps = (project && project.playback && project.playback.fps) || 24;
+      playbackVideoEl.pause();
+      const step = delta / fps;
+      playbackVideoEl.currentTime = Math.max(0, Math.min(playbackVideoEl.duration || Infinity, playbackVideoEl.currentTime + step));
     },
   };
 
@@ -1488,7 +1585,17 @@
     if (active && active.video && active._playTimer) active.togglePlay();
   });
 
+  // ---- wiring: playback modal ----
+  playbackModalCloseBtn.addEventListener("click", () => PlaybackModal.close());
+  playbackModalEl.querySelector(".ng-playback-modal-backdrop").addEventListener("click", () => PlaybackModal.close());
+  playbackPrevFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(-1));
+  playbackNextFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(1));
+
   document.addEventListener("keydown", (e) => {
+    if (playbackModalEl.style.display !== "none") {
+      if (e.key === "Escape") PlaybackModal.close();
+      return;
+    }
     const active = ProjectManager.getActive();
     if (!active || !active.video) return;
     if (document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;

@@ -854,3 +854,55 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- Playback modal: pop-out view of the rejected-frames-blanked
+   reassembly, so scrubbing the full clip isn't fighting the ring/list
+   for space in the narrow left rail. ---- */
+.ng-playback-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ng-playback-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+}
+.ng-playback-modal-body {
+  position: relative;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  padding: 12px;
+  width: min(900px, 92vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ng-playback-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--ng-text);
+  font-size: 12px;
+}
+#ng-playback-modal-close {
+  padding: 2px 10px;
+}
+#ng-playback-video {
+  width: 100%;
+  max-height: 70vh;
+  border-radius: 6px;
+  background: #000;
+}
+.ng-playback-modal-controls {
+  display: flex;
+  gap: 6px;
+}
+.ng-playback-modal-controls .ng-btn {
+  flex: 1;
+}

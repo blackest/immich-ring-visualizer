@@ -15,3 +15,8 @@ exports/
 *.mp4
 *.jpg
 *.png
+.DS_Store
+Claude outputs/
+.vscode/
+captioning.json
+.gitignore

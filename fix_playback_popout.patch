@@ -1,0 +1,375 @@
+diff --git a/routes/videoNG.py b/routes/videoNG.py
+index 93d1466..c07eb62 100644
+--- a/routes/videoNG.py
++++ b/routes/videoNG.py
+@@ -19,8 +19,10 @@ import threading
+ import uuid
+ 
+ import cv2
+-from flask import Blueprint, request, jsonify, Response
++import numpy as np
++from flask import Blueprint, request, jsonify, Response, send_file
+ 
++from configNG import FRAME_STORE
+ from stateNG import _analysis_jobs_ng, _preview_jobs_ng
+ from video_analysisNG import MemoryVideo, run_video_analysis_ng, find_cache_frame_ng
+ 
+@@ -145,3 +147,82 @@ def frame_file_ng(frame_id):
+     if img_bytes is None:
+         return "", 404
+     return Response(img_bytes, mimetype=mimetype)
++
++
++@videoNG_bp.route("/api/ng/build-playback/<job_id>", methods=["POST"])
++def build_playback_ng(job_id):
++    """Reassemble the full clip with rejected frames replaced by a labeled
++    blank frame (NO FACE / BLURRY / LOW MATCH), so you can scrub the whole
++    take and see exactly where similarity or blur dropped out. Ported
++    from routes/video.py's build_playback -- NG-only twin, writes to
++    configNG.FRAME_STORE and reads from _analysis_jobs_ng."""
++    job = _analysis_jobs_ng.get(job_id)
++    if not job:
++        return jsonify({"error": "unknown job"}), 404
++    if job["status"] != "done":
++        return jsonify({"error": "analysis not finished yet"}), 400
++
++    video_bytes = job.get("videoBytes")
++    if not video_bytes:
++        return jsonify({"error": "source video no longer available"}), 400
++
++    by_frame = {r["frame"]: r for r in job["results"]}
++
++    mv = MemoryVideo(video_bytes)
++    fps = mv.fps or 24.0
++    width, height = mv.width, mv.height
++
++    raw_path = os.path.join(FRAME_STORE, f"{job_id}_playback_raw.mp4")
++    out_path = os.path.join(FRAME_STORE, f"{job_id}_playback.mp4")
++    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
++    writer = cv2.VideoWriter(raw_path, fourcc, fps, (width, height))
++
++    blank = np.zeros((height, width, 3), dtype=np.uint8)
++
++    for frame_idx, frame in mv.iter_frames():
++        r = by_frame.get(frame_idx)
++
++        if r and r.get("passed"):
++            writer.write(frame)
++        else:
++            canvas = blank.copy()
++            reason = "NO FACE"
++            if r:
++                reason = "BLURRY" if r.get("failReason") == "blur" else "LOW MATCH" if r.get("failReason") == "sim" else "NO FACE"
++            label = f"{reason}  (frame {frame_idx})"
++            cv2.putText(canvas, label, (24, height - 24), cv2.FONT_HERSHEY_SIMPLEX,
++                        0.7, (60, 60, 200), 2, cv2.LINE_AA)
++            writer.write(canvas)
++
++    writer.release()
++
++    import subprocess
++    import shutil as _shutil
++    ffmpeg_bin = _shutil.which("ffmpeg")
++    if ffmpeg_bin:
++        try:
++            subprocess.run(
++                [ffmpeg_bin, "-y", "-i", raw_path,
++                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
++                 "-movflags", "+faststart", out_path],
++                check=True, capture_output=True
++            )
++            os.remove(raw_path)
++        except subprocess.CalledProcessError as e:
++            job["playbackPath"] = raw_path
++            return jsonify({
++                "error": f"ffmpeg transcode failed: {e.stderr.decode(errors='ignore')[-400:]}"
++            }), 500
++    else:
++        out_path = raw_path
++
++    job["playbackPath"] = out_path
++    return jsonify({"ready": True, "url": f"/api/ng/playback-file/{job_id}", "fps": fps})
++
++
++@videoNG_bp.route("/api/ng/playback-file/<job_id>")
++def playback_file_ng(job_id):
++    job = _analysis_jobs_ng.get(job_id)
++    if not job or not job.get("playbackPath") or not os.path.exists(job["playbackPath"]):
++        return "", 404
++    return send_file(job["playbackPath"], mimetype="video/mp4")
+diff --git a/static/appNG.js b/static/appNG.js
+index bddc595..be6c5cb 100644
+--- a/static/appNG.js
++++ b/static/appNG.js
+@@ -99,6 +99,14 @@
+   const nextFrameBtn = document.getElementById("ng-btn-next-frame");
+   const startAnalysisBtn = document.getElementById("ng-btn-start-analysis");
+ 
++  // ---- DOM refs: playback modal (pop-out, rejected frames blanked) ----
++  const playbackModalEl = document.getElementById("ng-playback-modal");
++  const playbackModalTitleEl = document.getElementById("ng-playback-modal-title");
++  const playbackModalCloseBtn = document.getElementById("ng-playback-modal-close");
++  const playbackVideoEl = document.getElementById("ng-playback-video");
++  const playbackPrevFrameBtn = document.getElementById("ng-playback-prev-frame");
++  const playbackNextFrameBtn = document.getElementById("ng-playback-next-frame");
++
+   // ---- DOM refs: hover preview ----
+   const hoverPanel = document.getElementById("ng-preview-hover-panel");
+   const hoverImg = document.getElementById("ng-preview-hover-img");
+@@ -183,6 +191,8 @@
+       // analysis job + ring state
+       this.job = null; // { jobId, status, error, sourceName, frameCount, passed, failedSim, failedBlur }
+       this.ring = null; // { anchorUrl, refFrameIdx, baseResults, sourceType }
++      this.playback = null; // { url, fps, jobId } -- rejected-frames-blanked reassembly, popped out in a modal
++      this.playbackBuilding = false;
+       this.rankedSortMetric = "sim";
+       this.selectedFrames = new Set();
+ 
+@@ -272,6 +282,11 @@
+       p.ringScale = typeof data.ringScale === "number" ? data.ringScale : 100;
+       p.squeezeMinPct = typeof data.squeezeMinPct === "number" ? data.squeezeMinPct : 65;
+       p.job = data.job || null;
++      // playback builds live in a server tempdir (FRAME_STORE) that doesn't
++      // survive a server restart, and the modal itself is a transient UI
++      // concern -- neither is worth persisting across a page reload.
++      p.playback = null;
++      p.playbackBuilding = false;
+       if (p.job && p.job.status === "running") {
+         // a page reload orphaned the in-browser poll loop -- the backend
+         // job may have finished or may not even exist anymore (server
+@@ -327,6 +342,7 @@
+         this.stopPolling();
+         this.job = null;
+         this.ring = null;
++        this.playback = null;
+         this.selectedFrames = new Set();
+       } catch (e) {
+         alert("Could not load video: " + e.message);
+@@ -433,6 +449,7 @@
+       if (!this.video || !this.videoFile) return;
+       this.stopPolling();
+       this.selectedFrames = new Set();
++      this.playback = null; // a new analysis run invalidates any previous playback build
+       this.job = {
+         status: "running",
+         sourceName: this.videoFile.name,
+@@ -525,6 +542,31 @@
+       };
+     }
+ 
++    // ---- playback: reassemble the clip with rejected frames blanked out,
++    // popped out in a modal so it's not fighting the ring for rail space.
++    // Ported from the original app's inline "Build playback" button. ----
++    async buildPlayback() {
++      if (!this.job || this.job.status !== "done" || this.playbackBuilding) return;
++      this.playbackBuilding = true;
++      if (this.isActive) ProjectManager.render();
++
++      try {
++        const res = await fetch(`/api/ng/build-playback/${this.job.jobId}`, { method: "POST" });
++        const data = await res.json();
++        if (!res.ok || data.error) {
++          alert("Could not build playback: " + (data.error || res.status));
++          return;
++        }
++        this.playback = { url: data.url, fps: data.fps || 24, jobId: this.job.jobId };
++        if (this.isActive) PlaybackModal.open(this);
++      } catch (e) {
++        alert("Could not build playback: " + e.message);
++      } finally {
++        this.playbackBuilding = false;
++        if (this.isActive) ProjectManager.render();
++      }
++    }
++
+     sortedRanked() {
+       if (!this.ring) return [];
+       const key = this.rankedSortMetric === "sim" ? "similarity" : this.rankedSortMetric;
+@@ -693,6 +735,7 @@
+       // plan), so this just removes it from the in-memory tab list for now.
+       const closing = this.projects.find((p) => p.id === id);
+       if (closing) closing.destroy();
++      if (typeof PlaybackModal !== "undefined" && PlaybackModal.projectId === id) PlaybackModal.close();
+       const idx = this.projects.findIndex((p) => p.id === id);
+       if (idx === -1) return;
+       this.projects.splice(idx, 1);
+@@ -706,6 +749,12 @@
+       if (this.activeId === id) return;
+       const outgoing = this.getActive();
+       if (outgoing) outgoing.stopPlayIfRunning();
++      // the playback modal is a pop-out for one specific project's build --
++      // don't leave it open showing the outgoing project's clip once a
++      // different tab becomes active.
++      if (typeof PlaybackModal !== "undefined" && PlaybackModal.projectId && PlaybackModal.projectId !== id) {
++        PlaybackModal.close();
++      }
+       this.activeId = id;
+       this.render();
+     },
+@@ -1279,6 +1328,21 @@
+         return;
+       }
+       analysisStatusEl.innerHTML = `Done — ${j.passed}/${j.frameCount} kept.`;
++      const btn = document.createElement("button");
++      btn.className = "ng-btn";
++      btn.style.marginTop = "6px";
++      btn.style.width = "100%";
++      btn.disabled = project.playbackBuilding;
++      btn.textContent = project.playbackBuilding
++        ? "Building playback…"
++        : project.playback
++          ? "Reopen playback"
++          : "Pop out playback (rejected frames blanked)";
++      btn.addEventListener("click", () => {
++        if (project.playback) PlaybackModal.open(project);
++        else project.buildPlayback();
++      });
++      analysisStatusEl.appendChild(btn);
+     },
+ 
+     renderFramePreview(project) {
+@@ -1310,6 +1374,39 @@
+     },
+   };
+ 
++  // ---- Playback modal: shows the rejected-frames-blanked reassembly for
++  // whichever project's playback was most recently built. Closes itself
++  // if that project stops being the active tab, so it can never end up
++  // showing one project's clip while another tab is selected. ----
++  const PlaybackModal = {
++    projectId: null,
++
++    open(project) {
++      if (!project.playback) return;
++      this.projectId = project.id;
++      playbackModalTitleEl.textContent = `${project.name} — playback (rejected frames blanked)`;
++      playbackVideoEl.src = project.playback.url;
++      playbackModalEl.style.display = "flex";
++    },
++
++    close() {
++      this.projectId = null;
++      playbackModalEl.style.display = "none";
++      playbackVideoEl.pause();
++      playbackVideoEl.removeAttribute("src");
++      playbackVideoEl.load();
++    },
++
++    stepFrame(delta) {
++      if (playbackModalEl.style.display === "none") return;
++      const project = ProjectManager.projects.find((p) => p.id === this.projectId);
++      const fps = (project && project.playback && project.playback.fps) || 24;
++      playbackVideoEl.pause();
++      const step = delta / fps;
++      playbackVideoEl.currentTime = Math.max(0, Math.min(playbackVideoEl.duration || Infinity, playbackVideoEl.currentTime + step));
++    },
++  };
++
+   function placeholder(text) {
+     const p = document.createElement("p");
+     p.className = "ng-placeholder";
+@@ -1488,7 +1585,17 @@
+     if (active && active.video && active._playTimer) active.togglePlay();
+   });
+ 
++  // ---- wiring: playback modal ----
++  playbackModalCloseBtn.addEventListener("click", () => PlaybackModal.close());
++  playbackModalEl.querySelector(".ng-playback-modal-backdrop").addEventListener("click", () => PlaybackModal.close());
++  playbackPrevFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(-1));
++  playbackNextFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(1));
++
+   document.addEventListener("keydown", (e) => {
++    if (playbackModalEl.style.display !== "none") {
++      if (e.key === "Escape") PlaybackModal.close();
++      return;
++    }
+     const active = ProjectManager.getActive();
+     if (!active || !active.video) return;
+     if (document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+diff --git a/static/styleNG.css b/static/styleNG.css
+index 9ebfb5d..167ca99 100644
+--- a/static/styleNG.css
++++ b/static/styleNG.css
+@@ -854,3 +854,55 @@ html, body {
+   text-overflow: ellipsis;
+   white-space: nowrap;
+ }
++
++/* ---- Playback modal: pop-out view of the rejected-frames-blanked
++   reassembly, so scrubbing the full clip isn't fighting the ring/list
++   for space in the narrow left rail. ---- */
++.ng-playback-modal {
++  position: fixed;
++  inset: 0;
++  z-index: 200;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++}
++.ng-playback-modal-backdrop {
++  position: absolute;
++  inset: 0;
++  background: rgba(0, 0, 0, 0.72);
++}
++.ng-playback-modal-body {
++  position: relative;
++  background: var(--ng-panel);
++  border: 1px solid var(--ng-border);
++  border-radius: 8px;
++  padding: 12px;
++  width: min(900px, 92vw);
++  max-height: 90vh;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++.ng-playback-modal-header {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  color: var(--ng-text);
++  font-size: 12px;
++}
++#ng-playback-modal-close {
++  padding: 2px 10px;
++}
++#ng-playback-video {
++  width: 100%;
++  max-height: 70vh;
++  border-radius: 6px;
++  background: #000;
++}
++.ng-playback-modal-controls {
++  display: flex;
++  gap: 6px;
++}
++.ng-playback-modal-controls .ng-btn {
++  flex: 1;
++}
+diff --git a/templates/indexNG.html b/templates/indexNG.html
+index 71cec0c..3b6f43d 100644
+--- a/templates/indexNG.html
++++ b/templates/indexNG.html
+@@ -209,6 +209,22 @@
+ </div>
+ 
+ <audio id="ng-video-audio" preload="auto" style="display:none"></audio>
++
++<div id="ng-playback-modal" class="ng-playback-modal" style="display:none;">
++  <div class="ng-playback-modal-backdrop"></div>
++  <div class="ng-playback-modal-body">
++    <div class="ng-playback-modal-header">
++      <span id="ng-playback-modal-title"></span>
++      <button id="ng-playback-modal-close" class="ng-btn" aria-label="Close">✕</button>
++    </div>
++    <video id="ng-playback-video" controls></video>
++    <div class="ng-playback-modal-controls">
++      <button id="ng-playback-prev-frame" class="ng-btn">◀ -1 frame</button>
++      <button id="ng-playback-next-frame" class="ng-btn">+1 frame ▶</button>
++    </div>
++  </div>
++</div>
++
+ <script src="{{ url_for('static', filename='appNG.js') }}"></script>
+ </body>
+ </html>

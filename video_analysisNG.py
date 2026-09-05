@@ -13,7 +13,7 @@ import av
 import numpy as np
 
 from detectionNG import get_face_app_ng, get_blur_score_ng, pick_best_face_ng
-from stateNG import _analysis_jobs_ng, _frame_cache_ng, _frame_cache_lock_ng
+from stateNG import _analysis_jobs_ng, _frame_cache_ng, _frame_cache_lock_ng, _face_app_lock_ng
 
 
 def run_video_analysis_ng(job_id, video_bytes, sim_threshold, blur_threshold, ref_frame_idx=1, cache_format="jpg", start_sec=None, end_sec=None):
@@ -35,7 +35,8 @@ def run_video_analysis_ng(job_id, video_bytes, sim_threshold, blur_threshold, re
         anchor_id = write_cache_frame_ng(job_id, "anchor", ref_frame, "jpg")
         job["anchorFrameId"] = anchor_id
 
-        ref_faces = face_app.get(ref_frame)
+        with _face_app_lock_ng:
+            ref_faces = face_app.get(ref_frame)
         if not ref_faces:
             job["status"] = "error"
             job["error"] = f"No face detected in reference frame {target_frame}"
@@ -45,7 +46,8 @@ def run_video_analysis_ng(job_id, video_bytes, sim_threshold, blur_threshold, re
         results = []
 
         for frame_idx, frame in mv.iter_frames(start_frame=start_frame, end_frame=end_frame):
-            faces = face_app.get(frame)
+            with _face_app_lock_ng:
+                faces = face_app.get(frame)
             fh, fw = frame.shape[:2]
             if not faces:
                 results.append({
