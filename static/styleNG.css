@@ -612,6 +612,68 @@ html, body {
   outline-offset: -1px;
 }
 
+/* ---- pose-list view (Anchor's yaw/pitch/roll/sharpness sort modes) ---- */
+#ng-pose-list-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 24px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+#ng-pose-list-scrubber {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 14px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--ng-text-dim);
+}
+#ng-pose-scrub-slider { flex: 1; }
+.ng-pose-list-anchor,
+.ng-pose-list-item {
+  flex: 0 0 auto;
+  width: 96px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111;
+  border: 2px solid #26262e;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.ng-pose-list-anchor {
+  border-color: var(--ng-accent);
+  box-shadow: 0 0 0 3px var(--ng-accent), 0 0 24px rgba(124,196,255,0.4);
+  cursor: default;
+}
+.ng-pose-list-item:hover { box-shadow: 0 0 0 3px var(--ng-accent); }
+.ng-pose-list-item.ng-pose-list-item-selected {
+  outline: 3px solid var(--ng-accent);
+  outline-offset: -1px;
+}
+.ng-pose-list-note { opacity: 0.4; cursor: default; display: flex; align-items: center; justify-content: center; height: 96px; }
+.ng-pose-list-anchor img,
+.ng-pose-list-item img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  display: block;
+}
+.ng-plabel {
+  font-size: 9px;
+  color: var(--ng-text-dim);
+  padding: 3px 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 #ng-sidebar {
   flex: 0 0 340px;
   width: 340px;
@@ -770,6 +832,28 @@ html, body {
 .ng-anchor-row input[type="range"] { flex: 1; }
 .ng-anchor-row span { min-width: 70px; text-align: right; white-space: nowrap; }
 
+.ng-sort-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--ng-text-dim);
+  margin: 6px 0;
+}
+.ng-sort-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.ng-find-neutral-row { margin-top: 8px; }
+#ng-neutral-pose-readout {
+  margin-top: 8px;
+  font-style: normal;
+  opacity: 1;
+}
+#ng-neutral-pose-readout .ng-btn { margin-top: 6px; }
+
 .ng-video-thresh-row {
   display: flex;
   gap: 8px;
@@ -854,6 +938,176 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- Load folder / .zip row (Video/Image-Set Analysis section) ---- */
+.ng-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+.ng-btn-full { flex: 1 1 auto; width: 100%; }
+.ng-folder-row .ng-btn-full { width: auto; flex: 2 1 auto; }
+.ng-folder-or {
+  font-size: 11px;
+  color: var(--ng-text-dim);
+  flex: 0 0 auto;
+}
+.ng-folder-ref {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ng-text-dim);
+  flex: 1 1 100%;
+}
+.ng-folder-ref .ng-num-input { width: 56px; }
+
+/* ---- accent action buttons (Save kept/selected, Build playback) ---- */
+.ng-btn-accent {
+  background: rgba(124, 196, 255, 0.08);
+  border-color: rgba(124, 196, 255, 0.35);
+  color: var(--ng-accent);
+}
+.ng-btn-accent:hover:not(:disabled) { border-color: var(--ng-accent); }
+#ng-analysis-status .ng-btn {
+  display: block;
+  margin-top: 6px;
+  width: 100%;
+  text-align: center;
+  font-size: 11px;
+}
+#ng-export-result {
+  margin-top: 6px;
+}
+
+/* ---- match-confidence chart (renderNGChart) ---- */
+.ng-chart-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-bottom: 3px;
+}
+.ng-blur-cutoff-label { color: #d4c04a; }
+.ng-chart-svg {
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  border-radius: 6px;
+  display: block;
+}
+.ng-strip-svg {
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  border-radius: 4px;
+  display: block;
+  margin-top: 2px;
+}
+.ng-shot-scale-caption {
+  font-size: 9px;
+  color: var(--ng-text-dim);
+  margin-top: 4px;
+}
+.ng-shot-scale-legend {
+  font-size: 8px;
+  color: var(--ng-text-dim);
+  margin-top: 4px;
+  line-height: 1.6;
+}
+.ng-shot-scale-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 8px;
+}
+.ng-shot-scale-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* ---- selected-frames modal (View selected) ---- */
+.ng-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ng-modal {
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  width: min(720px, 92vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ng-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ng-border);
+  font-size: 13px;
+  color: var(--ng-text);
+}
+.ng-modal-header .ng-btn {
+  height: 26px;
+  width: 26px;
+  padding: 0;
+  line-height: 1;
+}
+.ng-modal-grid {
+  padding: 12px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.ng-selected-modal-cell {
+  position: relative;
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ng-selected-modal-cell img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  cursor: pointer;
+  background: #1a1a20;
+}
+.ng-selected-modal-cell-info {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  padding: 4px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ng-selected-modal-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--ng-text);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 13px;
+}
+.ng-selected-modal-remove:hover { background: var(--ng-danger); }
 
 /* ---- Playback modal: pop-out view of the rejected-frames-blanked
    reassembly, so scrubbing the full clip isn't fighting the ring/list

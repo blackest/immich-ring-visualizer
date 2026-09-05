@@ -10,6 +10,16 @@
 
 <div id="ng-preview-hover-panel"><img id="ng-preview-hover-img"><div class="ng-preview-caption" id="ng-preview-hover-caption"></div></div>
 
+<div id="ng-selected-modal" class="ng-modal-overlay" style="display:none;">
+  <div class="ng-modal">
+    <div class="ng-modal-header">
+      <span id="ng-selected-modal-title">Selected frames</span>
+      <button id="ng-selected-modal-close" class="ng-btn" title="Close">&times;</button>
+    </div>
+    <div id="ng-selected-modal-grid" class="ng-modal-grid"></div>
+  </div>
+</div>
+
 <!--
   immichRingNG shell.
 
@@ -57,12 +67,29 @@
                 <input id="ng-ring-scale-input" type="range" min="25" max="400" value="100">
                 <span id="ng-ring-scale-val">100%</span>
               </div>
+              <div class="ng-sort-row">
+                <label><input type="checkbox" class="ng-ring-sort-cb" data-metric="sim" checked> Similarity</label>
+                <label><input type="checkbox" class="ng-ring-sort-cb" data-metric="yaw"> Yaw</label>
+                <label><input type="checkbox" class="ng-ring-sort-cb" data-metric="pitch"> Pitch</label>
+                <label><input type="checkbox" class="ng-ring-sort-cb" data-metric="roll"> Roll</label>
+                <label><input type="checkbox" class="ng-ring-sort-cb" data-metric="blur"> Sharpness</label>
+              </div>
               <div class="ng-anchor-row">
                 <label for="ng-ring-squeeze-slider">Min sim</label>
                 <input id="ng-ring-squeeze-slider" type="range" min="0" max="100" value="65">
                 <span id="ng-ring-squeeze-val">65% (0/0)</span>
               </div>
-              <p class="ng-stub-note">(sort-by-yaw/pitch/roll pose-list view, sharpness cutoff, and calibration-frame finder not ported yet -- ring is similarity-banded only for now)</p>
+              <label class="ng-checkbox-row"><input type="checkbox" id="ng-sharp-squeeze-enable"> Sharpness cutoff</label>
+              <div class="ng-anchor-row" id="ng-sharp-squeeze-controls" style="display:none;">
+                <label for="ng-sharp-squeeze-slider">Min sharp</label>
+                <input id="ng-sharp-squeeze-slider" type="range" min="0" max="500" value="0">
+                <span id="ng-sharp-squeeze-val">0 (0/0)</span>
+              </div>
+              <div class="ng-find-neutral-row">
+                <button id="ng-find-neutral-btn" class="ng-btn ng-btn-full">Find neutral pose (calibration frame)</button>
+              </div>
+              <div id="ng-neutral-pose-readout" class="ng-stub-note" style="display:none;"></div>
+              <p class="ng-stub-note">(person-cluster calibration and cross-project pose comparison not ported yet)</p>
             </div>
           </div>
 
@@ -80,6 +107,12 @@
             <div class="panel-section-header"><span class="chev">&#9656;</span><span class="sec-title">Video / Image-Set Analysis</span></div>
             <div class="panel-section-body">
               <div id="ng-video-analysis-body"></div>
+              <div class="ng-folder-row">
+                <button id="ng-btn-load-folder" class="ng-btn ng-btn-full" title="Pick multiple images">Load folder</button>
+                <span class="ng-folder-or">or a</span>
+                <button id="ng-btn-load-zip" class="ng-btn" title="Pick a .zip of images">.zip</button>
+                <label class="ng-folder-ref">Ref position <input id="ng-folder-ref-index" type="number" min="1" value="1" class="ng-num-input" title="Which image (1st alphabetically by default) is the reference face"></label>
+              </div>
               <div class="ng-video-thresh-row">
                 <label>Sim &gt; <input id="ng-sim-threshold" type="number" step="0.05" value="0.1" title="Similarity Threshold" class="ng-num-input"></label>
                 <label>Blur &gt; <input id="ng-blur-threshold" type="number" step="1" value="1" title="Blur Threshold" class="ng-num-input"></label>
@@ -92,7 +125,6 @@
                 <input id="ng-analysis-end-sec" type="number" min="0" step="1" placeholder="end" class="ng-video-range-input">
               </div>
               <div id="ng-analysis-status"></div>
-              <p class="ng-stub-note">(stub -- folder/zip load not ported yet)</p>
             </div>
           </div>
 
@@ -158,6 +190,12 @@
       <div id="ng-stage-wrap" style="display:none;">
         <div id="ng-hud"><span id="ng-hud-mode"></span> &middot; <span id="ng-hud-filename"></span></div>
         <div id="ng-stage"></div>
+        <div id="ng-pose-list-view" style="display:none;"></div>
+        <div id="ng-pose-list-scrubber" style="display:none;">
+          <span id="ng-pose-scrub-left"></span>
+          <input id="ng-pose-scrub-slider" type="range" min="0" max="1000" value="0">
+          <span id="ng-pose-scrub-right"></span>
+        </div>
       </div>
       <aside id="ng-sidebar" style="display:none;">
         <div id="ng-sidebar-current">
@@ -201,9 +239,9 @@
   </div>
 
   <footer id="ng-bottombar">
-    <button class="ng-task-btn" data-task="video" disabled>Video</button>
-    <button class="ng-task-btn" data-task="immich" disabled>Immich</button>
-    <button class="ng-task-btn" data-task="folderzip" disabled>Folder / Zip</button>
+    <button class="ng-task-btn" data-task="video">Video</button>
+    <button class="ng-task-btn" data-task="immich">Immich</button>
+    <button class="ng-task-btn" data-task="folderzip" disabled title="Not built yet -- load a folder/zip from within the Video task's Video/Image-Set Analysis section for now">Folder / Zip</button>
   </footer>
 
 </div>

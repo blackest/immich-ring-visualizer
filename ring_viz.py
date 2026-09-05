@@ -23,6 +23,7 @@ from routes.phosphene import phosphene_bp
 from routes.mainNG import mainNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.videoNG import videoNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.immichNG import immichNG_bp  # NG: new blueprint, no changes to existing ones
+from routes.folderNG import folderNG_bp  # NG: new blueprint, no changes to existing ones
 
 app = Flask(__name__)
 app.register_blueprint(video_bp)
@@ -34,6 +35,7 @@ app.register_blueprint(phosphene_bp)
 app.register_blueprint(mainNG_bp)  # NG: /immichRingNG, additive only
 app.register_blueprint(videoNG_bp)  # NG: /api/ng/preview-video etc, additive only
 app.register_blueprint(immichNG_bp)  # NG: /api/ng/find-by-filename etc, additive only
+app.register_blueprint(folderNG_bp)  # NG: /api/ng/analyze-folder, additive only
 if __name__ == "__main__":
     # use_reloader on its own (without debug=True) restarts the process
     # when a .py file changes -- picks up backend fixes without a manual

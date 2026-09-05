@@ -54,6 +54,32 @@
     return r.thumbUrl || "";
   }
 
+  // ---- shot-scale bands (from media-ingest.js's SHOT_SCALE_BANDS, ported
+  // verbatim -- classifies a frame's face-height % of frame into a fixed
+  // false-color bucket for the chart's shot-scale strip) ----
+  const SHOT_SCALE_BANDS = [
+    { max: 0.05, label: "Extreme wide",       color: "#8a5fd4" },
+    { max: 0.12, label: "Full shot",          color: "#4a7fd4" },
+    { max: 0.20, label: "Cowboy/American",    color: "#4ad4c4" },
+    { max: 0.25, label: "Medium",             color: "#4ad46a" },
+    { max: 0.35, label: "Medium close-up",    color: "#d4c04a" },
+    { max: 0.50, label: "Close-up",           color: "#d4824a" },
+    { max: Infinity, label: "Extreme close-up", color: "#d4544a" },
+  ];
+  function shotScaleForNG(r) {
+    const pct = typeof r.vertFillPct === "number" ? r.vertFillPct
+      : (typeof r.bboxRatio === "number" ? Math.sqrt(r.bboxRatio) : null);
+    if (pct === null) return null;
+    const band = SHOT_SCALE_BANDS.find((b) => pct <= b.max) || SHOT_SCALE_BANDS[SHOT_SCALE_BANDS.length - 1];
+    return { pct, ...band };
+  }
+
+  // min-sim squeeze defaults per ring-sort metric (from viz-render.js's
+  // SQUEEZE_DEFAULTS) -- switching sort metric resets the squeeze slider
+  // to a sensible starting point for that metric's scale, unless the
+  // person has already dragged the slider themselves this session.
+  const SQUEEZE_DEFAULTS = { sim: 65, yaw: 20, pitch: 20, roll: 20, blur: 65 };
+
   // ---- DOM refs: top bar / tabs / bottom bar ----
   const tabsEl = document.getElementById("ng-tabs");
   const mainEl = document.getElementById("ng-main");
@@ -77,6 +103,13 @@
   const ringScaleVal = document.getElementById("ng-ring-scale-val");
   const squeezeSlider = document.getElementById("ng-ring-squeeze-slider");
   const squeezeVal = document.getElementById("ng-ring-squeeze-val");
+  const ringSortCbs = Array.from(document.querySelectorAll(".ng-ring-sort-cb"));
+  const sharpEnableCb = document.getElementById("ng-sharp-squeeze-enable");
+  const sharpControlsEl = document.getElementById("ng-sharp-squeeze-controls");
+  const sharpSlider = document.getElementById("ng-sharp-squeeze-slider");
+  const sharpVal = document.getElementById("ng-sharp-squeeze-val");
+  const findNeutralBtn = document.getElementById("ng-find-neutral-btn");
+  const neutralPoseReadoutEl = document.getElementById("ng-neutral-pose-readout");
 
   // ---- DOM refs: Video / Image-Set Analysis section ----
   const videoAnalysisBodyEl = document.getElementById("ng-video-analysis-body");
@@ -86,6 +119,9 @@
   const blurThresholdInput = document.getElementById("ng-blur-threshold");
   const cacheFormatPngCb = document.getElementById("ng-cache-format-png");
   const analysisStatusEl = document.getElementById("ng-analysis-status");
+  const loadFolderBtn = document.getElementById("ng-btn-load-folder");
+  const loadZipBtn = document.getElementById("ng-btn-load-zip");
+  const folderRefIndexInput = document.getElementById("ng-folder-ref-index");
 
   // ---- DOM refs: Frame Preview section ----
   const previewHintEl = document.getElementById("ng-preview-hint");
@@ -135,6 +171,11 @@
   // ---- DOM refs: main stage + sidebar ----
   const stageWrapEl = document.getElementById("ng-stage-wrap");
   const stageEl = document.getElementById("ng-stage");
+  const poseListViewEl = document.getElementById("ng-pose-list-view");
+  const poseListScrubberEl = document.getElementById("ng-pose-list-scrubber");
+  const poseScrubSliderEl = document.getElementById("ng-pose-scrub-slider");
+  const poseScrubLeftEl = document.getElementById("ng-pose-scrub-left");
+  const poseScrubRightEl = document.getElementById("ng-pose-scrub-right");
   const hudModeEl = document.getElementById("ng-hud-mode");
   const hudFilenameEl = document.getElementById("ng-hud-filename");
   const sidebarEl = document.getElementById("ng-sidebar");
@@ -187,14 +228,20 @@
       // Anchor settings
       this.ringScale = 100; // percent
       this.squeezeMinPct = 65;
+      this.squeezeUserOverridden = false;
+      this.ringSortMetric = "sim"; // sim | yaw | pitch | roll | blur -- switches ring vs pose-list view
+      this.sharpCutoffEnabled = false;
+      this.sharpMinVal = 0;
+      this.folderRefIndex = 1; // 1-based, which image in a folder/zip upload is the reference face
 
       // analysis job + ring state
-      this.job = null; // { jobId, status, error, sourceName, frameCount, passed, failedSim, failedBlur }
+      this.job = null; // { jobId, status, error, sourceName, frameCount, passed, failedSim, failedBlur, results, sourceType, refFrame }
       this.ring = null; // { anchorUrl, refFrameIdx, baseResults, sourceType }
       this.playback = null; // { url, fps, jobId } -- rejected-frames-blanked reassembly, popped out in a modal
       this.playbackBuilding = false;
       this.rankedSortMetric = "sim";
       this.selectedFrames = new Set();
+      this.staticPreviewFrame = null; // folder/image-set jobs only -- a chart-click result row, since there's no live decode to scrub (see renderFramePreview)
 
       // Immich ingest state -- independent of the video state above, so a
       // project can have a video ring AND an Immich ring at once, each
@@ -211,6 +258,7 @@
 
       this._pollTimer = null;
       this._playTimer = null;
+      this._lastFolderSource = null; // { images, zip } -- last folder/zip upload, kept for "Use as reference & re-analyze"; not persisted (Files don't survive JSON)
     }
 
     get isActive() {
@@ -257,6 +305,11 @@
         cacheFormatPng: this.cacheFormatPng,
         ringScale: this.ringScale,
         squeezeMinPct: this.squeezeMinPct,
+        squeezeUserOverridden: this.squeezeUserOverridden,
+        ringSortMetric: this.ringSortMetric,
+        sharpCutoffEnabled: this.sharpCutoffEnabled,
+        sharpMinVal: this.sharpMinVal,
+        folderRefIndex: this.folderRefIndex,
         job: this.job,
         ring: this.ring,
         rankedSortMetric: this.rankedSortMetric,
@@ -281,12 +334,18 @@
       p.cacheFormatPng = !!data.cacheFormatPng;
       p.ringScale = typeof data.ringScale === "number" ? data.ringScale : 100;
       p.squeezeMinPct = typeof data.squeezeMinPct === "number" ? data.squeezeMinPct : 65;
+      p.squeezeUserOverridden = !!data.squeezeUserOverridden;
+      p.ringSortMetric = data.ringSortMetric || "sim";
+      p.sharpCutoffEnabled = !!data.sharpCutoffEnabled;
+      p.sharpMinVal = typeof data.sharpMinVal === "number" ? data.sharpMinVal : 0;
+      p.folderRefIndex = typeof data.folderRefIndex === "number" ? data.folderRefIndex : 1;
       p.job = data.job || null;
       // playback builds live in a server tempdir (FRAME_STORE) that doesn't
       // survive a server restart, and the modal itself is a transient UI
       // concern -- neither is worth persisting across a page reload.
       p.playback = null;
       p.playbackBuilding = false;
+      p.staticPreviewFrame = null;
       if (p.job && p.job.status === "running") {
         // a page reload orphaned the in-browser poll loop -- the backend
         // job may have finished or may not even exist anymore (server
@@ -306,6 +365,7 @@
       p.selectedAssetIds = new Set(Array.isArray(data.selectedAssetIds) ? data.selectedAssetIds : []);
       p._pollTimer = null;
       p._playTimer = null;
+      p._lastFolderSource = null;
       return p;
     }
 
@@ -344,6 +404,7 @@
         this.ring = null;
         this.playback = null;
         this.selectedFrames = new Set();
+        this.staticPreviewFrame = null;
       } catch (e) {
         alert("Could not load video: " + e.message);
       } finally {
@@ -445,17 +506,22 @@
     }
 
     // ---- analysis: Run Analysis with Selected Frame -> ring + ranked matches ----
-    async startAnalysis() {
+    async startAnalysis(refFrameOverride) {
       if (!this.video || !this.videoFile) return;
+      const refFrame = refFrameOverride != null ? refFrameOverride : this.video.currentFrame;
       this.stopPolling();
       this.selectedFrames = new Set();
       this.playback = null; // a new analysis run invalidates any previous playback build
+      this.staticPreviewFrame = null;
       this.job = {
         status: "running",
+        sourceType: "video",
         sourceName: this.videoFile.name,
         simThreshold: this.simThreshold,
         blurThreshold: this.blurThreshold,
         frameCount: 0, passed: 0, failedSim: 0, failedBlur: 0,
+        results: [],
+        refFrame,
       };
       ProjectManager.render();
 
@@ -463,7 +529,7 @@
       form.append("video", this.videoFile);
       form.append("simThreshold", this.simThreshold);
       form.append("blurThreshold", this.blurThreshold);
-      form.append("refFrame", this.video.currentFrame);
+      form.append("refFrame", refFrame);
       form.append("cacheFormat", this.cacheFormatPng ? "png" : "jpg");
       if (this.video.rangeStartSec != null) form.append("startSec", this.video.rangeStartSec);
       if (this.video.rangeEndSec != null) form.append("endSec", this.video.rangeEndSec);
@@ -477,6 +543,56 @@
           return;
         }
         this.job.jobId = data.jobId;
+        this.poll();
+      } catch (e) {
+        this.job = { status: "error", error: e.message };
+        if (this.isActive) ProjectManager.render();
+      }
+    }
+
+    // ---- analysis: Load folder / .zip -> same pipeline, over stills ----
+    async startFolderAnalysis({ images, zip }, refIndexOverride) {
+      this.stopPolling();
+      this.selectedFrames = new Set();
+      this.playback = null;
+      this.staticPreviewFrame = null;
+      const refIndex = refIndexOverride != null ? refIndexOverride : this.folderRefIndex;
+      const sourceName = zip ? zip.name.replace(/\.zip$/i, "") : "folder_set";
+      this.job = {
+        status: "running",
+        sourceType: "folder",
+        sourceName,
+        simThreshold: this.simThreshold,
+        blurThreshold: this.blurThreshold,
+        frameCount: 0, passed: 0, failedSim: 0, failedBlur: 0,
+        results: [],
+        refFrame: refIndex,
+      };
+      ProjectManager.render();
+
+      const form = new FormData();
+      if (zip) {
+        form.append("zip", zip);
+      } else {
+        images.forEach((f) => form.append("images", f));
+        form.append("sourceName", sourceName);
+      }
+      form.append("simThreshold", this.simThreshold);
+      form.append("blurThreshold", this.blurThreshold);
+      form.append("refIndex", refIndex);
+      form.append("cacheFormat", this.cacheFormatPng ? "png" : "jpg");
+      this._lastFolderSource = { images, zip }; // for "Use as reference & re-analyze"
+
+      try {
+        const res = await fetch("/api/ng/analyze-folder", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          this.job = { status: "error", error: data.error || res.status };
+          if (this.isActive) ProjectManager.render();
+          return;
+        }
+        this.job.jobId = data.jobId;
+        this.job.frameCount = data.imageCount;
         this.poll();
       } catch (e) {
         this.job = { status: "error", error: e.message };
@@ -500,6 +616,7 @@
         this.job.status = data.status;
         this.job.error = data.error;
         this.job.frameCount = data.frameCount;
+        this.job.results = data.results;
         this.job.passed = data.results.filter((r) => r.passed).length;
         this.job.failedSim = data.results.filter((r) => !r.passed && r.failReason === "sim").length;
         this.job.failedBlur = data.results.filter((r) => !r.passed && r.failReason === "blur").length;
@@ -522,6 +639,7 @@
     }
 
     buildRing(results) {
+      const sourceType = this.job.sourceType || "video";
       const baseResults = results
         .filter((r) => r.passed)
         .map((r) => ({
@@ -536,10 +654,22 @@
 
       this.ring = {
         anchorUrl: `/api/ng/framefile/${this.job.jobId}_anchor`,
-        refFrameIdx: this.video ? this.video.currentFrame : 1,
+        refFrameIdx: this.job.refFrame,
         baseResults,
-        sourceType: "video",
+        sourceType,
       };
+    }
+
+    // ---- Save kept / Save selected frames to disk ----
+    async exportFrames(onlySelected) {
+      if (!this.job || !this.job.jobId) return null;
+      const body = onlySelected ? { frames: Array.from(this.selectedFrames) } : {};
+      const res = await fetch(`/api/ng/export-job/${this.job.jobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return res.json();
     }
 
     // ---- playback: reassemble the clip with rejected frames blanked out,
@@ -576,11 +706,20 @@
       return [...withMetric, ...withoutMetric];
     }
 
-    // min-sim squeeze (ported from viz-render.js's applySqueeze -- similarity
-    // filter only for this slice; the sharpness-cutoff half isn't ported yet)
+    // min-sim squeeze (ported from viz-render.js's applySqueeze) + the
+    // independent sharpness-cutoff squeeze, both scoped to this project.
     squeezeFiltered(sorted) {
       const cutoff = this.squeezeMinPct / 100;
-      const kept = sorted.filter((r) => (typeof r.similarity === "number" ? r.similarity : 1) >= cutoff);
+      const simKept = sorted.filter((r) => (typeof r.similarity === "number" ? r.similarity : 1) >= cutoff);
+
+      if (!this.sharpCutoffEnabled) {
+        return { kept: simKept, total: sorted.length };
+      }
+
+      // sharpness cutoff only applies to items that actually carry a blur
+      // score; nodes with no blur field (e.g. Immich-only) pass through
+      // untouched rather than being dropped.
+      const kept = simKept.filter((r) => (typeof r.blur !== "number" ? true : r.blur >= this.sharpMinVal));
       return { kept, total: sorted.length };
     }
 
@@ -755,6 +894,8 @@
       if (typeof PlaybackModal !== "undefined" && PlaybackModal.projectId && PlaybackModal.projectId !== id) {
         PlaybackModal.close();
       }
+      neutralPoseReadoutEl.style.display = "none";
+      neutralPoseReadoutEl.innerHTML = "";
       this.activeId = id;
       this.render();
     },
@@ -960,8 +1101,9 @@
       immichSectionEl.style.display = "none";
       const ring = project.ring;
       const anchorLabel = `Frame ${ring.refFrameIdx} (Anchor)`;
+      const metricLabel = { sim: "Similarity", yaw: "Yaw", pitch: "Pitch", roll: "Roll", blur: "Sharpness" }[project.ringSortMetric];
       hudModeEl.textContent = "VIDEO FRAME ANALYSIS (local, not in Immich)";
-      hudFilenameEl.textContent = anchorLabel;
+      hudFilenameEl.textContent = `${anchorLabel} · sorted by ${metricLabel}`;
 
       // currently-selected panel always shows the anchor for this slice --
       // there's no recenter target since video-frame results carry no
@@ -974,6 +1116,19 @@
       const sorted = project.sortedRanked();
       const { kept, total } = project.squeezeFiltered(sorted);
       squeezeVal.textContent = `${project.squeezeMinPct}% (${kept.length}/${total})`;
+      sharpVal.textContent = `${project.sharpMinVal} (${kept.length}/${total})`;
+
+      if (project.ringSortMetric !== "sim") {
+        stageEl.style.display = "none";
+        poseListViewEl.style.display = "flex";
+        poseListScrubberEl.style.display = "flex";
+        renderPoseListNG(project, ring.anchorUrl, anchorLabel, kept, (r) => project.toggleFrameSelection(r.frame), (r) => project.selectedFrames.has(r.frame));
+        this.renderRankedList(project, kept);
+        return;
+      }
+      stageEl.style.display = "";
+      poseListViewEl.style.display = "none";
+      poseListScrubberEl.style.display = "none";
 
       stageEl.innerHTML = "";
       const ringScale = project.ringScale / 100;
@@ -1047,6 +1202,7 @@
       kept.forEach((r) => {
         const row = document.createElement("div");
         row.className = "ng-list-row";
+        row.dataset.frame = r.frame;
         const pct = (r.similarity * 100).toFixed(1);
 
         let poseHtml = "";
@@ -1093,9 +1249,10 @@
       const ring = project.immichRing;
       const anchorUrl = `/api/ng/preview/${ring.centerAssetId}`;
       const modeLabel = ring.mode === "clip" ? "CLIP image embedding (no face match found)" : "face embedding";
+      const metricLabel = { sim: "Similarity", yaw: "Yaw", pitch: "Pitch", roll: "Roll", blur: "Sharpness" }[project.ringSortMetric];
 
       hudModeEl.textContent = `IMMICH NEIGHBORS (${modeLabel})`;
-      hudFilenameEl.textContent = ring.centerFilename;
+      hudFilenameEl.textContent = `${ring.centerFilename} · sorted by ${metricLabel}`;
 
       sidebarCurrentImgEl.src = anchorUrl;
       sidebarCurrentFnameEl.textContent = ring.centerFilename;
@@ -1112,6 +1269,19 @@
       const sorted = project.sortedRankedImmich();
       const { kept, total } = project.squeezeFiltered(sorted);
       squeezeVal.textContent = `${project.squeezeMinPct}% (${kept.length}/${total})`;
+      sharpVal.textContent = `${project.sharpMinVal} (${kept.length}/${total})`;
+
+      if (project.ringSortMetric !== "sim") {
+        stageEl.style.display = "none";
+        poseListViewEl.style.display = "flex";
+        poseListScrubberEl.style.display = "flex";
+        renderPoseListNG(project, anchorUrl, ring.centerFilename, kept, (r) => project.toggleAssetSelection(r.assetId), (r) => project.selectedAssetIds.has(r.assetId), (r) => project.recenterImmich(r.assetId, r.filename));
+        this.renderRankedListImmich(project, kept);
+        return;
+      }
+      stageEl.style.display = "";
+      poseListViewEl.style.display = "none";
+      poseListScrubberEl.style.display = "none";
 
       stageEl.innerHTML = "";
       const ringScale = project.ringScale / 100;
@@ -1190,6 +1360,7 @@
       kept.forEach((r) => {
         const row = document.createElement("div");
         row.className = "ng-list-row";
+        row.dataset.assetId = r.assetId;
         const pct = (r.similarity * 100).toFixed(1);
 
         row.innerHTML = `
@@ -1237,14 +1408,22 @@
       ringScaleInput.value = active.ringScale;
       ringScaleVal.textContent = active.ringScale + "%";
       squeezeSlider.value = active.squeezeMinPct;
+      ringSortCbs.forEach((cb) => { cb.checked = cb.dataset.metric === active.ringSortMetric; });
+      sharpEnableCb.checked = active.sharpCutoffEnabled;
+      sharpControlsEl.style.display = active.sharpCutoffEnabled ? "flex" : "none";
+      sharpSlider.value = active.sharpMinVal;
+      folderRefIndexInput.value = active.folderRefIndex;
       if (active.task === "immich" && active.immichRing) {
         const { kept, total } = active.squeezeFiltered(active.sortedRankedImmich());
         squeezeVal.textContent = `${active.squeezeMinPct}% (${kept.length}/${total})`;
+        sharpVal.textContent = `${active.sharpMinVal} (${kept.length}/${total})`;
       } else if (active.ring) {
         const { kept, total } = active.squeezeFiltered(active.sortedRanked());
         squeezeVal.textContent = `${active.squeezeMinPct}% (${kept.length}/${total})`;
+        sharpVal.textContent = `${active.sharpMinVal} (${kept.length}/${total})`;
       } else {
         squeezeVal.textContent = `${active.squeezeMinPct}% (0/0)`;
+        sharpVal.textContent = `${active.sharpMinVal} (0/0)`;
       }
 
       simThresholdInput.value = active.simThreshold;
@@ -1327,26 +1506,190 @@
         `;
         return;
       }
-      analysisStatusEl.innerHTML = `Done — ${j.passed}/${j.frameCount} kept.`;
-      const btn = document.createElement("button");
-      btn.className = "ng-btn";
-      btn.style.marginTop = "6px";
-      btn.style.width = "100%";
-      btn.disabled = project.playbackBuilding;
-      btn.textContent = project.playbackBuilding
-        ? "Building playback…"
-        : project.playback
-          ? "Reopen playback"
-          : "Pop out playback (rejected frames blanked)";
-      btn.addEventListener("click", () => {
-        if (project.playback) PlaybackModal.open(project);
-        else project.buildPlayback();
+
+      const selCount = project.selectedFrames.size;
+      const isVideo = j.sourceType === "video";
+
+      analysisStatusEl.innerHTML = `
+        Done — ${j.passed}/${j.frameCount} kept.
+        <div id="ng-sim-sparkline-wrap" style="margin-top:8px;"></div>
+        <button id="ng-btn-save-kept" class="ng-btn ng-btn-full ng-btn-accent">Save kept frames to disk</button>
+        <button id="ng-btn-save-selected" class="ng-btn ng-btn-full ng-btn-accent" ${selCount ? "" : "disabled"}>Save ${selCount} selected frame${selCount === 1 ? "" : "s"} to disk</button>
+        <button id="ng-btn-view-selected" class="ng-btn ng-btn-full">View selected</button>
+        <div id="ng-export-result" class="ng-stub-note"></div>
+      `;
+
+      renderNGChart(project, analysisStatusEl.querySelector("#ng-sim-sparkline-wrap"));
+
+      const exportResultEl = analysisStatusEl.querySelector("#ng-export-result");
+      const saveKeptBtn = analysisStatusEl.querySelector("#ng-btn-save-kept");
+      const saveSelectedBtn = analysisStatusEl.querySelector("#ng-btn-save-selected");
+      const viewSelectedBtn = analysisStatusEl.querySelector("#ng-btn-view-selected");
+
+      saveKeptBtn.onclick = async () => {
+        saveKeptBtn.textContent = "Saving…";
+        saveKeptBtn.disabled = true;
+        try {
+          const result = await project.exportFrames(false);
+          exportResultEl.textContent = result.error
+            ? `Error: ${result.error}`
+            : `Saved ${result.exported} frames → ${result.path}`;
+        } catch (e) {
+          exportResultEl.textContent = `Error: ${e.message}`;
+        }
+        saveKeptBtn.textContent = "Save kept frames to disk";
+        saveKeptBtn.disabled = false;
+      };
+
+      if (saveSelectedBtn) {
+        saveSelectedBtn.onclick = async () => {
+          saveSelectedBtn.textContent = "Saving…";
+          saveSelectedBtn.disabled = true;
+          try {
+            const result = await project.exportFrames(true);
+            exportResultEl.textContent = result.error
+              ? `Error: ${result.error}`
+              : `Saved ${result.exported} frames → ${result.path}`;
+          } catch (e) {
+            exportResultEl.textContent = `Error: ${e.message}`;
+          }
+          saveSelectedBtn.textContent = `Save ${project.selectedFrames.size} selected frame${project.selectedFrames.size === 1 ? "" : "s"} to disk`;
+          saveSelectedBtn.disabled = project.selectedFrames.size === 0;
+        };
+      }
+
+      viewSelectedBtn.onclick = () => ProjectManager.openSelectedModal(project);
+
+      // "Pop out playback" only makes sense for a real video source --
+      // folder/image-set jobs have no clip for build-playback to
+      // reassemble (the backend requires job.videoBytes).
+      if (isVideo) {
+        const btn = document.createElement("button");
+        btn.className = "ng-btn ng-btn-full ng-btn-accent";
+        btn.style.marginTop = "6px";
+        btn.disabled = project.playbackBuilding;
+        btn.textContent = project.playbackBuilding
+          ? "Building playback…"
+          : project.playback
+            ? "Reopen playback"
+            : "Pop out playback (rejected frames blanked)";
+        btn.addEventListener("click", () => {
+          if (project.playback) PlaybackModal.open(project);
+          else project.buildPlayback();
+        });
+        analysisStatusEl.appendChild(btn);
+      }
+    },
+
+    openSelectedModal(project) {
+      const overlay = document.getElementById("ng-selected-modal");
+      const grid = document.getElementById("ng-selected-modal-grid");
+      const title = document.getElementById("ng-selected-modal-title");
+      if (!overlay || !grid) return;
+
+      const renderGrid = () => {
+        const items = (project.ring ? project.ring.baseResults : []).filter((r) => project.selectedFrames.has(r.frame));
+        title.textContent = `Selected frames (${items.length})`;
+        grid.innerHTML = "";
+        if (!items.length) {
+          grid.appendChild(placeholder("Nothing selected yet — dblclick a ring node or its checkbox to select."));
+          return;
+        }
+        items.forEach((r) => {
+          const cell = document.createElement("div");
+          cell.className = "ng-selected-modal-cell";
+          cell.innerHTML = `
+            <img src="${thumbUrlFor(r)}" loading="lazy">
+            <div class="ng-selected-modal-cell-info">${r.filename}${typeof r.similarity === "number" ? ` — ${(r.similarity * 100).toFixed(1)}%` : ""}</div>
+            <button class="ng-selected-modal-remove" title="Remove from selection">&times;</button>
+          `;
+          cell.querySelector("img").addEventListener("click", () => {
+            if (project.job && project.job.sourceType === "video" && project.video) {
+              project.stepAndSyncAudio(r.frame);
+            } else {
+              showStaticFramePreviewNG(project, r);
+            }
+          });
+          cell.querySelector(".ng-selected-modal-remove").addEventListener("click", () => {
+            project.toggleFrameSelection(r.frame);
+            if (project.isActive) ProjectManager.render();
+            renderGrid();
+          });
+          grid.appendChild(cell);
+        });
+      };
+
+      renderGrid();
+      overlay.style.display = "flex";
+    },
+
+    findNeutralPose(project) {
+      const baseResults = project.task === "immich"
+        ? (project.immichRing ? project.immichRing.baseResults : null)
+        : (project.ring ? project.ring.baseResults : null);
+      if (!baseResults) return;
+
+      const { kept } = project.squeezeFiltered(baseResults);
+      const pool = kept.filter((r) => typeof r.yaw === "number" && typeof r.pitch === "number" && typeof r.roll === "number");
+
+      if (!pool.length) {
+        neutralPoseReadoutEl.style.display = "block";
+        neutralPoseReadoutEl.textContent = "No frames with pose data in current working set.";
+        return;
+      }
+
+      let best = pool[0];
+      let bestScore = Math.abs(best.yaw) + Math.abs(best.pitch) + Math.abs(best.roll);
+      pool.forEach((r) => {
+        const score = Math.abs(r.yaw) + Math.abs(r.pitch) + Math.abs(r.roll);
+        if (score < bestScore) { best = r; bestScore = score; }
       });
-      analysisStatusEl.appendChild(btn);
+
+      neutralPoseReadoutEl.style.display = "block";
+      neutralPoseReadoutEl.innerHTML = `
+        Most neutral: <b>${best.filename}</b> — yaw ${best.yaw.toFixed(1)}° pitch ${best.pitch.toFixed(1)}° roll ${best.roll.toFixed(1)}° (sim ${(best.similarity * 100).toFixed(1)}%)
+        <button type="button" id="ng-use-as-reference-btn" class="ng-btn ng-btn-full ng-btn-accent" style="margin-top:6px;">Use as reference &amp; re-analyze</button>
+      `;
+      flashHighlightNG(best.frame, best.assetId);
+
+      const useBtn = document.getElementById("ng-use-as-reference-btn");
+      useBtn.onclick = () => {
+        // this readout describes the *old* anchor's neutral-pose stats,
+        // invalidated by the re-analysis it's about to trigger.
+        const hideReadout = () => { neutralPoseReadoutEl.style.display = "none"; neutralPoseReadoutEl.innerHTML = ""; };
+        const sourceType = project.job ? project.job.sourceType : null;
+
+        if (project.task === "immich") {
+          hideReadout();
+          project.recenterImmich(best.assetId, best.filename);
+        } else if (sourceType === "folder") {
+          if (!project._lastFolderSource) {
+            useBtn.textContent = "Original folder/zip no longer available — reload it first";
+            return;
+          }
+          hideReadout();
+          project.startFolderAnalysis(project._lastFolderSource, best.frame);
+        } else {
+          if (!project.videoFile) {
+            useBtn.textContent = "Original video no longer available — reload it first";
+            return;
+          }
+          hideReadout();
+          project.startAnalysis(best.frame);
+        }
+      };
     },
 
     renderFramePreview(project) {
       if (!project.video) {
+        if (project.staticPreviewFrame) {
+          // folder/image-set job with a chart-click preview already shown --
+          // redraw it rather than resetting to the "no video" placeholder,
+          // since a full render() (selection toggles, tab switches, etc.)
+          // must not silently wipe out what the person just clicked to view.
+          showStaticFramePreviewNG(project, project.staticPreviewFrame);
+          return;
+        }
         previewHintEl.textContent = "No video loaded for this project yet.";
         previewCanvasEl.style.display = "none";
         previewControlsScrollEl.style.display = "none";
@@ -1407,6 +1750,241 @@
     },
   };
 
+  // ---- match-confidence sparkline + shot-scale strip, ported from
+  // media-ingest.js's renderSimSparkline -- reads from the project's own
+  // job/results instead of module-level globals ----
+  function renderNGChart(project, wrap) {
+    const j = project.job;
+    if (!wrap || !j || !j.results || !j.results.length) return;
+
+    const results = j.results;
+    const threshold = j.simThreshold;
+    const blurThreshold = j.blurThreshold;
+    const sourceType = j.sourceType;
+
+    const sorted = [...results].sort((a, b) => a.frame - b.frame);
+
+    const W = wrap.clientWidth || 320;
+    const H = 90;
+    const padL = 4, padR = 4, padT = 8, padB = 4;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+
+    const minFrame = sorted[0].frame;
+    const maxFrame = sorted[sorted.length - 1].frame;
+    const frameSpan = Math.max(1, maxFrame - minFrame);
+
+    const xFor = (frame) => padL + ((frame - minFrame) / frameSpan) * plotW;
+    const yFor = (sim) => padT + (1 - Math.max(0, Math.min(1, sim))) * plotH;
+
+    const blurVals = sorted.map((r) => (typeof r.blur === "number" ? r.blur : 0));
+    const blurMax = Math.max(1, blurThreshold * 1.4, ...blurVals) * 1.05;
+    const yForBlur = (blur) => padT + (1 - Math.max(0, blur) / blurMax) * plotH;
+
+    const linePoints = sorted.map((r) => `${xFor(r.frame).toFixed(1)},${yFor(r.sim).toFixed(1)}`).join(" ");
+    const thresholdY = yFor(threshold).toFixed(1);
+    const blurThresholdY = yForBlur(blurThreshold).toFixed(1);
+
+    const dots = sorted.map((r) => {
+      const cx = xFor(r.frame).toFixed(1);
+      const cy = yFor(r.sim).toFixed(1);
+      const color = r.passed ? "#7cc4ff" : "#d9534f";
+      return `<circle cx="${cx}" cy="${cy}" r="7" fill="transparent" data-frame="${r.frame}" class="ng-spark-hit" style="cursor:pointer;"></circle>` +
+             `<circle cx="${cx}" cy="${cy}" r="2" fill="${color}" style="pointer-events:none;"></circle>`;
+    }).join("");
+
+    const stripH = 14;
+    const segW = Math.max(1, plotW / sorted.length);
+    const stripSegs = sorted.map((r) => {
+      const scale = shotScaleForNG(r);
+      const x = xFor(r.frame).toFixed(1);
+      const color = scale ? scale.color : "#2a2a32";
+      const title = scale ? `${scale.label} (${(scale.pct * 100).toFixed(0)}%)` : "no scale data";
+      return `<rect x="${(x - segW / 2).toFixed(1)}" y="0" width="${segW.toFixed(1)}" height="${stripH}" fill="${color}" data-frame="${r.frame}" class="ng-spark-hit ng-strip-seg" style="cursor:pointer;"><title>frame ${r.frame} — ${title}</title></rect>`;
+    }).join("");
+
+    const legend = SHOT_SCALE_BANDS.map((b) =>
+      `<span class="ng-shot-scale-legend-item"><span class="ng-shot-scale-swatch" style="background:${b.color};"></span>${b.label}</span>`
+    ).join("");
+
+    wrap.innerHTML = `
+      <div class="ng-chart-header">
+        <span>Match confidence by frame — click a point to jump the preview</span>
+        <span class="ng-blur-cutoff-label">·· blur cutoff (${blurThreshold})</span>
+      </div>
+      <svg width="${W}" height="${H}" class="ng-chart-svg">
+        <line x1="${padL}" y1="${thresholdY}" x2="${W - padR}" y2="${thresholdY}"
+              stroke="#4a4a55" stroke-width="1" stroke-dasharray="3,3"></line>
+        <line x1="${padL}" y1="${blurThresholdY}" x2="${W - padR}" y2="${blurThresholdY}"
+              stroke="#d4c04a" stroke-width="1" stroke-dasharray="1,3" opacity="0.8"></line>
+        <polyline points="${linePoints}" fill="none" stroke="#5a8fc4" stroke-width="1.5"></polyline>
+        ${dots}
+      </svg>
+      <div class="ng-shot-scale-caption">Shot scale by frame (face height % of frame)</div>
+      <svg width="${W}" height="${stripH}" class="ng-strip-svg">${stripSegs}</svg>
+      <div class="ng-shot-scale-legend">${legend}</div>
+    `;
+
+    wrap.querySelectorAll(".ng-spark-hit").forEach((el) => {
+      el.addEventListener("click", () => {
+        const frame = parseInt(el.dataset.frame, 10);
+        const r = sorted.find((x) => x.frame === frame);
+        if (sourceType === "video" && project.video) {
+          project.stepAndSyncAudio(frame);
+        } else if (r) {
+          showStaticFramePreviewNG(project, r);
+        }
+      });
+    });
+  }
+
+  // ---- static frame preview for folder/image-set jobs -- there's no
+  // live decode to scrub (see MemoryVideo), so a chart click just draws
+  // whatever's cached (or already-passed) for that frame straight onto
+  // the shared preview canvas ----
+  function showStaticFramePreviewNG(project, r) {
+    if (!r) return;
+    project.staticPreviewFrame = r;
+    if (!project.isActive) return;
+    previewHintEl.textContent = r.origName || r.filename || `frame ${r.frame}`;
+    if (!r.frameId) {
+      previewCanvasEl.style.display = "none";
+      previewControlsScrollEl.style.display = "none";
+      previewHintEl.textContent = `Frame ${r.frame} was rejected (no face / didn't pass thresholds) — no stored image to show.`;
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const active = ProjectManager.getActive();
+      if (!active || active.id !== project.id) return;
+      previewCanvasEl.width = img.naturalWidth;
+      previewCanvasEl.height = img.naturalHeight;
+      previewCanvasEl.getContext("2d").drawImage(img, 0, 0);
+      previewCanvasEl.style.display = "";
+      previewControlsScrollEl.style.display = "none";
+    };
+    img.onerror = () => {
+      previewHintEl.textContent = `Could not load stored image for frame ${r.frame}`;
+    };
+    img.src = `/api/ng/framefile/${r.frameId}?t=${Date.now()}`;
+  }
+
+  // ---- pose-list view (yaw/pitch/roll/blur ring-sort modes), ported from
+  // viz-render.js's renderPoseList/setupPoseListScrubber -- a horizontal
+  // strip sorted by raw signed metric value instead of the radial ring ----
+  function renderPoseListNG(project, anchorUrl, anchorLabel, combined, onToggle, isSelectedFn, onRecenter) {
+    const metric = project.ringSortMetric;
+    poseListViewEl.innerHTML = "";
+
+    const anchorWrap = document.createElement("div");
+    anchorWrap.className = "ng-pose-list-anchor";
+    anchorWrap.innerHTML = `<img src="${anchorUrl}"><div class="ng-plabel">${anchorLabel}</div>`;
+    poseListViewEl.appendChild(anchorWrap);
+
+    const withMetric = combined.filter((r) => typeof r[metric] === "number");
+    const withoutMetric = combined.filter((r) => typeof r[metric] !== "number");
+    withMetric.sort((a, b) => a[metric] - b[metric]);
+
+    const PITCH_PX_PER_DEG = 1.6;
+    const PITCH_CLAMP_DEG = 40;
+
+    withMetric.forEach((r) => {
+      const item = document.createElement("div");
+      const selected = isSelectedFn(r);
+      item.className = "ng-pose-list-item" + (selected ? " ng-pose-list-item-selected" : "");
+      if (r.assetId) item.dataset.assetId = r.assetId;
+      if (r.frame !== undefined) item.dataset.frame = r.frame;
+      const unit = metric === "blur" ? "" : "°";
+      const label = metric === "blur" ? "sharp" : metric;
+      item.innerHTML = `<img src="${thumbUrlFor(r)}" loading="lazy"><div class="ng-plabel">${label}: ${r[metric].toFixed(1)}${unit}</div>`;
+
+      if (typeof r.pitch === "number") {
+        const clamped = Math.max(-PITCH_CLAMP_DEG, Math.min(PITCH_CLAMP_DEG, r.pitch));
+        const offsetPx = -clamped * PITCH_PX_PER_DEG;
+        item.style.transform = `translateY(${offsetPx}px)`;
+      }
+
+      let clickTimer = null;
+      item.onclick = () => {
+        if (!onRecenter || !r.assetId) return; // no recenter target for local video/folder frames
+        clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => onRecenter(r), 220);
+      };
+      item.ondblclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        clearTimeout(clickTimer);
+        onToggle(r);
+        item.classList.toggle("ng-pose-list-item-selected");
+        ProjectManager.saveState();
+        // keep the ranked sidebar in sync without a full stage re-render
+        // (re-rendering here would rebuild the strip mid-scroll-drag)
+        if (project.task === "immich") ProjectManager.renderRankedListImmich(project, combined);
+        else ProjectManager.renderRankedList(project, combined);
+      };
+      item.addEventListener("mouseenter", () => showHoverPreview(r));
+      item.addEventListener("mouseleave", hideHoverPreview);
+      poseListViewEl.appendChild(item);
+    });
+
+    if (withoutMetric.length) {
+      const note = document.createElement("div");
+      note.className = "ng-pose-list-item ng-pose-list-note";
+      note.innerHTML = `<div class="ng-plabel">+${withoutMetric.length} no ${metric} data</div>`;
+      poseListViewEl.appendChild(note);
+    }
+
+    setupPoseListScrubberNG(metric, withMetric);
+  }
+
+  function setupPoseListScrubberNG(metric, withMetric) {
+    if (withMetric.length) {
+      poseScrubLeftEl.textContent = `${metric}: ${withMetric[0][metric].toFixed(1)}°`;
+      poseScrubRightEl.textContent = `${metric}: ${withMetric[withMetric.length - 1][metric].toFixed(1)}°`;
+    } else {
+      poseScrubLeftEl.textContent = "";
+      poseScrubRightEl.textContent = "";
+    }
+
+    const maxScroll = () => Math.max(1, poseListViewEl.scrollWidth - poseListViewEl.clientWidth);
+
+    let syncingFromScroll = false;
+    poseScrubSliderEl.value = 0;
+    poseScrubSliderEl.oninput = () => {
+      syncingFromScroll = true;
+      poseListViewEl.scrollLeft = (parseFloat(poseScrubSliderEl.value) / 1000) * maxScroll();
+      syncingFromScroll = false;
+    };
+    poseListViewEl.onscroll = () => {
+      if (syncingFromScroll) return;
+      poseScrubSliderEl.value = Math.round((poseListViewEl.scrollLeft / maxScroll()) * 1000);
+    };
+    poseListViewEl.onwheel = (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        poseListViewEl.scrollLeft += e.deltaY;
+      }
+    };
+  }
+
+  // ---- flash-highlight a ranked-list row or pose-list item, ported from
+  // viz-render.js's flashHighlightFrame ----
+  function flashHighlightNG(frame, assetId) {
+    const selector = assetId != null
+      ? `.ng-pose-list-item[data-asset-id="${CSS.escape(String(assetId))}"], .ng-list-row[data-asset-id="${CSS.escape(String(assetId))}"]`
+      : `.ng-pose-list-item[data-frame="${CSS.escape(String(frame))}"], .ng-list-row[data-frame="${CSS.escape(String(frame))}"]`;
+    const el = document.querySelector(selector);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    const prevShadow = el.style.boxShadow;
+    let flashes = 0;
+    const flashInterval = setInterval(() => {
+      el.style.boxShadow = flashes % 2 === 0 ? "0 0 0 4px #7cc4ff" : prevShadow;
+      flashes++;
+      if (flashes > 5) { clearInterval(flashInterval); el.style.boxShadow = prevShadow; }
+    }, 200);
+  }
+
   function placeholder(text) {
     const p = document.createElement("p");
     p.className = "ng-placeholder";
@@ -1464,9 +2042,53 @@
     const active = ProjectManager.getActive();
     if (!active) return;
     active.squeezeMinPct = Number(e.target.value);
+    active.squeezeUserOverridden = true;
     if (active.ring || active.immichRing) ProjectManager.renderStage(active);
     else squeezeVal.textContent = `${active.squeezeMinPct}% (0/0)`;
     ProjectManager.saveState();
+  });
+
+  ringSortCbs.forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const active = ProjectManager.getActive();
+      if (!active) return;
+      if (cb.checked) {
+        ringSortCbs.forEach((other) => { if (other !== cb) other.checked = false; });
+        active.ringSortMetric = cb.dataset.metric;
+        if (!active.squeezeUserOverridden) {
+          active.squeezeMinPct = SQUEEZE_DEFAULTS[active.ringSortMetric];
+          squeezeSlider.value = active.squeezeMinPct;
+        }
+      } else {
+        // don't allow zero selection -- fall back to similarity
+        cb.checked = true;
+        return;
+      }
+      if (active.ring || active.immichRing) ProjectManager.renderStage(active);
+      ProjectManager.saveState();
+    });
+  });
+
+  sharpEnableCb.addEventListener("change", () => {
+    const active = ProjectManager.getActive();
+    if (!active) return;
+    active.sharpCutoffEnabled = sharpEnableCb.checked;
+    sharpControlsEl.style.display = active.sharpCutoffEnabled ? "flex" : "none";
+    if (active.ring || active.immichRing) ProjectManager.renderStage(active);
+    ProjectManager.saveState();
+  });
+  sharpSlider.addEventListener("input", () => {
+    const active = ProjectManager.getActive();
+    if (!active) return;
+    active.sharpMinVal = Number(sharpSlider.value);
+    if (active.ring || active.immichRing) ProjectManager.renderStage(active);
+    ProjectManager.saveState();
+  });
+
+  findNeutralBtn.addEventListener("click", () => {
+    const active = ProjectManager.getActive();
+    if (!active) return;
+    ProjectManager.findNeutralPose(active);
   });
 
   // ---- wiring: Video/Image-Set Analysis controls ----
@@ -1503,6 +2125,53 @@
   startAnalysisBtn.addEventListener("click", () => {
     const active = ProjectManager.getActive();
     if (active && active.video && active.videoFile) active.startAnalysis();
+  });
+  folderRefIndexInput.addEventListener("change", () => {
+    const active = ProjectManager.getActive();
+    if (!active) return;
+    active.folderRefIndex = Math.max(1, Number(folderRefIndexInput.value) || 1);
+    ProjectManager.saveState();
+  });
+
+  // ---- wiring: Load folder / .zip pickers (hidden file inputs, created
+  // once and reused -- unlike the per-video "Choose Video..." button,
+  // these live in the left rail permanently so a persistent pair of
+  // inputs is simpler than videoPickerButton()'s per-render approach) ----
+  const folderFilesInput = document.createElement("input");
+  folderFilesInput.type = "file";
+  folderFilesInput.accept = "image/*";
+  folderFilesInput.multiple = true;
+  folderFilesInput.style.display = "none";
+  document.body.appendChild(folderFilesInput);
+  folderFilesInput.addEventListener("change", () => {
+    const active = ProjectManager.getActive();
+    if (active && folderFilesInput.files && folderFilesInput.files.length) {
+      active.startFolderAnalysis({ images: Array.from(folderFilesInput.files) });
+    }
+    folderFilesInput.value = "";
+  });
+  loadFolderBtn.addEventListener("click", () => folderFilesInput.click());
+
+  const zipFileInput = document.createElement("input");
+  zipFileInput.type = "file";
+  zipFileInput.accept = ".zip";
+  zipFileInput.style.display = "none";
+  document.body.appendChild(zipFileInput);
+  zipFileInput.addEventListener("change", () => {
+    const active = ProjectManager.getActive();
+    if (active && zipFileInput.files && zipFileInput.files[0]) {
+      active.startFolderAnalysis({ zip: zipFileInput.files[0] });
+    }
+    zipFileInput.value = "";
+  });
+  loadZipBtn.addEventListener("click", () => zipFileInput.click());
+
+  // ---- wiring: selected-frames modal ----
+  const selectedModalOverlay = document.getElementById("ng-selected-modal");
+  const selectedModalCloseBtn = document.getElementById("ng-selected-modal-close");
+  selectedModalCloseBtn.addEventListener("click", () => { selectedModalOverlay.style.display = "none"; });
+  selectedModalOverlay.addEventListener("click", (e) => {
+    if (e.target === selectedModalOverlay) selectedModalOverlay.style.display = "none";
   });
 
   // ---- wiring: ranked-list sort + select all/deselect all ----
