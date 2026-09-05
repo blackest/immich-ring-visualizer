@@ -257,20 +257,56 @@ def build_playback_ng(job_id):
     import subprocess
     import shutil as _shutil
     ffmpeg_bin = _shutil.which("ffmpeg")
+    ffprobe_bin = _shutil.which("ffprobe")
+
     if ffmpeg_bin:
+        # The reassembled clip above is video-only (cv2.VideoWriter has no
+        # audio concept), so the original clip's audio track has to be
+        # muxed back in here -- otherwise "pop out playback" is silent
+        # even though the source video has sound. Write the original bytes
+        # to a temp file so ffmpeg can pull the audio stream from it.
+        orig_path = os.path.join(FRAME_STORE, f"{job_id}_playback_orig.mp4")
+        with open(orig_path, "wb") as f:
+            f.write(video_bytes)
+
+        has_audio = False
+        if ffprobe_bin:
+            try:
+                probe = subprocess.run(
+                    [ffprobe_bin, "-v", "error", "-select_streams", "a",
+                     "-show_entries", "stream=index", "-of", "csv=p=0", orig_path],
+                    capture_output=True, text=True, timeout=15,
+                )
+                has_audio = bool(probe.stdout.strip())
+            except Exception:
+                has_audio = False
+
         try:
-            subprocess.run(
-                [ffmpeg_bin, "-y", "-i", raw_path,
-                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                 "-movflags", "+faststart", out_path],
-                check=True, capture_output=True
-            )
+            if has_audio:
+                subprocess.run(
+                    [ffmpeg_bin, "-y", "-i", raw_path, "-i", orig_path,
+                     "-map", "0:v:0", "-map", "1:a:0",
+                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                     "-c:a", "aac", "-shortest",
+                     "-movflags", "+faststart", out_path],
+                    check=True, capture_output=True
+                )
+            else:
+                subprocess.run(
+                    [ffmpeg_bin, "-y", "-i", raw_path,
+                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                     "-movflags", "+faststart", out_path],
+                    check=True, capture_output=True
+                )
             os.remove(raw_path)
         except subprocess.CalledProcessError as e:
             job["playbackPath"] = raw_path
             return jsonify({
                 "error": f"ffmpeg transcode failed: {e.stderr.decode(errors='ignore')[-400:]}"
             }), 500
+        finally:
+            if os.path.exists(orig_path):
+                os.remove(orig_path)
     else:
         out_path = raw_path
 

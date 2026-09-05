@@ -134,6 +134,7 @@
   const stopBtn = document.getElementById("ng-btn-stop-frames");
   const nextFrameBtn = document.getElementById("ng-btn-next-frame");
   const startAnalysisBtn = document.getElementById("ng-btn-start-analysis");
+  const popoutVideoBtn = document.getElementById("ng-btn-popout-video");
 
   // ---- DOM refs: playback modal (pop-out, rejected frames blanked) ----
   const playbackModalEl = document.getElementById("ng-playback-modal");
@@ -688,7 +689,7 @@
           return;
         }
         this.playback = { url: data.url, fps: data.fps || 24, jobId: this.job.jobId };
-        if (this.isActive) PlaybackModal.open(this);
+        if (this.isActive) PlaybackModal.openBuild(this);
       } catch (e) {
         alert("Could not build playback: " + e.message);
       } finally {
@@ -1574,7 +1575,7 @@
             ? "Reopen playback"
             : "Pop out playback (rejected frames blanked)";
         btn.addEventListener("click", () => {
-          if (project.playback) PlaybackModal.open(project);
+          if (project.playback) PlaybackModal.openBuild(project);
           else project.buildPlayback();
         });
         analysisStatusEl.appendChild(btn);
@@ -1712,21 +1713,50 @@
         videoAudioEl.load();
       }
 
+      // objectUrl doesn't survive a page reload (blob URLs die with the
+      // page), so after a reload there's nothing left to pop out until
+      // the video is re-picked -- same constraint the audio-synced
+      // scrubber above already lives with.
+      popoutVideoBtn.disabled = !project.video.objectUrl;
+      popoutVideoBtn.title = project.video.objectUrl
+        ? "Pop out the source video, with audio, before any analysis is run"
+        : "Video needs to be re-loaded after a page reload before it can be popped out";
+
       frameCounterEl.textContent = "Frame: " + project.video.currentFrame + " / " + project.video.totalFrames;
       drawFrame(project, project.video.currentFrame);
     },
   };
 
-  // ---- Playback modal: shows the rejected-frames-blanked reassembly for
-  // whichever project's playback was most recently built. Closes itself
-  // if that project stops being the active tab, so it can never end up
-  // showing one project's clip while another tab is selected. ----
+  // ---- Playback modal: pops out either the untouched source video
+  // (opened straight from the objectUrl, before any analysis has run) or
+  // the rejected-frames-blanked reassembly built after analysis. Both use
+  // a single real <video> element with its own native audio track, so
+  // unlike the main frame-by-frame scrubber (canvas + a separate shared
+  // <audio>), no manual audio sync is needed here in either mode.
+  // Closes itself if that project stops being the active tab, so it can
+  // never end up showing one project's clip while another tab is
+  // selected. ----
   const PlaybackModal = {
     projectId: null,
+    kind: null, // "raw" | "reconstructed"
 
     open(project) {
+      if (!project.video || !project.video.objectUrl) return;
+      // A raw pop-out and the main frame-scrubber would otherwise both be
+      // playing the same clip's audio at once -- stop the scrubber first.
+      project.stopPlayIfRunning();
+      if (project.isActive) setPlayingVisual(false);
+      this.projectId = project.id;
+      this.kind = "raw";
+      playbackModalTitleEl.textContent = `${project.name} — source video`;
+      playbackVideoEl.src = project.video.objectUrl;
+      playbackModalEl.style.display = "flex";
+    },
+
+    openBuild(project) {
       if (!project.playback) return;
       this.projectId = project.id;
+      this.kind = "reconstructed";
       playbackModalTitleEl.textContent = `${project.name} — playback (rejected frames blanked)`;
       playbackVideoEl.src = project.playback.url;
       playbackModalEl.style.display = "flex";
@@ -1734,6 +1764,7 @@
 
     close() {
       this.projectId = null;
+      this.kind = null;
       playbackModalEl.style.display = "none";
       playbackVideoEl.pause();
       playbackVideoEl.removeAttribute("src");
@@ -1743,7 +1774,9 @@
     stepFrame(delta) {
       if (playbackModalEl.style.display === "none") return;
       const project = ProjectManager.projects.find((p) => p.id === this.projectId);
-      const fps = (project && project.playback && project.playback.fps) || 24;
+      const fps = this.kind === "raw"
+        ? ((project && project.video && project.video.fps) || 24)
+        : ((project && project.playback && project.playback.fps) || 24);
       playbackVideoEl.pause();
       const step = delta / fps;
       playbackVideoEl.currentTime = Math.max(0, Math.min(playbackVideoEl.duration || Infinity, playbackVideoEl.currentTime + step));
@@ -2252,6 +2285,10 @@
   stopBtn.addEventListener("click", () => {
     const active = ProjectManager.getActive();
     if (active && active.video && active._playTimer) active.togglePlay();
+  });
+  popoutVideoBtn.addEventListener("click", () => {
+    const active = ProjectManager.getActive();
+    if (active && active.video) PlaybackModal.open(active);
   });
 
   // ---- wiring: playback modal ----
