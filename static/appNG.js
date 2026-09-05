@@ -18,8 +18,11 @@
 // vertical% sort. Deliberately NOT ported yet (left as stubs elsewhere in
 // indexNG.html): fisheye lens hover-zoom, the yaw/pitch/roll ring-sort ->
 // pose-list-view mode, sharpness-cutoff squeeze, Search, Immich/Folder-Zip
-// ingest, Person Clusters, Pose/Shot-Scale pickers, Export Settings +
-// selection modal/export pipeline, character-sheet generation.
+// ingest, Person Clusters, Pose/Shot-Scale pickers, character-sheet
+// generation. Export Settings (crop/resize/margin/upscale-cap params,
+// wired into export-job + the new Immich-asset export) is now ported --
+// see gatherExportParamsNG/wireExportSettingsNG below and
+// routes/exportNG.py.
 //
 // The left rail's markup (in templates/indexNG.html) is a wholesale port
 // of the original app's #left-panel, trimmed section by section as NG
@@ -79,6 +82,114 @@
   // to a sensible starting point for that metric's scale, unless the
   // person has already dragged the slider themselves this session.
   const SQUEEZE_DEFAULTS = { sim: 65, yaw: 20, pitch: 20, roll: 20, blur: 65 };
+
+  // ---- Export Settings: read the panel into a params object matching
+  // image_opsNG.py's _export_params_from_body_ng. Ported from
+  // selection-ui.js's getExportParams(). ----
+  function gatherExportParamsNG() {
+    const upscaleOn = document.getElementById("ng-export-upscale").checked;
+    return {
+      width: parseInt(document.getElementById("ng-export-width").value, 10) || 512,
+      height: parseInt(document.getElementById("ng-export-height").value, 10) || 512,
+      cropMode: document.getElementById("ng-export-crop-mode").value,
+      minFacePx: parseFloat(document.getElementById("ng-export-min-face").value) || 0,
+      margin: parseFloat(document.getElementById("ng-export-margin").value) || 2.2,
+      interp: document.getElementById("ng-export-interp").value,
+      upscale: upscaleOn,
+      maxUpscale: upscaleOn ? (parseFloat(document.getElementById("ng-export-max-upscale").value) || null) : null,
+      padMode: upscaleOn ? document.getElementById("ng-export-pad-mode").value : "none",
+      native: document.getElementById("ng-export-native").checked,
+    };
+  }
+
+  // Show/hide the margin/cap/clip rows depending on crop mode + upscale,
+  // wire size presets, and keep the "Match source" resolution note in
+  // sync. Ported from selection-ui.js's export-settings IIFE +
+  // media-ingest.js's applyResolutionSummary/wireMatchSourceResBtn.
+  let lastResolutionSummaryNG = null;
+  function applyResolutionSummaryNG(summary) {
+    if (summary !== undefined) lastResolutionSummaryNG = summary;
+    summary = lastResolutionSummaryNG;
+    const note = document.getElementById("ng-export-source-res-note");
+    const matchBtn = document.getElementById("ng-export-match-source-btn");
+    if (!note || !matchBtn) return;
+    if (!summary) {
+      note.style.display = "none";
+      matchBtn.style.display = "none";
+      return;
+    }
+    const nativeOn = document.getElementById("ng-export-native").checked;
+    const exportW = parseInt(document.getElementById("ng-export-width").value, 10);
+    const exportH = parseInt(document.getElementById("ng-export-height").value, 10);
+    const downsampling = !nativeOn && (summary.modeWidth > exportW || summary.modeHeight > exportH);
+
+    let text;
+    if (summary.uniform) {
+      text = `Source: all ${summary.totalCount} images are ${summary.modeWidth}\u00d7${summary.modeHeight}`;
+    } else {
+      text = `Source: mostly ${summary.modeWidth}\u00d7${summary.modeHeight} (${summary.modeCount}/${summary.totalCount}), range ${summary.minWidth}\u2013${summary.maxWidth} \u00d7 ${summary.minHeight}\u2013${summary.maxHeight}`;
+    }
+    if (downsampling) {
+      text += ` \u2014 <span style="color:#e0a94a;">exporting at ${exportW}\u00d7${exportH} throws away resolution \u2014 tick "native resolution" below to keep it</span>`;
+    } else if (nativeOn) {
+      text += ` \u2014 native resolution export is on, source pixels are kept`;
+    }
+    note.innerHTML = text;
+    note.style.display = "block";
+    matchBtn.style.display = (!nativeOn && (downsampling || exportW !== summary.modeWidth || exportH !== summary.modeHeight)) ? "inline-block" : "none";
+    matchBtn.dataset.w = summary.modeWidth;
+    matchBtn.dataset.h = summary.modeHeight;
+  }
+
+  function wireExportSettingsNG() {
+    const cropModeSel = document.getElementById("ng-export-crop-mode");
+    const marginRow = document.getElementById("ng-export-margin-row");
+    const maxUpscaleRow = document.getElementById("ng-export-max-upscale-row");
+    const padRow = document.getElementById("ng-export-pad-row");
+    const upscaleCb = document.getElementById("ng-export-upscale");
+    function syncRows() {
+      const isFace = cropModeSel.value === "face";
+      const showCap = isFace && upscaleCb.checked;
+      marginRow.style.display = isFace ? "flex" : "none";
+      maxUpscaleRow.style.display = showCap ? "flex" : "none";
+      padRow.style.display = showCap ? "flex" : "none";
+    }
+    cropModeSel.addEventListener("change", syncRows);
+    upscaleCb.addEventListener("change", syncRows);
+    syncRows();
+
+    document.querySelectorAll(".ng-export-preset-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.getElementById("ng-export-width").value = btn.dataset.w;
+        document.getElementById("ng-export-height").value = btn.dataset.h;
+        applyResolutionSummaryNG();
+      });
+    });
+
+    const nativeCb = document.getElementById("ng-export-native");
+    const widthInput = document.getElementById("ng-export-width");
+    const heightInput = document.getElementById("ng-export-height");
+    function syncNativeState() {
+      const on = nativeCb.checked;
+      // native mode still uses width/height as an aspect ratio for face/center
+      // crop modes, so keep them enabled but dim them to signal the meaning
+      // shifted from 'exact output size' to 'output aspect ratio'.
+      [widthInput, heightInput].forEach((el) => { el.style.opacity = on ? "0.55" : "1"; });
+      document.querySelectorAll(".ng-export-preset-btn").forEach((btn) => { btn.style.opacity = on ? "0.4" : "1"; });
+    }
+    nativeCb.addEventListener("change", () => { syncNativeState(); applyResolutionSummaryNG(); });
+    syncNativeState();
+
+    const matchBtn = document.getElementById("ng-export-match-source-btn");
+    matchBtn.addEventListener("click", () => {
+      widthInput.value = matchBtn.dataset.w;
+      heightInput.value = matchBtn.dataset.h;
+      matchBtn.style.display = "none";
+    });
+
+    widthInput.addEventListener("input", () => applyResolutionSummaryNG());
+    heightInput.addEventListener("input", () => applyResolutionSummaryNG());
+  }
 
   // ---- DOM refs: top bar / tabs / bottom bar ----
   const tabsEl = document.getElementById("ng-tabs");
@@ -197,6 +308,9 @@
   const listBodyImmichEl = document.getElementById("ng-list-body-immich");
   const immichSelectAllBtn = document.getElementById("ng-immich-select-all");
   const immichDeselectAllBtn = document.getElementById("ng-immich-deselect-all");
+  const immichSaveSelectedBtn = document.getElementById("ng-immich-save-selected");
+  const immichExportResultEl = document.getElementById("ng-immich-export-result");
+
 
   // ---- DOM refs: Search section (Immich filename search) ----
   const immichSearchInput = document.getElementById("ng-immich-search-input");
@@ -621,6 +735,9 @@
         this.job.passed = data.results.filter((r) => r.passed).length;
         this.job.failedSim = data.results.filter((r) => !r.passed && r.failReason === "sim").length;
         this.job.failedBlur = data.results.filter((r) => !r.passed && r.failReason === "blur").length;
+        this.job.resolutionSummary = data.resolutionSummary;
+
+        if (this.isActive && this.job.resolutionSummary) applyResolutionSummaryNG(this.job.resolutionSummary);
 
         if (data.status === "running") {
           if (this.isActive) ProjectManager.renderLeftRail();
@@ -664,7 +781,10 @@
     // ---- Save kept / Save selected frames to disk ----
     async exportFrames(onlySelected) {
       if (!this.job || !this.job.jobId) return null;
-      const body = onlySelected ? { frames: Array.from(this.selectedFrames) } : {};
+      const body = Object.assign(
+        gatherExportParamsNG(),
+        onlySelected ? { frames: Array.from(this.selectedFrames) } : {},
+      );
       const res = await fetch(`/api/ng/export-job/${this.job.jobId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -672,6 +792,23 @@
       });
       return res.json();
     }
+
+    // ---- Save selected Immich assets to disk (no analysis job involved --
+    // exports straight from the Immich originals using the Export Settings
+    // panel's crop/resize params). Ported from routes/export.py's
+    // /api/export-immich-assets via routes/exportNG.py. ----
+    async exportSelectedImmichAssets() {
+      const assetIds = Array.from(this.selectedAssetIds);
+      if (!assetIds.length) return null;
+      const body = Object.assign(gatherExportParamsNG(), { assetIds });
+      const res = await fetch(`/api/ng/export-immich-assets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return res.json();
+    }
+
 
     // ---- playback: reassemble the clip with rejected frames blanked out,
     // popped out in a modal so it's not fighting the ring for rail space.
@@ -969,6 +1106,8 @@
       this.renderBottomBar();
       this.renderLeftRail();
       this.renderMain();
+      const active = this.getActive();
+      applyResolutionSummaryNG(active && active.job ? active.job.resolutionSummary : null);
       this.saveState();
     },
 
@@ -1387,6 +1526,10 @@
 
       immichSectionEl.style.display = kept.length ? "" : "none";
       immichSectionCountEl.textContent = kept.length ? `(${kept.length})` : "";
+
+      const n = project.selectedAssetIds.size;
+      immichSaveSelectedBtn.textContent = `Save ${n} selected to disk`;
+      immichSaveSelectedBtn.disabled = n === 0;
     },
 
     // ---- Left rail: ported sidebar, shown whenever a project is active ----
@@ -2269,6 +2412,24 @@
     ProjectManager.saveState();
   });
 
+  immichSaveSelectedBtn.addEventListener("click", async () => {
+    const active = ProjectManager.getActive();
+    if (!active || !active.selectedAssetIds.size) return;
+    const prevText = immichSaveSelectedBtn.textContent;
+    immichSaveSelectedBtn.textContent = "Saving\u2026";
+    immichSaveSelectedBtn.disabled = true;
+    try {
+      const result = await active.exportSelectedImmichAssets();
+      immichExportResultEl.textContent = result.error
+        ? `Error: ${result.error}`
+        : `Saved ${result.exported} images \u2192 ${result.path}`;
+    } catch (e) {
+      immichExportResultEl.textContent = `Error: ${e.message}`;
+    }
+    immichSaveSelectedBtn.textContent = prevText;
+    immichSaveSelectedBtn.disabled = active.selectedAssetIds.size === 0;
+  });
+
   // ---- wiring: Immich filename search (debounced, mirrors the original
   // app's wireSearchInputAndNeighbors) ----
   let immichSearchDebounce = null;
@@ -2438,6 +2599,7 @@
   loadProjectBtn.disabled = true; // stays disabled until the persistence layer exists
 
   wireLeftRailChrome();
+  wireExportSettingsNG();
   ProjectManager.loadState();
   ProjectManager.render();
 

@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 from flask import Blueprint, request, jsonify, Response, send_file
 
-from configNG import EXPORT_DIR, FRAME_STORE
+from configNG import FRAME_STORE
 from stateNG import _analysis_jobs_ng, _preview_jobs_ng
 from video_analysisNG import MemoryVideo, run_video_analysis_ng, find_cache_frame_ng
 
@@ -149,62 +149,12 @@ def frame_file_ng(frame_id):
     return Response(img_bytes, mimetype=mimetype)
 
 
-@videoNG_bp.route("/api/ng/export-job/<job_id>", methods=["POST"])
-def export_job_ng(job_id):
-    """Save kept (or a selected subset of) frames to disk as plain PNGs --
-    no crop/resize/margin handling yet, since the Export Settings panel
-    section is still a stub (see APP_ARCHITECTURE_NOTES.md). Exports the
-    true original bytes where available (video frame or folder source
-    image) rather than the analysis-time JPEG cache, same principle as
-    the current app's /api/export-job."""
-    job = _analysis_jobs_ng.get(job_id)
-    if not job:
-        return jsonify({"error": "unknown job"}), 404
-
-    source_name = job.get("sourceName", job_id)
-    dest_dir = os.path.join(EXPORT_DIR, source_name)
-    os.makedirs(dest_dir, exist_ok=True)
-
-    body = request.get_json(silent=True) or {}
-    selected_frames = body.get("frames")
-    selected_set = set(selected_frames) if "frames" in body else None
-
-    mv = None
-    saved = []
-    for r in job.get("results", []):
-        if not (r.get("passed") and r.get("frameId")):
-            continue
-        if selected_set is not None and r["frame"] not in selected_set:
-            continue
-
-        img = None
-        if job.get("videoBytes"):
-            if mv is None:
-                mv = MemoryVideo(job["videoBytes"])
-            img = mv.seek_frame(r["frame"])
-        elif job.get("srcImages") and r.get("origName"):
-            raw_bytes = job["srcImages"].get(r["origName"])
-            if raw_bytes is not None:
-                img = cv2.imdecode(np.frombuffer(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-
-        if img is None:
-            cache_bytes, _mimetype = find_cache_frame_ng(r["frameId"])
-            if cache_bytes is None:
-                continue
-            img = cv2.imdecode(np.frombuffer(cache_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-            if img is None:
-                continue
-
-        dest_name = f"fr{r['frame']:05d}_sim{r['sim']:.2f}.png"
-        dest_path = os.path.join(dest_dir, dest_name)
-        cv2.imwrite(dest_path, img)
-        saved.append(dest_name)
-
-    return jsonify({
-        "exported": len(saved),
-        "path": dest_dir,
-        "files": saved,
-    })
+# NOTE: /api/ng/export-job used to live here as a stub (plain-PNG export,
+# no crop/resize/margin handling) while the Export Settings panel was
+# unported. Now that the panel is wired up, the full crop/resize-aware
+# implementation lives in routes/exportNG.py alongside the other Export
+# Settings-driven endpoints (export-immich-assets, export-preview,
+# export-preview-immich). See APP_ARCHITECTURE_NOTES.md.
 
 
 @videoNG_bp.route("/api/ng/build-playback/<job_id>", methods=["POST"])

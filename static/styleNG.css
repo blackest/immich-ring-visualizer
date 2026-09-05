@@ -1160,3 +1160,77 @@ html, body {
 .ng-playback-modal-controls .ng-btn {
   flex: 1;
 }
+
+/* ---- Export Settings panel section ---- */
+.ng-export-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+.ng-export-note {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  padding: 5px 6px;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  border-radius: 5px;
+  line-height: 1.4;
+}
+.ng-export-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ng-export-label {
+  width: 56px;
+  flex-shrink: 0;
+  color: var(--ng-text-dim);
+}
+.ng-export-num {
+  width: 70px;
+  flex: 0 0 auto;
+}
+.ng-export-select {
+  flex: 1;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text);
+  padding: 4px;
+  border-radius: 4px;
+}
+.ng-export-unit {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+}
+.ng-export-presets {
+  display: flex;
+  gap: 3px;
+  margin-left: 4px;
+}
+.ng-export-preset-btn {
+  font-size: 9px;
+  padding: 3px 5px;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text-dim);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ng-export-preset-btn:hover { border-color: var(--ng-accent); color: var(--ng-text); }
+.ng-export-match-btn {
+  display: none;
+  font-size: 9px;
+  padding: 3px 5px;
+  background: rgba(124, 196, 255, 0.08);
+  border: 1px solid rgba(124, 196, 255, 0.35);
+  color: var(--ng-accent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* ---- Immich matches: save-selected-to-disk row ---- */
+.ng-immich-export-row {
+  margin-top: 6px;
+}
+.ng-immich-export-row .ng-btn:disabled { opacity: 0.5; }
