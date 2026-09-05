@@ -15,10 +15,10 @@
 // ranked-matches list, similarity-band ring layout, hover preview,
 // dblclick export-selection with checkboxes + select all/deselect all,
 // Anchor's Ring Scale + Min-sim squeeze, ranked-list sim/sharpness/
-// vertical% sort. Deliberately NOT ported yet (left as stubs elsewhere in
-// indexNG.html): fisheye lens hover-zoom, the yaw/pitch/roll ring-sort ->
-// pose-list-view mode, sharpness-cutoff squeeze, Search, Immich/Folder-Zip
-// ingest, Person Clusters, Pose/Shot-Scale pickers, character-sheet
+// vertical% sort, fisheye lens hover-zoom, the yaw/pitch/roll ring-sort ->
+// pose-list-view mode (plus its own dock-style lens/magnify effect),
+// random-face. Deliberately NOT ported yet (left as stubs elsewhere in
+// indexNG.html): sharpness-cutoff squeeze, pose-scatter view, character-sheet
 // generation. Export Settings (crop/resize/margin/upscale-cap params,
 // wired into export-job + the new Immich-asset export) is now ported --
 // see gatherExportParamsNG/wireExportSettingsNG below and
@@ -419,6 +419,7 @@
   const hudModeEl = document.getElementById("ng-hud-mode");
   const hudFilenameEl = document.getElementById("ng-hud-filename");
   const sidebarEl = document.getElementById("ng-sidebar");
+  const toggleListBtn = document.getElementById("ng-toggle-list-btn");
   const sidebarCurrentImgEl = document.getElementById("ng-sidebar-current-img");
   const sidebarCurrentFnameEl = document.getElementById("ng-sidebar-current-fname");
   const sidebarCurrentModeEl = document.getElementById("ng-sidebar-current-mode");
@@ -1561,6 +1562,8 @@
       center.style.width = CENTER_SIZE + "px";
       center.style.height = CENTER_SIZE + "px";
       center.style.transform = "translate(-50%, -50%)";
+      center.dataset.baseX = 0;
+      center.dataset.baseY = 0;
       center.innerHTML = `<img src="${ring.anchorUrl}">`;
       center.addEventListener("mouseenter", () => showHoverPreview({ filename: "Reference (anchor)", thumbUrl: ring.anchorUrl, similarity: 1 }));
       center.addEventListener("mouseleave", hideHoverPreview);
@@ -1593,6 +1596,8 @@
           node.style.left = `calc(50% + ${x}px)`;
           node.style.top = `calc(50% + ${y}px)`;
           node.style.transform = "translate(-50%, -50%)";
+          node.dataset.baseX = x;
+          node.dataset.baseY = y;
           node.title = `${r.filename} — ${(r.similarity * 100).toFixed(1)}%`;
           node.innerHTML = `<img src="${thumbUrlFor(r)}">`;
 
@@ -1714,6 +1719,8 @@
       center.style.width = CENTER_SIZE + "px";
       center.style.height = CENTER_SIZE + "px";
       center.style.transform = "translate(-50%, -50%)";
+      center.dataset.baseX = 0;
+      center.dataset.baseY = 0;
       center.innerHTML = `<img src="${anchorUrl}">`;
       center.addEventListener("mouseenter", () => showHoverPreview({ filename: ring.centerFilename + " (centered)", thumbUrl: anchorUrl, similarity: 1 }));
       center.addEventListener("mouseleave", hideHoverPreview);
@@ -1746,6 +1753,8 @@
           node.style.left = `calc(50% + ${x}px)`;
           node.style.top = `calc(50% + ${y}px)`;
           node.style.transform = "translate(-50%, -50%)";
+          node.dataset.baseX = x;
+          node.dataset.baseY = y;
           node.title = `${r.filename} — ${(r.similarity * 100).toFixed(1)}% (click to recenter, dblclick to select)`;
           node.innerHTML = `<img src="${thumbUrlFor(r)}">`;
 
@@ -3359,6 +3368,142 @@
     });
   }
 
+  // ---- right sidebar: "Hide"/"Show" toggle for the ranked-matches list,
+  // ported from selection-ui.js's wireMiscBlock2() -- collapses the sort
+  // row + both list sections (frames/immich, split apart in NG unlike the
+  // original's single #list-body) so the "Currently selected" preview at
+  // the top gets the full sidebar height. ----
+  function wireRightSidebarListToggle() {
+    if (!sidebarEl || !toggleListBtn) return;
+
+    function applyHidden(hidden) {
+      sidebarEl.classList.toggle("ng-list-hidden", hidden);
+      toggleListBtn.textContent = hidden ? "Show" : "Hide";
+      toggleListBtn.title = hidden ? "Show ranked match list" : "Hide ranked match list";
+    }
+
+    applyHidden(localStorage.getItem("immichRingNG:listHidden") === "1");
+    toggleListBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const hidden = !sidebarEl.classList.contains("ng-list-hidden");
+      applyHidden(hidden);
+      localStorage.setItem("immichRingNG:listHidden", hidden ? "1" : "0");
+    });
+  }
+
+  // ---- ring fisheye hover-zoom, ported from viz-render.js's
+  // applyFisheye()/wireFisheyeLensMouseMove() -- unchanged constants,
+  // just re-targeted at #ng-stage/.ng-node instead of #stage/.node. ----
+  const NG_FISHEYE_RADIUS = 160;
+  const NG_FISHEYE_MAX_SCALE = 2.0;
+  const NG_FISHEYE_MAX_PUSH = 46;
+  let ngFisheyeRafPending = false;
+  let ngFisheyeLastMouse = null;
+  function applyNgFisheye(mx, my) {
+    const rect = stageEl.getBoundingClientRect();
+    const localX = mx - rect.left;
+    const localY = my - rect.top;
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+
+    stageEl.querySelectorAll(".ng-node").forEach((node) => {
+      const baseX = parseFloat(node.dataset.baseX || 0);
+      const baseY = parseFloat(node.dataset.baseY || 0);
+      const nodeScreenX = centerX + baseX;
+      const nodeScreenY = centerY + baseY;
+
+      const dx = nodeScreenX - localX;
+      const dy = nodeScreenY - localY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < NG_FISHEYE_RADIUS) {
+        const t = 1 - dist / NG_FISHEYE_RADIUS;
+        const eased = t * t * (3 - 2 * t);
+        const scale = 1 + eased * (NG_FISHEYE_MAX_SCALE - 1);
+        const push = eased * NG_FISHEYE_MAX_PUSH;
+
+        const angle = Math.atan2(baseY, baseX);
+        const pushX = baseX === 0 && baseY === 0 ? 0 : Math.cos(angle) * push;
+        const pushY = baseX === 0 && baseY === 0 ? 0 : Math.sin(angle) * push;
+        node.style.transform = `translate(-50%, -50%) translate(${pushX}px, ${pushY}px) scale(${scale})`;
+        node.style.zIndex = Math.round(10 + eased * 50);
+      } else {
+        node.style.transform = "translate(-50%, -50%)";
+        node.style.zIndex = 1;
+      }
+    });
+    ngFisheyeRafPending = false;
+  }
+  function wireNgFisheyeLensMouseMove() {
+    stageEl.addEventListener("mousemove", (e) => {
+      ngFisheyeLastMouse = [e.clientX, e.clientY];
+      if (!ngFisheyeRafPending) {
+        ngFisheyeRafPending = true;
+        requestAnimationFrame(() => applyNgFisheye(...ngFisheyeLastMouse));
+      }
+    });
+    stageEl.addEventListener("mouseleave", () => {
+      stageEl.querySelectorAll(".ng-node").forEach((node) => {
+        node.style.transform = "translate(-50%, -50%)";
+        node.style.zIndex = 1;
+      });
+    });
+  }
+
+  // ---- generic dock-style lens/magnify effect, ported from
+  // viz-render.js's attachLensEffect() -- reused for the pose-list-view
+  // strip below (unlike the ring's applyNgFisheye, this one re-measures
+  // each item's own bounding rect on every move rather than working off
+  // dataset base-position offsets, since list items scroll horizontally
+  // instead of sitting at fixed polar coordinates). ----
+  function attachNgLensEffect(container, itemSelector, { radius = 140, maxScale = 1.6 } = {}) {
+    let rafPending = false;
+    let lastMouse = null;
+
+    function apply(mx, my) {
+      const items = container.querySelectorAll(itemSelector);
+      items.forEach((item) => {
+        const rect = item.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dist = Math.hypot(mx - cx, my - cy);
+        const base = item.dataset.baseTransform || "";
+        if (dist < radius) {
+          const t = 1 - dist / radius;
+          const eased = t * t * (3 - 2 * t);
+          const scale = 1 + eased * (maxScale - 1);
+          item.style.transform = `${base} scale(${scale})`;
+          item.style.zIndex = Math.round(10 + eased * 50);
+        } else {
+          item.style.transform = base;
+          item.style.zIndex = item.dataset.baseZ || 1;
+        }
+      });
+      rafPending = false;
+    }
+
+    container.addEventListener("mousemove", (e) => {
+      lastMouse = [e.clientX, e.clientY];
+      if (!rafPending) {
+        rafPending = true;
+        requestAnimationFrame(() => apply(...lastMouse));
+      }
+    });
+    container.addEventListener("mouseleave", () => {
+      container.querySelectorAll(itemSelector).forEach((item) => {
+        item.style.transform = item.dataset.baseTransform || "";
+        item.style.zIndex = item.dataset.baseZ || 1;
+      });
+    });
+  }
+  const NG_POSE_LENS_RADIUS = 140;
+  const NG_POSE_LENS_MAX_SCALE = 1.6;
+  function wireNgPoseListLensEffect() {
+    if (poseListViewEl) {
+      attachNgLensEffect(poseListViewEl, ".ng-pose-list-item", { radius: NG_POSE_LENS_RADIUS, maxScale: NG_POSE_LENS_MAX_SCALE });
+    }
+  }
+
   newProjectBtn.addEventListener("click", () => ProjectManager.createProject());
   taskButtons.forEach((btn) => {
     btn.addEventListener("click", () => ProjectManager.setTask(btn.dataset.task));
@@ -3366,6 +3511,9 @@
   loadProjectBtn.disabled = true; // stays disabled until the persistence layer exists
 
   wireLeftRailChrome();
+  wireRightSidebarListToggle();
+  wireNgFisheyeLensMouseMove();
+  wireNgPoseListLensEffect();
   wireExportSettingsNG();
   wirePersonClustersNG();
   wirePosePickerControlsNG();

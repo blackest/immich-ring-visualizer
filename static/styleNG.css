@@ -734,6 +734,31 @@ html, body {
   top: 0;
   background: #0e0e12;
   z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#ng-toggle-list-btn {
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text-dim);
+  border-radius: 5px;
+  padding: 3px 7px;
+  cursor: pointer;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  flex-shrink: 0;
+}
+#ng-toggle-list-btn:hover {
+  color: var(--ng-accent);
+  border-color: var(--ng-accent);
+}
+#ng-sidebar.ng-list-hidden #ng-ranked-sort-row,
+#ng-sidebar.ng-list-hidden #ng-frames-section,
+#ng-sidebar.ng-list-hidden #ng-immich-section {
+  display: none !important;
 }
 
 #ng-ranked-sort-row {
