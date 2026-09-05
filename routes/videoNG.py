@@ -230,6 +230,16 @@ def build_playback_ng(job_id):
     fps = mv.fps or 24.0
     width, height = mv.width, mv.height
 
+    # Trim to the analyzed range (same startSec/endSec -> frame conversion
+    # run_video_analysis_ng uses) rather than walking the whole source --
+    # otherwise a 1-12s analysis on a 2:10 video reassembles the full
+    # 2:10 clip with everything after 12s blanked out instead of just
+    # handing back the 1-12s clip.
+    start_sec = job.get("startSec")
+    end_sec = job.get("endSec")
+    start_frame = int(start_sec * fps) + 1 if start_sec else None
+    end_frame = int(end_sec * fps) + 1 if end_sec else None
+
     raw_path = os.path.join(FRAME_STORE, f"{job_id}_playback_raw.mp4")
     out_path = os.path.join(FRAME_STORE, f"{job_id}_playback.mp4")
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -237,7 +247,7 @@ def build_playback_ng(job_id):
 
     blank = np.zeros((height, width, 3), dtype=np.uint8)
 
-    for frame_idx, frame in mv.iter_frames():
+    for frame_idx, frame in mv.iter_frames(start_frame=start_frame, end_frame=end_frame):
         r = by_frame.get(frame_idx)
 
         if r and r.get("passed"):

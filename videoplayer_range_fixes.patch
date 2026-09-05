@@ -1,0 +1,101 @@
+diff --git a/routes/videoNG.py b/routes/videoNG.py
+index d6e7ed7..d63067c 100644
+--- a/routes/videoNG.py
++++ b/routes/videoNG.py
+@@ -230,6 +230,16 @@ def build_playback_ng(job_id):
+     fps = mv.fps or 24.0
+     width, height = mv.width, mv.height
+ 
++    # Trim to the analyzed range (same startSec/endSec -> frame conversion
++    # run_video_analysis_ng uses) rather than walking the whole source --
++    # otherwise a 1-12s analysis on a 2:10 video reassembles the full
++    # 2:10 clip with everything after 12s blanked out instead of just
++    # handing back the 1-12s clip.
++    start_sec = job.get("startSec")
++    end_sec = job.get("endSec")
++    start_frame = int(start_sec * fps) + 1 if start_sec else None
++    end_frame = int(end_sec * fps) + 1 if end_sec else None
++
+     raw_path = os.path.join(FRAME_STORE, f"{job_id}_playback_raw.mp4")
+     out_path = os.path.join(FRAME_STORE, f"{job_id}_playback.mp4")
+     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+@@ -237,7 +247,7 @@ def build_playback_ng(job_id):
+ 
+     blank = np.zeros((height, width, 3), dtype=np.uint8)
+ 
+-    for frame_idx, frame in mv.iter_frames():
++    for frame_idx, frame in mv.iter_frames(start_frame=start_frame, end_frame=end_frame):
+         r = by_frame.get(frame_idx)
+ 
+         if r and r.get("passed"):
+diff --git a/static/appNG.js b/static/appNG.js
+index 8e8b2f8..bdbf308 100644
+--- a/static/appNG.js
++++ b/static/appNG.js
+@@ -1739,6 +1739,8 @@
+   const PlaybackModal = {
+     projectId: null,
+     kind: null, // "raw" | "reconstructed"
++    rangeStartSec: null,
++    rangeEndSec: null,
+ 
+     open(project) {
+       if (!project.video || !project.video.objectUrl) return;
+@@ -1748,7 +1750,16 @@
+       if (project.isActive) setPlayingVisual(false);
+       this.projectId = project.id;
+       this.kind = "raw";
+-      playbackModalTitleEl.textContent = `${project.name} — source video`;
++      // Reuse the Analysis Settings start/end-sec range (if the user set
++      // one) to bound the raw pop-out too -- previously this only ever
++      // affected the /api/ng/analyze-video call, so there was no way to
++      // preview e.g. just 19-25s without running a full analysis pass
++      // first. loadedmetadata/timeupdate listeners below do the seeking.
++      this.rangeStartSec = project.video.rangeStartSec != null ? project.video.rangeStartSec : null;
++      this.rangeEndSec = project.video.rangeEndSec != null ? project.video.rangeEndSec : null;
++      playbackModalTitleEl.textContent = this.rangeStartSec != null || this.rangeEndSec != null
++        ? `${project.name} — source video (${this.rangeStartSec ?? 0}s–${this.rangeEndSec ?? "end"})`
++        : `${project.name} — source video`;
+       playbackVideoEl.src = project.video.objectUrl;
+       playbackModalEl.style.display = "flex";
+     },
+@@ -1757,6 +1768,8 @@
+       if (!project.playback) return;
+       this.projectId = project.id;
+       this.kind = "reconstructed";
++      this.rangeStartSec = null;
++      this.rangeEndSec = null;
+       playbackModalTitleEl.textContent = `${project.name} — playback (rejected frames blanked)`;
+       playbackVideoEl.src = project.playback.url;
+       playbackModalEl.style.display = "flex";
+@@ -1765,6 +1778,8 @@
+     close() {
+       this.projectId = null;
+       this.kind = null;
++      this.rangeStartSec = null;
++      this.rangeEndSec = null;
+       playbackModalEl.style.display = "none";
+       playbackVideoEl.pause();
+       playbackVideoEl.removeAttribute("src");
+@@ -2296,6 +2311,21 @@
+   playbackModalEl.querySelector(".ng-playback-modal-backdrop").addEventListener("click", () => PlaybackModal.close());
+   playbackPrevFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(-1));
+   playbackNextFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(1));
++  // Range-bounded raw preview: jump to rangeStartSec once the clip is
++  // seekable, and stop (rather than rolling on to the rest of the video)
++  // once rangeEndSec is reached.
++  playbackVideoEl.addEventListener("loadedmetadata", () => {
++    if (PlaybackModal.kind === "raw" && PlaybackModal.rangeStartSec != null) {
++      playbackVideoEl.currentTime = PlaybackModal.rangeStartSec;
++    }
++  });
++  playbackVideoEl.addEventListener("timeupdate", () => {
++    if (PlaybackModal.kind === "raw" && PlaybackModal.rangeEndSec != null
++        && playbackVideoEl.currentTime >= PlaybackModal.rangeEndSec) {
++      playbackVideoEl.pause();
++      playbackVideoEl.currentTime = PlaybackModal.rangeEndSec;
++    }
++  });
+ 
+   document.addEventListener("keydown", (e) => {
+     if (playbackModalEl.style.display !== "none") {

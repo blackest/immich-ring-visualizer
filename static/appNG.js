@@ -1739,6 +1739,8 @@
   const PlaybackModal = {
     projectId: null,
     kind: null, // "raw" | "reconstructed"
+    rangeStartSec: null,
+    rangeEndSec: null,
 
     open(project) {
       if (!project.video || !project.video.objectUrl) return;
@@ -1748,7 +1750,16 @@
       if (project.isActive) setPlayingVisual(false);
       this.projectId = project.id;
       this.kind = "raw";
-      playbackModalTitleEl.textContent = `${project.name} — source video`;
+      // Reuse the Analysis Settings start/end-sec range (if the user set
+      // one) to bound the raw pop-out too -- previously this only ever
+      // affected the /api/ng/analyze-video call, so there was no way to
+      // preview e.g. just 19-25s without running a full analysis pass
+      // first. loadedmetadata/timeupdate listeners below do the seeking.
+      this.rangeStartSec = project.video.rangeStartSec != null ? project.video.rangeStartSec : null;
+      this.rangeEndSec = project.video.rangeEndSec != null ? project.video.rangeEndSec : null;
+      playbackModalTitleEl.textContent = this.rangeStartSec != null || this.rangeEndSec != null
+        ? `${project.name} — source video (${this.rangeStartSec ?? 0}s–${this.rangeEndSec ?? "end"})`
+        : `${project.name} — source video`;
       playbackVideoEl.src = project.video.objectUrl;
       playbackModalEl.style.display = "flex";
     },
@@ -1757,6 +1768,8 @@
       if (!project.playback) return;
       this.projectId = project.id;
       this.kind = "reconstructed";
+      this.rangeStartSec = null;
+      this.rangeEndSec = null;
       playbackModalTitleEl.textContent = `${project.name} — playback (rejected frames blanked)`;
       playbackVideoEl.src = project.playback.url;
       playbackModalEl.style.display = "flex";
@@ -1765,6 +1778,8 @@
     close() {
       this.projectId = null;
       this.kind = null;
+      this.rangeStartSec = null;
+      this.rangeEndSec = null;
       playbackModalEl.style.display = "none";
       playbackVideoEl.pause();
       playbackVideoEl.removeAttribute("src");
@@ -2296,6 +2311,21 @@
   playbackModalEl.querySelector(".ng-playback-modal-backdrop").addEventListener("click", () => PlaybackModal.close());
   playbackPrevFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(-1));
   playbackNextFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(1));
+  // Range-bounded raw preview: jump to rangeStartSec once the clip is
+  // seekable, and stop (rather than rolling on to the rest of the video)
+  // once rangeEndSec is reached.
+  playbackVideoEl.addEventListener("loadedmetadata", () => {
+    if (PlaybackModal.kind === "raw" && PlaybackModal.rangeStartSec != null) {
+      playbackVideoEl.currentTime = PlaybackModal.rangeStartSec;
+    }
+  });
+  playbackVideoEl.addEventListener("timeupdate", () => {
+    if (PlaybackModal.kind === "raw" && PlaybackModal.rangeEndSec != null
+        && playbackVideoEl.currentTime >= PlaybackModal.rangeEndSec) {
+      playbackVideoEl.pause();
+      playbackVideoEl.currentTime = PlaybackModal.rangeEndSec;
+    }
+  });
 
   document.addEventListener("keydown", (e) => {
     if (playbackModalEl.style.display !== "none") {
