@@ -233,6 +233,9 @@
   const loadFolderBtn = document.getElementById("ng-btn-load-folder");
   const loadZipBtn = document.getElementById("ng-btn-load-zip");
   const folderRefIndexInput = document.getElementById("ng-folder-ref-index");
+  const analysisSectionTitleEl = document.getElementById("ng-analysis-section-title");
+  const folderRowEl = document.querySelector(".ng-folder-row");
+  const videoRangeRowEl = document.querySelector(".ng-video-range");
 
   // ---- DOM refs: Frame Preview section ----
   const previewHintEl = document.getElementById("ng-preview-hint");
@@ -1208,6 +1211,11 @@
           showPlaceholder("No analysis yet for “" + active.name + "” — load a video, pick a frame, and press Run Analysis.");
           return;
         }
+      } else if (active.task === "folderzip") {
+        if (!active.ring) {
+          showPlaceholder("No analysis yet for “" + active.name + "” — load a folder or .zip in the left rail to begin.");
+          return;
+        }
       } else if (active.task === "immich") {
         if (active.immichLoading && !active.immichRing) {
           showPlaceholder("Loading Immich neighbors…");
@@ -1222,7 +1230,7 @@
           return;
         }
       } else {
-        showPlaceholder("Folder / Zip ingest isn’t built yet.");
+        showPlaceholder("Pick Video, Immich, or Folder / Zip below to get started with “" + active.name + "”.");
         return;
       }
 
@@ -1242,7 +1250,10 @@
       const ring = project.ring;
       const anchorLabel = `Frame ${ring.refFrameIdx} (Anchor)`;
       const metricLabel = { sim: "Similarity", yaw: "Yaw", pitch: "Pitch", roll: "Roll", blur: "Sharpness" }[project.ringSortMetric];
-      hudModeEl.textContent = "VIDEO FRAME ANALYSIS (local, not in Immich)";
+      const modeLabel = ring.sourceType === "folder"
+        ? "FOLDER / IMAGE-SET ANALYSIS (local, not in Immich)"
+        : "VIDEO FRAME ANALYSIS (local, not in Immich)";
+      hudModeEl.textContent = modeLabel;
       hudFilenameEl.textContent = `${anchorLabel} · sorted by ${metricLabel}`;
 
       // currently-selected panel always shows the anchor for this slice --
@@ -1250,7 +1261,7 @@
       // assetId (matches the original's behavior for local-frame nodes).
       sidebarCurrentImgEl.src = ring.anchorUrl;
       sidebarCurrentFnameEl.textContent = anchorLabel;
-      sidebarCurrentModeEl.textContent = "VIDEO FRAME ANALYSIS (local, not in Immich)";
+      sidebarCurrentModeEl.textContent = modeLabel;
       sidebarCurrentDetailEl.textContent = "match: 100.0%";
 
       const sorted = project.sortedRanked();
@@ -1545,9 +1556,19 @@
       leftRailBodyEl.style.display = "flex";
 
       // The three ingest sources are separate switchable "pages" within
-      // the tab -- only the section for the active task is shown.
-      videoAnalysisSectionEl.style.display = active.task === "video" ? "" : "none";
+      // the tab -- only the section(s) for the active task are shown.
+      // Video and Folder/Zip share one "…Analysis" section (same shared
+      // job/thresholds/status underneath, see this.job on CharacterProject)
+      // but swap which entry-point controls are visible so folder/zip work
+      // doesn't show video-only chrome (video picker, "Analyze window (sec)").
+      videoAnalysisSectionEl.style.display = (active.task === "video" || active.task === "folderzip") ? "" : "none";
       searchSectionEl.style.display = active.task === "immich" ? "" : "none";
+      if (analysisSectionTitleEl) {
+        analysisSectionTitleEl.textContent = active.task === "folderzip" ? "Folder / Zip Analysis" : "Video Analysis";
+      }
+      videoAnalysisBodyEl.style.display = active.task === "video" ? "" : "none";
+      if (videoRangeRowEl) videoRangeRowEl.style.display = active.task === "video" ? "" : "none";
+      if (folderRowEl) folderRowEl.style.display = active.task === "folderzip" ? "" : "none";
 
       ringScaleInput.value = active.ringScale;
       ringScaleVal.textContent = active.ringScale + "%";
@@ -1605,6 +1626,10 @@
     },
 
     renderVideoAnalysisBody(project) {
+      if (project.task !== "video") {
+        videoAnalysisBodyEl.innerHTML = "";
+        return;
+      }
       videoAnalysisBodyEl.innerHTML = "";
 
       if (project.videoLoading) {
@@ -1834,7 +1859,9 @@
           showStaticFramePreviewNG(project, project.staticPreviewFrame);
           return;
         }
-        previewHintEl.textContent = "No video loaded for this project yet.";
+        previewHintEl.textContent = project.task === "folderzip"
+          ? "No folder/zip analyzed yet for this project."
+          : "No video loaded for this project yet.";
         previewCanvasEl.style.display = "none";
         previewControlsScrollEl.style.display = "none";
         return;
