@@ -1503,6 +1503,13 @@
     },
 
     renderStage(project) {
+      // renderLeftRail() covers everything selection-count-dependent in
+      // the left rail (the Search panel's Analyze button text/disabled
+      // state, the sticky Immich selection bar) -- every call site below
+      // fires after a selection change (checkbox toggle, node dblclick,
+      // Select All/Deselect All, Clear), so keeping it in lockstep here
+      // means callers don't each need to remember to call both.
+      this.renderLeftRail();
       // "immich" task shows the batch-analysis ring (pose-annotated,
       // shared with Video/Folder/Zip) when one exists, falling back to
       // the lighter neighbor-browsing immichRing view otherwise -- see
