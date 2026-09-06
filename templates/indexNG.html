@@ -326,6 +326,17 @@
           </div>
         </div>
         <div id="ng-sidebar-scroll">
+          <div id="ng-immich-selection-bar" style="display:none;">
+            <div id="ng-immich-selection-count"><span>0</span> Immich image(s) selected &mdash; sticks across browsing</div>
+            <div class="ng-immich-selection-bar-row">
+              <button type="button" id="ng-immich-analyze-selected-btn" class="ng-btn ng-btn-accent-green">Analyze selected (image-set)</button>
+            </div>
+            <div class="ng-immich-selection-bar-row">
+              <button type="button" id="ng-immich-export-selected-btn" class="ng-btn ng-btn-accent">Export selected to disk</button>
+              <button type="button" id="ng-immich-view-selected-btn" class="ng-btn">View</button>
+              <button type="button" id="ng-immich-clear-selected-btn" class="ng-btn ng-btn-danger">Clear</button>
+            </div>
+          </div>
           <div id="ng-sidebar-header"><span>Ranked matches</span><button id="ng-toggle-list-btn" title="Hide ranked match list">Hide</button></div>
           <div id="ng-ranked-sort-row">
             <span>Sort:</span>

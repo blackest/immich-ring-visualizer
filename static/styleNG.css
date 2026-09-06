@@ -1023,6 +1023,42 @@ html, body {
   color: var(--ng-accent);
 }
 .ng-btn-accent:hover:not(:disabled) { border-color: var(--ng-accent); }
+.ng-btn-accent-green {
+  background: rgba(124, 255, 176, 0.08);
+  border-color: rgba(124, 255, 176, 0.35);
+  color: #7cffb0;
+}
+.ng-btn-accent-green:hover:not(:disabled) { border-color: #7cffb0; }
+.ng-btn-danger {
+  background: rgba(217, 128, 128, 0.08);
+  border-color: rgba(217, 128, 128, 0.35);
+  color: #d98080;
+}
+.ng-btn-danger:hover:not(:disabled) { border-color: #d98080; }
+
+/* ---- Immich live-selection bar, ported from templates/index.html's
+   #immich-selection-bar -- sticky summary + actions for selectedAssetIds
+   while browsing neighbors, separate from the Immich matches list's own
+   Select All/Deselect All (which just tick/untick checkboxes). ---- */
+#ng-immich-selection-bar {
+  padding: 8px 16px;
+  border-bottom: 1px solid #212127;
+  background: #12121a;
+}
+#ng-immich-selection-count {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-bottom: 5px;
+}
+.ng-immich-selection-bar-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ng-immich-selection-bar-row:first-of-type { margin-top: 0; }
+.ng-immich-selection-bar-row .ng-btn { flex: 1; font-size: 10px; padding: 5px; }
+.ng-immich-selection-bar-row .ng-btn-full { width: auto; }
+
 #ng-analysis-status .ng-btn {
   display: block;
   margin-top: 6px;

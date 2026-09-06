@@ -441,6 +441,16 @@
   const immichSaveSelectedBtn = document.getElementById("ng-immich-save-selected");
   const immichExportResultEl = document.getElementById("ng-immich-export-result");
 
+  // ---- DOM refs: sticky Immich live-selection bar (selectedAssetIds
+  // while browsing neighbors -- ported from templates/index.html's
+  // #immich-selection-bar) ----
+  const immichSelectionBarEl = document.getElementById("ng-immich-selection-bar");
+  const immichSelectionCountEl = document.querySelector("#ng-immich-selection-count span");
+  const immichAnalyzeSelectedBtn = document.getElementById("ng-immich-analyze-selected-btn");
+  const immichExportSelectedBtn = document.getElementById("ng-immich-export-selected-btn");
+  const immichViewSelectedBtn = document.getElementById("ng-immich-view-selected-btn");
+  const immichClearSelectedBtn = document.getElementById("ng-immich-clear-selected-btn");
+
 
   // ---- DOM refs: Search section (Immich filename search) ----
   const immichSearchInput = document.getElementById("ng-immich-search-input");
@@ -1907,6 +1917,15 @@
           : (jobRunning ? "Analysis already running for this tab" : "");
       }
 
+      if (immichSelectionBarEl) {
+        const n = active.selectedAssetIds.size;
+        immichSelectionBarEl.style.display = n > 0 ? "block" : "none";
+        if (immichSelectionCountEl) immichSelectionCountEl.textContent = n;
+        const jobRunning = active.job && active.job.status === "running";
+        if (immichAnalyzeSelectedBtn) immichAnalyzeSelectedBtn.disabled = n === 0 || jobRunning;
+        if (immichExportSelectedBtn) immichExportSelectedBtn.disabled = n === 0;
+      }
+
       this.renderVideoAnalysisBody(active);
       this.renderFramePreview(active);
       this.renderAnalysisStatus(active);
@@ -2148,14 +2167,26 @@
       if (!overlay || !grid) return;
 
       const renderGrid = () => {
-        const items = (project.ring ? project.ring.baseResults : []).filter((r) => project.selectedFrames.has(r.frame));
-        title.textContent = `Selected frames (${items.length})`;
+        const frameItems = (project.ring ? project.ring.baseResults : []).filter((r) => project.selectedFrames.has(r.frame));
+        // Immich assets ticked while browsing neighbors (project.selectedAssetIds)
+        // are a separate pool from job-cached frames -- combined here to match
+        // the original app's renderSelectionModal(), which folds both
+        // selectedAssetIds and selectedFrames into one grid. Falls back to a
+        // generic thumb/filename if the asset has scrolled out of the current
+        // immichRing (e.g. selected, then recentered elsewhere).
+        const assetItems = Array.from(project.selectedAssetIds).map((assetId) => {
+          const known = project.immichRing ? project.immichRing.baseResults.find((r) => r.assetId === assetId) : null;
+          return known || { assetId, filename: assetId, thumbUrl: `/api/ng/thumb/${assetId}` };
+        });
+        const items = [...assetItems, ...frameItems];
+        title.textContent = `Selected (${items.length})`;
         grid.innerHTML = "";
         if (!items.length) {
           grid.appendChild(placeholder("Nothing selected yet — dblclick a ring node or its checkbox to select."));
           return;
         }
         items.forEach((r) => {
+          const isAsset = r.assetId !== undefined && r.frame === undefined;
           const cell = document.createElement("div");
           cell.className = "ng-selected-modal-cell";
           cell.innerHTML = `
@@ -2164,14 +2195,18 @@
             <button class="ng-selected-modal-remove" title="Remove from selection">&times;</button>
           `;
           cell.querySelector("img").addEventListener("click", () => {
-            if (project.job && project.job.sourceType === "video" && project.video) {
+            if (isAsset) {
+              project.recenterImmich(r.assetId, r.filename);
+              overlay.style.display = "none";
+            } else if (project.job && project.job.sourceType === "video" && project.video) {
               project.stepAndSyncAudio(r.frame);
             } else {
               showStaticFramePreviewNG(project, r);
             }
           });
           cell.querySelector(".ng-selected-modal-remove").addEventListener("click", () => {
-            project.toggleFrameSelection(r.frame);
+            if (isAsset) project.toggleAssetSelection(r.assetId);
+            else project.toggleFrameSelection(r.frame);
             if (project.isActive) ProjectManager.render();
             renderGrid();
           });
@@ -3086,6 +3121,60 @@
       active.startImmichAnalysis(Array.from(active.selectedAssetIds));
     });
   }
+
+  // ---- wiring: sticky Immich selection bar -- Analyze/Export reuse the
+  // exact same CharacterProject methods as the Search panel's Analyze
+  // button and the Immich matches list's Save-selected button
+  // respectively (this bar is just a more prominent second entry point
+  // to the same actions, matching the original app's layout); View opens
+  // the same combined selected-modal; Clear is equivalent to Deselect
+  // All but scoped to this bar for parity with the original. ----
+  if (immichAnalyzeSelectedBtn) {
+    immichAnalyzeSelectedBtn.addEventListener("click", () => {
+      const active = ProjectManager.getActive();
+      if (!active || !active.selectedAssetIds.size) return;
+      if (active.job && active.job.status === "running") return;
+      active.startImmichAnalysis(Array.from(active.selectedAssetIds));
+    });
+  }
+  if (immichExportSelectedBtn) {
+    immichExportSelectedBtn.addEventListener("click", async () => {
+      const active = ProjectManager.getActive();
+      if (!active || !active.selectedAssetIds.size) return;
+      const prevText = immichExportSelectedBtn.textContent;
+      immichExportSelectedBtn.textContent = "Exporting\u2026";
+      immichExportSelectedBtn.disabled = true;
+      try {
+        const result = await active.exportSelectedImmichAssets();
+        immichExportSelectedBtn.textContent = result.error
+          ? `Error: ${result.error}`
+          : `Saved ${result.exported} \u2192 ${result.path}`;
+      } catch (e) {
+        immichExportSelectedBtn.textContent = `Error: ${e.message}`;
+      }
+      setTimeout(() => {
+        immichExportSelectedBtn.textContent = prevText;
+        immichExportSelectedBtn.disabled = ProjectManager.getActive() ? !ProjectManager.getActive().selectedAssetIds.size : true;
+      }, 4000);
+    });
+  }
+  if (immichViewSelectedBtn) {
+    immichViewSelectedBtn.addEventListener("click", () => {
+      const active = ProjectManager.getActive();
+      if (!active) return;
+      ProjectManager.openSelectedModal(active);
+    });
+  }
+  if (immichClearSelectedBtn) {
+    immichClearSelectedBtn.addEventListener("click", () => {
+      const active = ProjectManager.getActive();
+      if (!active) return;
+      active.selectedAssetIds.clear();
+      if (active.immichRing) ProjectManager.renderStage(active);
+      ProjectManager.saveState();
+    });
+  }
+
   if (immichRandomFaceBtn) {
     immichRandomFaceBtn.addEventListener("click", () => {
       const active = ProjectManager.getActive();

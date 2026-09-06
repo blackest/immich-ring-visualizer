@@ -1,0 +1,643 @@
+diff -ruN '--exclude=node_modules' a/routes/immichNG.py b/routes/immichNG.py
+--- a/routes/immichNG.py	2026-09-05 20:16:11.644658194 +0000
++++ b/routes/immichNG.py	2026-09-05 20:16:11.817526889 +0000
+@@ -5,15 +5,20 @@
+ per the NG duplication rule in APP_ARCHITECTURE_NOTES.md -- does not
+ import from or call into routes/immich.py or any non-NG module.
+ 
+-Scope ported so far (per "go ahead with immich next" and later "port
+-person clusters"): filename search, pgvector nearest-neighbors (face
+-embedding, CLIP fallback), lazy pose/blur for one asset, thumb/preview
+-image proxying, person-clusters, person-assets. NOT ported yet:
+-analyze-immich (batch folder-style analysis over a selection),
+-random-face, immich-cross-check / immich-face-pose (job-scoped -- those
+-belong with the video analysis ring, a later slice).
++Scope ported so far (per "go ahead with immich next", later "port
++person clusters", and later "port analyze-immich"): filename search,
++pgvector nearest-neighbors (face embedding, CLIP fallback), lazy
++pose/blur for one asset, thumb/preview image proxying, person-clusters,
++person-assets, analyze-immich (batch folder-style pose/blur analysis
++over a selection of Immich assets). NOT ported yet: random-face,
++immich-cross-check / immich-face-pose (job-scoped -- those belong with
++the video analysis ring, a later slice).
+ """
+ 
++import os
++import threading
++import uuid
++
+ import numpy as np
+ import requests
+ from flask import Blueprint, request, jsonify, Response
+@@ -21,11 +26,95 @@
+ from configNG import IMMICH_API_KEY, IMMICH_BASE_URL
+ from dbNG import get_conn_ng, release_conn_ng
+ from detectionNG import get_blur_score_ng, get_face_app_ng, pick_largest_face_ng
++from folder_analysisNG import run_folder_analysis_ng
++from stateNG import _analysis_jobs_ng
+ from video_analysisNG import bbox_frame_ratio_ng, vert_fill_ratio_ng
+ 
+ immichNG_bp = Blueprint('immichNG', __name__)
+ 
+ 
++@immichNG_bp.route("/api/ng/analyze-immich", methods=["POST"])
++def analyze_immich_ng():
++    """NG twin of routes/immich.py's analyze_immich -- same analysis
++    pipeline as analyze-folder (pose extraction, sim/blur gating), but
++    sourced from Immich asset IDs already known to the project (a ticked
++    selection built from search-result neighbors or a person-cluster
++    grid -- see appNG.js's selectedAssetIds) instead of files uploaded
++    from the local filesystem. This is what lets an Immich-sourced set
++    feed the Pose Picker / Shot Scale Picker, which read project.ring
++    the same way a video or folder/zip analysis does -- until this
++    route existed, "immich" task results (immichRing) carried no pose
++    data up front and never populated project.ring at all.
++
++    Downloaded assets are held in memory as (orig_name, bytes) and
++    handed to run_folder_analysis_ng directly -- nothing here is
++    written to disk, matching the no-disk-writes-for-ingest principle
++    already used by videoNG.py / folderNG.py.
++    """
++    body = request.get_json(force=True) or {}
++    asset_ids = body.get("assetIds") or []
++    sim_threshold = float(body.get("simThreshold", 0.1))
++    blur_threshold = float(body.get("blurThreshold", 1))
++    ref_index = int(body.get("refIndex", 1))
++    cache_format = "png" if body.get("cacheFormat") == "png" else "jpg"
++
++    if not asset_ids:
++        return jsonify({"error": "provide 'assetIds' (non-empty list)"}), 400
++
++    job_id = uuid.uuid4().hex[:12]
++
++    images = []  # list of (orig_name, bytes), in fetch order
++    fetch_errors = []
++    for asset_id in asset_ids:
++        try:
++            meta = requests.get(
++                f"{IMMICH_BASE_URL}/api/assets/{asset_id}",
++                headers={"x-api-key": IMMICH_API_KEY},
++                timeout=20,
++            ).json()
++            orig_name = meta.get("originalFileName") or f"{asset_id}.jpg"
++
++            r = requests.get(
++                f"{IMMICH_BASE_URL}/api/assets/{asset_id}/original",
++                headers={"x-api-key": IMMICH_API_KEY},
++                timeout=60,
++            )
++            if r.status_code != 200:
++                fetch_errors.append(f"{asset_id}: HTTP {r.status_code}")
++                continue
++
++            # prefix with the asset id so filenames can't collide across
++            # assets and so the exported frame stays traceable back to
++            # the Immich library item it came from
++            safe_name = f"{asset_id}_{os.path.basename(orig_name)}"
++            images.append((safe_name, r.content))
++        except Exception as e:
++            fetch_errors.append(f"{asset_id}: {e}")
++
++    if not images:
++        return jsonify({"error": "could not fetch any of the requested Immich assets", "fetchErrors": fetch_errors}), 400
++
++    images.sort(key=lambda pair: pair[0].lower())
++
++    _analysis_jobs_ng[job_id] = {
++        "status": "running", "results": [], "error": None,
++        "sourceName": f"immich_selection_{len(images)}", "sourceType": "immich",
++        "srcImages": dict(images),
++        "simThreshold": sim_threshold,
++        "blurThreshold": blur_threshold,
++        "cacheFormat": cache_format,
++    }
++
++    t = threading.Thread(
++        target=run_folder_analysis_ng,
++        args=(job_id, images, sim_threshold, blur_threshold, ref_index, cache_format),
++        daemon=True
++    )
++    t.start()
++
++    return jsonify({"jobId": job_id, "imageCount": len(images), "fetchErrors": fetch_errors})
++
++
+ @immichNG_bp.route("/api/ng/find-by-filename")
+ def find_by_filename_ng():
+     name = request.args.get("name", "").strip()
+diff -ruN '--exclude=node_modules' a/static/appNG.js b/static/appNG.js
+--- a/static/appNG.js	2026-09-05 20:16:11.646452708 +0000
++++ b/static/appNG.js	2026-09-05 20:16:11.820250368 +0000
+@@ -436,6 +436,7 @@
+   const listBodyImmichEl = document.getElementById("ng-list-body-immich");
+   const immichSelectAllBtn = document.getElementById("ng-immich-select-all");
+   const immichDeselectAllBtn = document.getElementById("ng-immich-deselect-all");
++  const immichRefreshBtn = document.getElementById("ng-immich-refresh-btn");
+   const immichSaveSelectedBtn = document.getElementById("ng-immich-save-selected");
+   const immichExportResultEl = document.getElementById("ng-immich-export-result");
+ 
+@@ -444,6 +445,12 @@
+   const immichSearchInput = document.getElementById("ng-immich-search-input");
+   const immichSearchStatusEl = document.getElementById("ng-immich-search-status");
+   const immichSearchResultsEl = document.getElementById("ng-immich-search-results");
++  const immichAnalyzeBtn = document.getElementById("ng-immich-analyze-btn");
++  const immichAnalyzeRefIndexInput = document.getElementById("ng-immich-analyze-ref-index");
++  const immichSimThresholdInput = document.getElementById("ng-immich-sim-threshold");
++  const immichBlurThresholdInput = document.getElementById("ng-immich-blur-threshold");
++  const immichAnalysisStatusEl = document.getElementById("ng-immich-analysis-status");
++  const framesSectionTitleEl = document.getElementById("ng-frames-section-title");
+ 
+   // ---- DOM refs: left-rail sections that are task-specific pages ----
+   const videoAnalysisSectionEl = document.querySelector('.panel-section[data-section="video-analysis"]');
+@@ -476,6 +483,7 @@
+       this.sharpCutoffEnabled = false;
+       this.sharpMinVal = 0;
+       this.folderRefIndex = 1; // 1-based, which image in a folder/zip upload is the reference face
++      this.immichAnalyzeRefIndex = 1; // 1-based, which asset (post alpha-sort by fetched filename) is the reference face for analyze-immich
+ 
+       // analysis job + ring state
+       this.job = null; // { jobId, status, error, sourceName, frameCount, passed, failedSim, failedBlur, results, sourceType, refFrame }
+@@ -517,6 +525,7 @@
+       this._pollTimer = null;
+       this._playTimer = null;
+       this._lastFolderSource = null; // { images, zip } -- last folder/zip upload, kept for "Use as reference & re-analyze"; not persisted (Files don't survive JSON)
++      this._lastImmichAssetIds = null; // last batch analyze-immich asset-id selection, kept for "Use as reference & re-analyze"; not persisted (re-tick if the tab was closed/reloaded)
+     }
+ 
+     get isActive() {
+@@ -568,6 +577,7 @@
+         sharpCutoffEnabled: this.sharpCutoffEnabled,
+         sharpMinVal: this.sharpMinVal,
+         folderRefIndex: this.folderRefIndex,
++        immichAnalyzeRefIndex: this.immichAnalyzeRefIndex,
+         job: this.job,
+         ring: this.ring,
+         rankedSortMetric: this.rankedSortMetric,
+@@ -597,6 +607,7 @@
+       p.sharpCutoffEnabled = !!data.sharpCutoffEnabled;
+       p.sharpMinVal = typeof data.sharpMinVal === "number" ? data.sharpMinVal : 0;
+       p.folderRefIndex = typeof data.folderRefIndex === "number" ? data.folderRefIndex : 1;
++      p.immichAnalyzeRefIndex = typeof data.immichAnalyzeRefIndex === "number" ? data.immichAnalyzeRefIndex : 1;
+       p.job = data.job || null;
+       // playback builds live in a server tempdir (FRAME_STORE) that doesn't
+       // survive a server restart, and the modal itself is a transient UI
+@@ -632,6 +643,7 @@
+       p._pollTimer = null;
+       p._playTimer = null;
+       p._lastFolderSource = null;
++      p._lastImmichAssetIds = null;
+       return p;
+     }
+ 
+@@ -866,6 +878,63 @@
+       }
+     }
+ 
++    // ---- analysis: batch-analyze a ticked selection of Immich assets ->
++    // same pipeline as folder/zip, over assets fetched from Immich instead
++    // of local uploads. Shares this.job/this.ring with video and
++    // folder/zip (see the comment on those fields) -- running this
++    // overwrites whichever analysis was last active, matching how
++    // switching between the Video and Folder/Zip tasks already behaves.
++    // Ported from routes/immich.py's analyze_immich via routes/immichNG.py. ----
++    async startImmichAnalysis(assetIds, refIndexOverride) {
++      if (!assetIds || !assetIds.length) return;
++      this.stopPolling();
++      this.selectedFrames = new Set();
++      this.playback = null;
++      this.staticPreviewFrame = null;
++      const refIndex = refIndexOverride != null ? refIndexOverride : this.immichAnalyzeRefIndex;
++      this._lastImmichAssetIds = assetIds.slice();
++      this.job = {
++        status: "running",
++        sourceType: "immich",
++        sourceName: `immich_selection_${assetIds.length}`,
++        simThreshold: this.simThreshold,
++        blurThreshold: this.blurThreshold,
++        frameCount: 0, passed: 0, failedSim: 0, failedBlur: 0,
++        results: [],
++        refFrame: refIndex,
++      };
++      ProjectManager.render();
++
++      const body = {
++        assetIds,
++        simThreshold: this.simThreshold,
++        blurThreshold: this.blurThreshold,
++        refIndex,
++        cacheFormat: this.cacheFormatPng ? "png" : "jpg",
++      };
++
++      try {
++        const res = await fetch("/api/ng/analyze-immich", {
++          method: "POST",
++          headers: { "Content-Type": "application/json" },
++          body: JSON.stringify(body),
++        });
++        const data = await res.json();
++        if (!res.ok || data.error) {
++          this.job = { status: "error", error: data.error || res.status, fetchErrors: data.fetchErrors };
++          if (this.isActive) ProjectManager.render();
++          return;
++        }
++        this.job.jobId = data.jobId;
++        this.job.frameCount = data.imageCount;
++        this.job.fetchErrors = data.fetchErrors;
++        this.poll();
++      } catch (e) {
++        this.job = { status: "error", error: e.message };
++        if (this.isActive) ProjectManager.render();
++      }
++    }
++
+     async poll() {
+       if (!this.job || !this.job.jobId) return;
+       try {
+@@ -1365,17 +1434,26 @@
+           return;
+         }
+       } else if (active.task === "immich") {
+-        if (active.immichLoading && !active.immichRing) {
+-          showPlaceholder("Loading Immich neighbors…");
+-          return;
+-        }
+-        if (active.immichError && !active.immichRing) {
+-          showPlaceholder("Immich error: " + active.immichError);
+-          return;
+-        }
+-        if (!active.immichRing) {
+-          showPlaceholder("Search for a face by filename in the left rail’s Search section to begin.");
+-          return;
++        // A completed/running batch analyze-immich job takes priority --
++        // it shares project.ring/job with Video and Folder/Zip (see the
++        // comment on CharacterProject's ring/job fields), and running it
++        // is a deliberate action producing a richer, pose-annotated pool
++        // (feeds Pose Picker / Shot Scale Picker) that supersedes the
++        // plain neighbor-browsing view below.
++        const hasBatchRing = active.ring && active.ring.sourceType === "immich";
++        if (!hasBatchRing) {
++          if (active.immichLoading && !active.immichRing) {
++            showPlaceholder("Loading Immich neighbors…");
++            return;
++          }
++          if (active.immichError && !active.immichRing) {
++            showPlaceholder("Immich error: " + active.immichError);
++            return;
++          }
++          if (!active.immichRing) {
++            showPlaceholder("Search for a face by filename in the left rail’s Search section to begin, or tick assets and press Analyze.");
++            return;
++          }
+         }
+       } else {
+         showPlaceholder("Pick Video, Immich, or Folder / Zip below to get started with “" + active.name + "”.");
+@@ -1389,8 +1467,15 @@
+     },
+ 
+     renderStage(project) {
+-      if (project.task === "immich") this.renderImmichStage(project);
+-      else this.renderVideoStage(project);
++      // "immich" task shows the batch-analysis ring (pose-annotated,
++      // shared with Video/Folder/Zip) when one exists, falling back to
++      // the lighter neighbor-browsing immichRing view otherwise -- see
++      // the matching comment in renderMain().
++      if (project.task === "immich" && !(project.ring && project.ring.sourceType === "immich")) {
++        this.renderImmichStage(project);
++      } else {
++        this.renderVideoStage(project);
++      }
+     },
+ 
+     renderVideoStage(project) {
+@@ -1400,7 +1485,12 @@
+       const metricLabel = { sim: "Similarity", yaw: "Yaw", pitch: "Pitch", roll: "Roll", blur: "Sharpness" }[project.ringSortMetric];
+       const modeLabel = ring.sourceType === "folder"
+         ? "FOLDER / IMAGE-SET ANALYSIS (local, not in Immich)"
++        : ring.sourceType === "immich"
++        ? "IMMICH BATCH ANALYSIS (pose data for selected Immich assets)"
+         : "VIDEO FRAME ANALYSIS (local, not in Immich)";
++      if (framesSectionTitleEl) {
++        framesSectionTitleEl.textContent = ring.sourceType === "immich" ? "Immich batch results" : "Local frames";
++      }
+       hudModeEl.textContent = modeLabel;
+       hudFilenameEl.textContent = `${anchorLabel} · sorted by ${metricLabel}`;
+ 
+@@ -1686,6 +1776,14 @@
+       immichSectionEl.style.display = kept.length ? "" : "none";
+       immichSectionCountEl.textContent = kept.length ? `(${kept.length})` : "";
+ 
++      // Refresh re-pulls fresh neighbor results from Immich for the
++      // current center asset -- the NG shell deliberately never
++      // auto-fetches on its own (see APP_ARCHITECTURE_NOTES.md), so
++      // unlike the original app (where a plain page reload re-ran the
++      // query), getting an up-to-date pull here needs an explicit action.
++      immichRefreshBtn.disabled = project.immichLoading || !project.immichRing;
++      immichRefreshBtn.textContent = project.immichLoading ? "Refreshing…" : "Refresh";
++
+       const n = project.selectedAssetIds.size;
+       immichSaveSelectedBtn.textContent = `Save ${n} selected to disk`;
+       immichSaveSelectedBtn.disabled = n === 0;
+@@ -1741,7 +1839,7 @@
+       sharpControlsEl.style.display = active.sharpCutoffEnabled ? "flex" : "none";
+       sharpSlider.value = active.sharpMinVal;
+       folderRefIndexInput.value = active.folderRefIndex;
+-      if (active.task === "immich" && active.immichRing) {
++      if (active.task === "immich" && active.immichRing && !(active.ring && active.ring.sourceType === "immich")) {
+         const { kept, total } = active.squeezeFiltered(active.sortedRankedImmich());
+         squeezeVal.textContent = `${active.squeezeMinPct}% (${kept.length}/${total})`;
+         sharpVal.textContent = `${active.sharpMinVal} (${kept.length}/${total})`;
+@@ -1757,14 +1855,28 @@
+       simThresholdInput.value = active.simThreshold;
+       blurThresholdInput.value = active.blurThreshold;
+       cacheFormatPngCb.checked = active.cacheFormatPng;
++      if (immichSimThresholdInput) immichSimThresholdInput.value = active.simThreshold;
++      if (immichBlurThresholdInput) immichBlurThresholdInput.value = active.blurThreshold;
++      if (immichAnalyzeRefIndexInput) immichAnalyzeRefIndexInput.value = active.immichAnalyzeRefIndex;
+       rankedSortRadios.forEach((cb) => {
+         const currentMetric = active.task === "immich" ? active.immichRankedSortMetric : active.rankedSortMetric;
+         cb.checked = cb.value === currentMetric;
+       });
+ 
++      if (immichAnalyzeBtn) {
++        const n = active.selectedAssetIds.size;
++        const jobRunning = active.job && active.job.status === "running";
++        immichAnalyzeBtn.textContent = `Analyze ${n} selected asset${n === 1 ? "" : "s"}`;
++        immichAnalyzeBtn.disabled = n === 0 || jobRunning;
++        immichAnalyzeBtn.title = n === 0
++          ? "Tick assets in the Immich matches list or a person-cluster grid first"
++          : (jobRunning ? "Analysis already running for this tab" : "");
++      }
++
+       this.renderVideoAnalysisBody(active);
+       this.renderFramePreview(active);
+       this.renderAnalysisStatus(active);
++      this.renderImmichAnalysisStatus(active);
+       this.renderImmichSearch(active);
+     },
+ 
+@@ -1913,6 +2025,87 @@
+       }
+     },
+ 
++    // ---- Immich batch-analysis status: parallel to renderAnalysisStatus,
++    // targeting its own status div (ng-immich-analysis-status, inside the
++    // Search panel section) rather than #ng-analysis-status, since that
++    // div's container (the Video/Image-Set Analysis panel section) is
++    // hidden entirely while the Immich task is active. Some duplication
++    // vs renderAnalysisStatus, matching this codebase's existing
++    // NG-duplicate philosophy (see the comment on renderImmichStage). ----
++    renderImmichAnalysisStatus(project) {
++      if (!immichAnalysisStatusEl) return;
++      const j = project.job;
++      if (!j || j.sourceType !== "immich") {
++        immichAnalysisStatusEl.innerHTML = "";
++        return;
++      }
++      if (j.status === "error") {
++        immichAnalysisStatusEl.innerHTML = `Error: ${j.error || "unknown error"}`;
++        return;
++      }
++      if (j.status === "running") {
++        immichAnalysisStatusEl.innerHTML = `
++          Fetching &amp; analyzing… ${j.frameCount || 0} assets seen<br>
++          ${j.passed || 0} kept, ${j.failedSim || 0} low sim, ${j.failedBlur || 0} blurry
++          <div class="ng-progress-track"><div class="ng-progress-fill" style="width:${Math.min(100, ((j.frameCount || 0) / 200) * 100)}%"></div></div>
++        `;
++        return;
++      }
++
++      const selCount = project.selectedFrames.size;
++      const fetchErrCount = (j.fetchErrors || []).length;
++
++      immichAnalysisStatusEl.innerHTML = `
++        Done — ${j.passed}/${j.frameCount} kept${fetchErrCount ? ` (${fetchErrCount} asset${fetchErrCount === 1 ? "" : "s"} failed to fetch)` : ""}.
++        <div id="ng-immich-sim-sparkline-wrap" style="margin-top:8px;"></div>
++        <button id="ng-immich-btn-save-kept" class="ng-btn ng-btn-full ng-btn-accent">Save kept frames to disk</button>
++        <button id="ng-immich-btn-save-selected" class="ng-btn ng-btn-full ng-btn-accent" ${selCount ? "" : "disabled"}>Save ${selCount} selected frame${selCount === 1 ? "" : "s"} to disk</button>
++        <button id="ng-immich-btn-view-selected" class="ng-btn ng-btn-full">View selected</button>
++        <div id="ng-immich-export-result" class="ng-stub-note"></div>
++      `;
++
++      renderNGChart(project, immichAnalysisStatusEl.querySelector("#ng-immich-sim-sparkline-wrap"));
++
++      const exportResultEl = immichAnalysisStatusEl.querySelector("#ng-immich-export-result");
++      const saveKeptBtn = immichAnalysisStatusEl.querySelector("#ng-immich-btn-save-kept");
++      const saveSelectedBtn = immichAnalysisStatusEl.querySelector("#ng-immich-btn-save-selected");
++      const viewSelectedBtn = immichAnalysisStatusEl.querySelector("#ng-immich-btn-view-selected");
++
++      saveKeptBtn.onclick = async () => {
++        saveKeptBtn.textContent = "Saving…";
++        saveKeptBtn.disabled = true;
++        try {
++          const result = await project.exportFrames(false);
++          exportResultEl.textContent = result.error
++            ? `Error: ${result.error}`
++            : `Saved ${result.exported} frames → ${result.path}`;
++        } catch (e) {
++          exportResultEl.textContent = `Error: ${e.message}`;
++        }
++        saveKeptBtn.textContent = "Save kept frames to disk";
++        saveKeptBtn.disabled = false;
++      };
++
++      if (saveSelectedBtn) {
++        saveSelectedBtn.onclick = async () => {
++          saveSelectedBtn.textContent = "Saving…";
++          saveSelectedBtn.disabled = true;
++          try {
++            const result = await project.exportFrames(true);
++            exportResultEl.textContent = result.error
++              ? `Error: ${result.error}`
++              : `Saved ${result.exported} frames → ${result.path}`;
++          } catch (e) {
++            exportResultEl.textContent = `Error: ${e.message}`;
++          }
++          saveSelectedBtn.textContent = `Save ${project.selectedFrames.size} selected frame${project.selectedFrames.size === 1 ? "" : "s"} to disk`;
++          saveSelectedBtn.disabled = project.selectedFrames.size === 0;
++        };
++      }
++
++      viewSelectedBtn.onclick = () => ProjectManager.openSelectedModal(project);
++    },
++
+     openSelectedModal(project) {
+       const overlay = document.getElementById("ng-selected-modal");
+       const grid = document.getElementById("ng-selected-modal-grid");
+@@ -1956,7 +2149,12 @@
+     },
+ 
+     findNeutralPose(project) {
+-      const baseResults = project.task === "immich"
++      // A completed batch analyze-immich job (project.ring.sourceType ===
++      // "immich") takes the same priority here as it does in
++      // renderMain()/renderStage() -- only fall back to the lighter
++      // neighbor-browsing immichRing pool when no batch ring exists.
++      const hasBatchRing = project.ring && project.ring.sourceType === "immich";
++      const baseResults = project.task === "immich" && !hasBatchRing
+         ? (project.immichRing ? project.immichRing.baseResults : null)
+         : (project.ring ? project.ring.baseResults : null);
+       if (!baseResults) return;
+@@ -1991,7 +2189,14 @@
+         const hideReadout = () => { neutralPoseReadoutEl.style.display = "none"; neutralPoseReadoutEl.innerHTML = ""; };
+         const sourceType = project.job ? project.job.sourceType : null;
+ 
+-        if (project.task === "immich") {
++        if (sourceType === "immich") {
++          if (!project._lastImmichAssetIds || !project._lastImmichAssetIds.length) {
++            useBtn.textContent = "Original Immich selection no longer available — re-tick assets and re-analyze";
++            return;
++          }
++          hideReadout();
++          project.startImmichAnalysis(project._lastImmichAssetIds, best.frame);
++        } else if (project.task === "immich") {
+           hideReadout();
+           project.recenterImmich(best.assetId, best.filename);
+         } else if (sourceType === "folder") {
+@@ -2770,12 +2975,14 @@
+     if (!active) return;
+     active.simThreshold = Number(simThresholdInput.value);
+     ProjectManager.saveState();
++    ProjectManager.renderLeftRail();
+   });
+   blurThresholdInput.addEventListener("change", () => {
+     const active = ProjectManager.getActive();
+     if (!active) return;
+     active.blurThreshold = Number(blurThresholdInput.value);
+     ProjectManager.saveState();
++    ProjectManager.renderLeftRail();
+   });
+   cacheFormatPngCb.addEventListener("change", () => {
+     const active = ProjectManager.getActive();
+@@ -2806,6 +3013,45 @@
+     ProjectManager.saveState();
+   });
+ 
++  // ---- wiring: Immich batch-analysis controls (mirrors the sim/blur
++  // threshold inputs above so they don't require switching off the
++  // Immich task to tune -- both sets write to the same project fields
++  // and are kept in sync via the renderLeftRail() calls above). ----
++  if (immichSimThresholdInput) {
++    immichSimThresholdInput.addEventListener("change", () => {
++      const active = ProjectManager.getActive();
++      if (!active) return;
++      active.simThreshold = Number(immichSimThresholdInput.value);
++      ProjectManager.saveState();
++      ProjectManager.renderLeftRail();
++    });
++  }
++  if (immichBlurThresholdInput) {
++    immichBlurThresholdInput.addEventListener("change", () => {
++      const active = ProjectManager.getActive();
++      if (!active) return;
++      active.blurThreshold = Number(immichBlurThresholdInput.value);
++      ProjectManager.saveState();
++      ProjectManager.renderLeftRail();
++    });
++  }
++  if (immichAnalyzeRefIndexInput) {
++    immichAnalyzeRefIndexInput.addEventListener("change", () => {
++      const active = ProjectManager.getActive();
++      if (!active) return;
++      active.immichAnalyzeRefIndex = Math.max(1, Number(immichAnalyzeRefIndexInput.value) || 1);
++      ProjectManager.saveState();
++    });
++  }
++  if (immichAnalyzeBtn) {
++    immichAnalyzeBtn.addEventListener("click", () => {
++      const active = ProjectManager.getActive();
++      if (!active || !active.selectedAssetIds.size) return;
++      if (active.job && active.job.status === "running") return;
++      active.startImmichAnalysis(Array.from(active.selectedAssetIds));
++    });
++  }
++
+   // ---- wiring: Load folder / .zip pickers (hidden file inputs, created
+   // once and reused -- unlike the per-video "Choose Video..." button,
+   // these live in the left rail permanently so a persistent pair of
+@@ -2894,6 +3140,12 @@
+     ProjectManager.saveState();
+   });
+ 
++  immichRefreshBtn.addEventListener("click", () => {
++    const active = ProjectManager.getActive();
++    if (!active || !active.immichRing || active.immichLoading) return;
++    active.recenterImmich(active.immichRing.centerAssetId, active.immichRing.centerFilename);
++  });
++
+   immichSaveSelectedBtn.addEventListener("click", async () => {
+     const active = ProjectManager.getActive();
+     if (!active || !active.selectedAssetIds.size) return;
+diff -ruN '--exclude=node_modules' a/static/styleNG.css b/static/styleNG.css
+--- a/static/styleNG.css	2026-09-05 20:16:11.648020242 +0000
++++ b/static/styleNG.css	2026-09-05 20:16:11.822738110 +0000
+@@ -939,6 +939,33 @@
+   white-space: nowrap;
+ }
+ 
++/* ---- Analyze selected Immich assets row (Search panel section) ---- */
++.ng-immich-analyze-row {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  margin: 6px 0;
++  flex-wrap: wrap;
++}
++.ng-immich-analyze-row .ng-btn-full { width: auto; flex: 2 1 auto; }
++
++#ng-immich-analysis-status {
++  font-size: 10px;
++  color: var(--ng-text-dim);
++  line-height: 1.4;
++}
++#ng-immich-analysis-status .ng-progress-track {
++  height: 4px;
++  background: var(--ng-panel);
++  border-radius: 2px;
++  overflow: hidden;
++  margin-top: 4px;
++}
++#ng-immich-analysis-status .ng-progress-fill {
++  height: 100%;
++  background: var(--ng-accent);
++}
++
+ /* ---- Load folder / .zip row (Video/Image-Set Analysis section) ---- */
+ .ng-folder-row {
+   display: flex;
+diff -ruN '--exclude=node_modules' a/templates/indexNG.html b/templates/indexNG.html
+--- a/templates/indexNG.html	2026-09-05 20:16:11.648895349 +0000
++++ b/templates/indexNG.html	2026-09-05 20:16:11.824100544 +0000
+@@ -100,6 +100,16 @@
+               <div id="ng-immich-search-status" class="ng-stub-note"></div>
+               <div id="ng-immich-search-results" class="ng-search-results" style="display:none;"></div>
+               <p class="ng-stub-note">(person clusters / cross-check / random-face not ported yet -- filename search only, click a result to load its Immich neighbors)</p>
++              <div class="ng-immich-analyze-row">
++                <button type="button" id="ng-immich-analyze-btn" class="ng-btn ng-btn-full" disabled>Analyze 0 selected assets</button>
++                <label class="ng-folder-ref">Ref position <input id="ng-immich-analyze-ref-index" type="number" min="1" value="1" class="ng-num-input" title="Which selected asset (by fetched filename, sorted alphabetically) is the reference face"></label>
++              </div>
++              <div class="ng-video-thresh-row">
++                <label>Sim &gt; <input id="ng-immich-sim-threshold" type="number" step="0.05" value="0.1" title="Similarity Threshold" class="ng-num-input"></label>
++                <label>Blur &gt; <input id="ng-immich-blur-threshold" type="number" step="1" value="1" title="Blur Threshold" class="ng-num-input"></label>
++              </div>
++              <p class="ng-stub-note">(tick assets in the Immich matches list or a person-cluster grid below, then Analyze -- runs full pose/blur analysis over the selection, same pipeline as Folder / Zip, feeding the Pose Picker &amp; Shot Scale Picker)</p>
++              <div id="ng-immich-analysis-status"></div>
+             </div>
+           </div>
+ 
+@@ -324,7 +334,7 @@
+           </div>
+           <div id="ng-frames-section" class="ng-list-section" style="display:none;">
+             <div class="ng-list-section-header">
+-              <span class="ng-list-section-title">Local frames</span>
++              <span class="ng-list-section-title" id="ng-frames-section-title">Local frames</span>
+               <span class="ng-list-section-count" id="ng-frames-section-count"></span>
+               <button class="ng-section-select-all-btn" id="ng-frames-select-all">Select All</button>
+               <button class="ng-section-deselect-all-btn" id="ng-frames-deselect-all">Deselect All</button>
+@@ -335,6 +345,7 @@
+             <div class="ng-list-section-header">
+               <span class="ng-list-section-title">Immich matches</span>
+               <span class="ng-list-section-count" id="ng-immich-section-count"></span>
++              <button class="ng-section-select-all-btn" id="ng-immich-refresh-btn" title="Re-pull fresh neighbor results from Immich for the current center asset (page refresh no longer re-fetches automatically, per the no-auto-fetch rule)">Refresh</button>
+               <button class="ng-section-select-all-btn" id="ng-immich-select-all">Select All</button>
+               <button class="ng-section-deselect-all-btn" id="ng-immich-deselect-all">Deselect All</button>
+             </div>
