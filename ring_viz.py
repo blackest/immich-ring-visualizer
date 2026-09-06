@@ -25,6 +25,7 @@ from routes.videoNG import videoNG_bp  # NG: new blueprint, no changes to existi
 from routes.immichNG import immichNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.folderNG import folderNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.exportNG import exportNG_bp  # NG: new blueprint, no changes to existing ones
+from routes.generateNG import generateNG_bp  # NG: new blueprint, no changes to existing ones
 
 app = Flask(__name__)
 app.register_blueprint(video_bp)
@@ -38,6 +39,7 @@ app.register_blueprint(videoNG_bp)  # NG: /api/ng/preview-video etc, additive on
 app.register_blueprint(immichNG_bp)  # NG: /api/ng/find-by-filename etc, additive only
 app.register_blueprint(folderNG_bp)  # NG: /api/ng/analyze-folder, additive only
 app.register_blueprint(exportNG_bp)  # NG: /api/ng/export-job (full Export Settings support), additive only
+app.register_blueprint(generateNG_bp)  # NG: /api/ng/generate/* (character-sheet job queue), additive only
 if __name__ == "__main__":
     # use_reloader on its own (without debug=True) restarts the process
     # when a .py file changes -- picks up backend fixes without a manual
