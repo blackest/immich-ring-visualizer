@@ -1136,6 +1136,7 @@ html, body {
   flex-direction: column;
   overflow: hidden;
 }
+.ng-selected-modal-wide { width: min(960px, 94vw); }
 .ng-modal-header {
   display: flex;
   align-items: center;
@@ -1196,6 +1197,66 @@ html, body {
   font-size: 13px;
 }
 .ng-selected-modal-remove:hover { background: var(--ng-danger); }
+
+/* ---- selected-modal controls row: pitch/yaw scatter toggle + spread
+   slider, real-export-crop toggle, Deselect All -- ported from
+   templates/index.html's selection-modal header row. ---- */
+.ng-modal-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ng-border);
+  font-size: 11px;
+  color: var(--ng-text-dim);
+}
+.ng-modal-controls label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+#ng-selected-modal-spread-wrap { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ng-modal-controls .ng-btn-danger { margin-left: auto; font-size: 10px; padding: 4px 10px; width: auto; height: auto; }
+
+/* ---- pose-scatter layout inside the selected-modal: pitch/yaw-anchored
+   absolute positions on a dotted-grid stage, ported from
+   selection-ui.js's renderSelectionModalPoseScatter(). ---- */
+.ng-modal-grid.ng-pose-scatter-mode {
+  display: block;
+  position: relative;
+  background-image: linear-gradient(#22222a 1px, transparent 1px), linear-gradient(90deg, #22222a 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: center center;
+}
+.ng-pose-scatter-stage { position: relative; width: 100%; height: 480px; }
+.ng-pose-scatter-item {
+  position: absolute;
+  text-align: center;
+  cursor: pointer;
+}
+.ng-pose-scatter-item img {
+  border-radius: 8px;
+  border: 2px solid #3a3a44;
+  display: block;
+  object-fit: cover;
+}
+.ng-pose-scatter-item.ng-pose-scatter-anchor img {
+  border: 3px solid var(--ng-accent);
+  box-shadow: 0 0 20px rgba(124, 196, 255, 0.35);
+}
+.ng-pose-scatter-item .ng-pose-scatter-label { font-size: 9px; color: var(--ng-text-dim); margin-top: 2px; }
+.ng-pose-scatter-unposed-strip { margin-top: 8px; padding-top: 8px; border-top: 1px solid #26262e; }
+.ng-pose-scatter-unposed-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 9px; color: var(--ng-text-dim); }
+.ng-pose-scatter-unposed-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.ng-pose-scatter-unposed-cell { width: 64px; text-align: center; cursor: pointer; }
+.ng-pose-scatter-unposed-cell img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 2px solid #3a3a44; display: block; }
+#ng-detect-pose-btn {
+  padding: 3px 8px;
+  background: rgba(124, 196, 255, 0.08);
+  border: 1px solid rgba(124, 196, 255, 0.35);
+  color: var(--ng-accent);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 9px;
+}
+#ng-detect-pose-btn:disabled { opacity: 0.6; cursor: default; }
 
 /* ---- Playback modal: pop-out view of the rejected-frames-blanked
    reassembly, so scrubbing the full clip isn't fighting the ring/list

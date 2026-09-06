@@ -533,6 +533,7 @@
       this.immichRing = null; // { centerAssetId, centerFilename, centerPose, mode, baseResults }
       this.immichRankedSortMetric = "sim";
       this.selectedAssetIds = new Set();
+      this.assetPoseCache = {}; // assetId -> {pitch,yaw,blur,vertFillPct} from on-demand "Detect pose" in the selected-modal's pose-scatter view; not persisted (cheap to re-fetch, matches original app's module-level cache)
 
       this._pollTimer = null;
       this._playTimer = null;
@@ -2171,38 +2172,81 @@
       const overlay = document.getElementById("ng-selected-modal");
       const grid = document.getElementById("ng-selected-modal-grid");
       const title = document.getElementById("ng-selected-modal-title");
+      const poseLayoutCb = document.getElementById("ng-selected-modal-pose-layout");
+      const spreadWrapEl = document.getElementById("ng-selected-modal-spread-wrap");
+      const spreadSliderEl = document.getElementById("ng-selected-modal-spread");
+      const realPreviewCb = document.getElementById("ng-selected-modal-real-preview");
+      const deselectAllBtn = document.getElementById("ng-selected-modal-deselect-all");
       if (!overlay || !grid) return;
 
-      const renderGrid = () => {
-        const frameItems = (project.ring ? project.ring.baseResults : []).filter((r) => project.selectedFrames.has(r.frame));
-        // Immich assets ticked while browsing neighbors (project.selectedAssetIds)
-        // are a separate pool from job-cached frames -- combined here to match
-        // the original app's renderSelectionModal(), which folds both
-        // selectedAssetIds and selectedFrames into one grid. Falls back to a
-        // generic thumb/filename if the asset has scrolled out of the current
-        // immichRing (e.g. selected, then recentered elsewhere).
+      const POSE_SCATTER_SPREAD_BASE = 42;
+      const jobId = project.job ? project.job.jobId : null;
+
+      // Real crop preview reuses the exact same crop_resize_export call the
+      // actual export does (routes/exportNG.py's export-preview[-immich]) --
+      // what you see here is genuinely what gets written, not a generic
+      // square thumbnail unrelated to crop mode/margin/native.
+      function srcFor(it) {
+        if (!realPreviewCb.checked) return it.thumb;
+        const params = new URLSearchParams(gatherExportParamsNG());
+        if (it.kind === "frame" && jobId) return `/api/ng/export-preview/${jobId}/${it.frame}?${params.toString()}`;
+        if (it.kind === "asset") return `/api/ng/export-preview-immich/${it.assetId}?${params.toString()}`;
+        return it.thumb;
+      }
+
+      // Immich assets ticked while browsing neighbors (project.selectedAssetIds)
+      // are a separate pool from job-cached frames -- combined here to match
+      // the original app's renderSelectionModal(), which folds both
+      // selectedAssetIds and selectedFrames into one grid. assetPoseCache
+      // covers assets whose pose was fetched on-demand via "Detect pose"
+      // below rather than coming pre-attached from a batch analysis job.
+      function buildItems() {
+        const frameItems = (project.ring ? project.ring.baseResults : [])
+          .filter((r) => project.selectedFrames.has(r.frame))
+          .map((r) => ({
+            kind: "frame", frame: r.frame, filename: r.filename, thumb: thumbUrlFor(r),
+            similarity: r.similarity,
+            pitch: typeof r.pitch === "number" ? r.pitch : null,
+            yaw: typeof r.yaw === "number" ? r.yaw : null,
+          }));
         const assetItems = Array.from(project.selectedAssetIds).map((assetId) => {
           const known = project.immichRing ? project.immichRing.baseResults.find((r) => r.assetId === assetId) : null;
-          return known || { assetId, filename: assetId, thumbUrl: `/api/ng/thumb/${assetId}` };
+          const cached = project.assetPoseCache[assetId];
+          return {
+            kind: "asset", assetId, filename: known ? known.filename : assetId,
+            thumb: known ? thumbUrlFor(known) : `/api/ng/thumb/${assetId}`,
+            similarity: known ? known.similarity : undefined,
+            pitch: cached ? cached.pitch : (known && typeof known.pitch === "number" ? known.pitch : null),
+            yaw: cached ? cached.yaw : (known && typeof known.yaw === "number" ? known.yaw : null),
+          };
         });
-        const items = [...assetItems, ...frameItems];
-        title.textContent = `Selected (${items.length})`;
+        return [...assetItems, ...frameItems];
+      }
+
+      function removeItem(it) {
+        if (it.kind === "asset") project.toggleAssetSelection(it.assetId);
+        else project.toggleFrameSelection(it.frame);
+        if (project.isActive) ProjectManager.render();
+        renderModal();
+      }
+
+      function renderGridMode(items) {
+        grid.classList.remove("ng-pose-scatter-mode");
         grid.innerHTML = "";
         if (!items.length) {
           grid.appendChild(placeholder("Nothing selected yet — dblclick a ring node or its checkbox to select."));
           return;
         }
         items.forEach((r) => {
-          const isAsset = r.assetId !== undefined && r.frame === undefined;
           const cell = document.createElement("div");
           cell.className = "ng-selected-modal-cell";
           cell.innerHTML = `
-            <img src="${thumbUrlFor(r)}" loading="lazy">
+            <img src="${srcFor(r)}" loading="lazy">
             <div class="ng-selected-modal-cell-info">${r.filename}${typeof r.similarity === "number" ? ` — ${(r.similarity * 100).toFixed(1)}%` : ""}</div>
             <button class="ng-selected-modal-remove" title="Remove from selection">&times;</button>
           `;
           cell.querySelector("img").addEventListener("click", () => {
-            if (isAsset) {
+            if (r.kind === "asset") {
               project.recenterImmich(r.assetId, r.filename);
               overlay.style.display = "none";
             } else if (project.job && project.job.sourceType === "video" && project.video) {
@@ -2211,17 +2255,174 @@
               showStaticFramePreviewNG(project, r);
             }
           });
-          cell.querySelector(".ng-selected-modal-remove").addEventListener("click", () => {
-            if (isAsset) project.toggleAssetSelection(r.assetId);
-            else project.toggleFrameSelection(r.frame);
-            if (project.isActive) ProjectManager.render();
-            renderGrid();
-          });
+          cell.querySelector(".ng-selected-modal-remove").addEventListener("click", () => removeItem(r));
           grid.appendChild(cell);
         });
+      }
+
+      async function detectPoseForItems(items) {
+        const btn = document.getElementById("ng-detect-pose-btn");
+        if (btn) { btn.textContent = `Detecting 0/${items.length}\u2026`; btn.disabled = true; }
+        let done = 0;
+        await Promise.all(items.map(async (it) => {
+          try {
+            const res = await fetch(`/api/ng/asset-face-pose/${it.assetId}`);
+            const data = await res.json();
+            if (!data.error) {
+              // full metric set (pose + blur + vertFillPct), same as a
+              // video/folder analysis frame would carry -- cached so
+              // sharpness sort/filtering works on on-demand-detected
+              // Immich items too, matching the original's assetPoseCache.
+              project.assetPoseCache[it.assetId] = { pitch: data.pitch, yaw: data.yaw, blur: data.blur, vertFillPct: data.vertFillPct };
+            }
+          } catch (e) {
+            console.warn("Pose detection failed for", it.assetId, e);
+          } finally {
+            done++;
+            if (btn) btn.textContent = `Detecting ${done}/${items.length}\u2026`;
+          }
+        }));
+        renderModal();
+      }
+
+      // Pitch/yaw scatter, anchored on this selection's own pose centroid
+      // (not absolute zero) -- if the whole set is consistently
+      // turned/tilted, anchoring on absolute zero would pick an
+      // unrepresentative outlier and huddle everything else in one corner.
+      function renderPoseScatterMode(items) {
+        grid.classList.add("ng-pose-scatter-mode");
+        grid.innerHTML = "";
+        const posed = items.filter((it) => it.pitch !== null && it.yaw !== null);
+        const unposed = items.filter((it) => it.pitch === null || it.yaw === null);
+
+        if (!posed.length) {
+          const detectable = unposed.filter((it) => it.kind === "asset");
+          const wrap = document.createElement("div");
+          wrap.style.cssText = "color:var(--ng-text-dim);font-size:11px;text-align:center;padding:20px;";
+          wrap.innerHTML = "No pose data on the current selection — pitch/yaw only comes from the pose-analysis pipeline (analyze video/folder/Immich selection).<br><br>" +
+            (detectable.length ? `<button type="button" id="ng-detect-pose-btn">Detect pose for ${detectable.length} Immich item(s)</button>` : "");
+          grid.appendChild(wrap);
+          const detectBtn = document.getElementById("ng-detect-pose-btn");
+          if (detectBtn) detectBtn.addEventListener("click", () => detectPoseForItems(detectable));
+          return;
+        }
+
+        const meanPitch = posed.reduce((s, it) => s + it.pitch, 0) / posed.length;
+        const meanYaw = posed.reduce((s, it) => s + it.yaw, 0) / posed.length;
+        let anchor = posed[0];
+        let bestScore = Infinity;
+        posed.forEach((it) => {
+          const score = Math.abs(it.pitch - meanPitch) + Math.abs(it.yaw - meanYaw);
+          if (score < bestScore) { bestScore = score; anchor = it; }
+        });
+
+        const deltaYaw = (it) => it.yaw - anchor.yaw;
+        const deltaPitch = (it) => it.pitch - anchor.pitch;
+        const yawMax = Math.max(15, ...posed.map((it) => Math.abs(deltaYaw(it))));
+        const pitchMax = Math.max(15, ...posed.map((it) => Math.abs(deltaPitch(it))));
+
+        const stage = document.createElement("div");
+        stage.className = "ng-pose-scatter-stage";
+        const spread = parseFloat(spreadSliderEl.value) || 1;
+
+        posed.forEach((it) => {
+          const isAnchor = it === anchor;
+          // pitch inverted to match the pose-list strip's convention:
+          // positive pitch (nose up) moves toward the top of the stage.
+          const yawRatio = isAnchor ? 0 : deltaYaw(it) / yawMax;
+          const pitchRatio = isAnchor ? 0 : -deltaPitch(it) / pitchMax;
+          const leftPct = 50 + yawRatio * POSE_SCATTER_SPREAD_BASE * spread;
+          const topPct = 50 + pitchRatio * POSE_SCATTER_SPREAD_BASE * spread;
+          const size = isAnchor ? 108 : 76;
+
+          const cell = document.createElement("div");
+          cell.className = "ng-pose-scatter-item" + (isAnchor ? " ng-pose-scatter-anchor" : "");
+          // yawRatio/pitchRatio kept on the cell so the Spread slider can
+          // just recompute left/top directly -- no rebuild, no image
+          // reload/refetch, which matters with real-crop-preview on since
+          // that hits the network per Immich asset.
+          cell.dataset.yawRatio = yawRatio;
+          cell.dataset.pitchRatio = pitchRatio;
+          cell.dataset.baseTransform = "translate(-50%,-50%)";
+          cell.dataset.baseZ = isAnchor ? "5" : "2";
+          cell.style.left = `${Math.max(4, Math.min(96, leftPct))}%`;
+          cell.style.top = `${Math.max(4, Math.min(96, topPct))}%`;
+          cell.style.transform = cell.dataset.baseTransform;
+          cell.style.zIndex = cell.dataset.baseZ;
+          cell.style.width = `${size}px`;
+          const titleAttr = isAnchor
+            ? `pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)} (closest to this selection's pose centroid, not necessarily true zero)`
+            : `pitch ${it.pitch.toFixed(1)}, yaw ${it.yaw.toFixed(1)} — ${deltaPitch(it) >= 0 ? "+" : ""}${deltaPitch(it).toFixed(1)}p / ${deltaYaw(it) >= 0 ? "+" : ""}${deltaYaw(it).toFixed(1)}y from center`;
+          cell.innerHTML = `
+            <img src="${srcFor(it)}" loading="lazy" title="${titleAttr} — double-click to remove" style="width:${size}px;height:${size}px;">
+            <div class="ng-pose-scatter-label">${isAnchor ? `center (p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)})` : `p${it.pitch.toFixed(0)} y${it.yaw.toFixed(0)}`}</div>
+          `;
+          cell.ondblclick = () => removeItem(it);
+          stage.appendChild(cell);
+        });
+
+        grid.appendChild(stage);
+        // reuse the same dock-style magnify used on the pose-list strip --
+        // genuinely overlapping thumbnails at similar pitch/yaw are
+        // otherwise impossible to pick apart.
+        attachNgLensEffect(stage, ".ng-pose-scatter-item", { radius: 90, maxScale: 1.8 });
+
+        if (unposed.length) {
+          const detectable = unposed.filter((it) => it.kind === "asset");
+          const strip = document.createElement("div");
+          strip.className = "ng-pose-scatter-unposed-strip";
+          strip.innerHTML = `
+            <div class="ng-pose-scatter-unposed-header">
+              <span>No pose data (${unposed.length}):</span>
+              ${detectable.length ? `<button type="button" id="ng-detect-pose-btn">Detect pose (${detectable.length})</button>` : ""}
+            </div>
+          `;
+          const row = document.createElement("div");
+          row.className = "ng-pose-scatter-unposed-row";
+          unposed.forEach((it) => {
+            const cell = document.createElement("div");
+            cell.className = "ng-pose-scatter-unposed-cell";
+            cell.innerHTML = `<img src="${srcFor(it)}" loading="lazy" title="Double-click to remove">`;
+            cell.ondblclick = () => removeItem(it);
+            row.appendChild(cell);
+          });
+          strip.appendChild(row);
+          grid.appendChild(strip);
+          const detectBtn = document.getElementById("ng-detect-pose-btn");
+          if (detectBtn) detectBtn.addEventListener("click", () => detectPoseForItems(detectable));
+        }
+      }
+
+      function renderModal() {
+        const items = buildItems();
+        title.textContent = `Selected (${items.length})`;
+        spreadWrapEl.style.display = poseLayoutCb.checked ? "flex" : "none";
+        if (poseLayoutCb.checked) renderPoseScatterMode(items);
+        else renderGridMode(items);
+      }
+
+      poseLayoutCb.onchange = renderModal;
+      realPreviewCb.onchange = renderModal;
+      spreadSliderEl.oninput = () => {
+        // recompute positions only -- no rebuild/refetch (see note above)
+        const spread = parseFloat(spreadSliderEl.value) || 1;
+        grid.querySelectorAll(".ng-pose-scatter-item").forEach((cell) => {
+          const yawRatio = parseFloat(cell.dataset.yawRatio) || 0;
+          const pitchRatio = parseFloat(cell.dataset.pitchRatio) || 0;
+          const leftPct = 50 + yawRatio * POSE_SCATTER_SPREAD_BASE * spread;
+          const topPct = 50 + pitchRatio * POSE_SCATTER_SPREAD_BASE * spread;
+          cell.style.left = `${Math.max(4, Math.min(96, leftPct))}%`;
+          cell.style.top = `${Math.max(4, Math.min(96, topPct))}%`;
+        });
+      };
+      deselectAllBtn.onclick = () => {
+        project.selectedFrames.clear();
+        project.selectedAssetIds.clear();
+        if (project.isActive) ProjectManager.render();
+        renderModal();
       };
 
-      renderGrid();
+      renderModal();
       overlay.style.display = "flex";
     },
 

@@ -11,10 +11,19 @@
 <div id="ng-preview-hover-panel"><img id="ng-preview-hover-img"><div class="ng-preview-caption" id="ng-preview-hover-caption"></div></div>
 
 <div id="ng-selected-modal" class="ng-modal-overlay" style="display:none;">
-  <div class="ng-modal">
+  <div class="ng-modal ng-selected-modal-wide">
     <div class="ng-modal-header">
       <span id="ng-selected-modal-title">Selected frames</span>
       <button id="ng-selected-modal-close" class="ng-btn" title="Close">&times;</button>
+    </div>
+    <div id="ng-selected-modal-controls" class="ng-modal-controls">
+      <label><input type="checkbox" id="ng-selected-modal-pose-layout"> Arrange by pitch/yaw</label>
+      <div id="ng-selected-modal-spread-wrap" style="display:none;">
+        <span>Spread</span>
+        <input type="range" id="ng-selected-modal-spread" min="0.3" max="2.5" step="0.1" value="1">
+      </div>
+      <label><input type="checkbox" id="ng-selected-modal-real-preview"> Show real export crop (slower)</label>
+      <button type="button" id="ng-selected-modal-deselect-all" class="ng-btn ng-btn-danger">Deselect All</button>
     </div>
     <div id="ng-selected-modal-grid" class="ng-modal-grid"></div>
   </div>
