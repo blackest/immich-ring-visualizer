@@ -163,22 +163,9 @@
     active.cacheFormatPng = cacheFormatPngCb.checked;
     ProjectManager.saveState();
   });
-  analysisStartInput.addEventListener("change", () => {
-    const project = ProjectManager.getActive();
-    if (!project || !project.video) return;
-    project.video.rangeStartSec = analysisStartInput.value === "" ? null : Number(analysisStartInput.value);
-    ProjectManager.saveState();
-  });
-  analysisEndInput.addEventListener("change", () => {
-    const project = ProjectManager.getActive();
-    if (!project || !project.video) return;
-    project.video.rangeEndSec = analysisEndInput.value === "" ? null : Number(analysisEndInput.value);
-    ProjectManager.saveState();
-  });
-  startAnalysisBtn.addEventListener("click", () => {
-    const active = ProjectManager.getActive();
-    if (active && active.video && active.videoFile) active.startAnalysis();
-  });
+  // analysisStartInput/analysisEndInput/startAnalysisBtn wiring moved to
+  // videoNG.js -- video-exclusive (folder/zip analysis auto-starts on
+  // file selection instead, see loadFolderBtn/loadZipBtn below).
   folderRefIndexInput.addEventListener("change", () => {
     const active = ProjectManager.getActive();
     if (!active) return;
@@ -409,69 +396,8 @@
     immichSearchDebounce = setTimeout(() => active.searchImmich(q), 250);
   });
 
-  // ---- wiring: frame-preview controls (static elements, wired once) ----
-  rewindBtn.addEventListener("click", () => {
-    const active = ProjectManager.getActive();
-    if (active && active.video) active.stepAndSyncAudio(1);
-  });
-  prevFrameBtn.addEventListener("click", () => {
-    const active = ProjectManager.getActive();
-    if (active && active.video) active.stepAndSyncAudio(active.video.currentFrame - 1);
-  });
-  nextFrameBtn.addEventListener("click", () => {
-    const active = ProjectManager.getActive();
-    if (active && active.video) active.stepAndSyncAudio(active.video.currentFrame + 1);
-  });
-  playBtn.addEventListener("click", () => {
-    const active = ProjectManager.getActive();
-    if (active && active.video && !active._playTimer) active.togglePlay();
-  });
-  stopBtn.addEventListener("click", () => {
-    const active = ProjectManager.getActive();
-    if (active && active.video && active._playTimer) active.togglePlay();
-  });
-  popoutVideoBtn.addEventListener("click", () => {
-    const active = ProjectManager.getActive();
-    if (active && active.video) PlaybackModal.open(active);
-  });
-
-  // ---- wiring: playback modal ----
-  playbackModalCloseBtn.addEventListener("click", () => PlaybackModal.close());
-  playbackModalEl.querySelector(".ng-playback-modal-backdrop").addEventListener("click", () => PlaybackModal.close());
-  playbackPrevFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(-1));
-  playbackNextFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(1));
-  // Range-bounded raw preview: jump to rangeStartSec once the clip is
-  // seekable, and stop (rather than rolling on to the rest of the video)
-  // once rangeEndSec is reached.
-  playbackVideoEl.addEventListener("loadedmetadata", () => {
-    if (PlaybackModal.kind === "raw" && PlaybackModal.rangeStartSec != null) {
-      playbackVideoEl.currentTime = PlaybackModal.rangeStartSec;
-    }
-  });
-  playbackVideoEl.addEventListener("timeupdate", () => {
-    if (PlaybackModal.kind === "raw" && PlaybackModal.rangeEndSec != null
-        && playbackVideoEl.currentTime >= PlaybackModal.rangeEndSec) {
-      playbackVideoEl.pause();
-      playbackVideoEl.currentTime = PlaybackModal.rangeEndSec;
-    }
-  });
-
-  document.addEventListener("keydown", (e) => {
-    if (playbackModalEl.style.display !== "none") {
-      if (e.key === "Escape") PlaybackModal.close();
-      return;
-    }
-    const active = ProjectManager.getActive();
-    if (!active || !active.video) return;
-    if (document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
-    if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      active.stepAndSyncAudio(active.video.currentFrame - 1);
-    } else if (e.key === "ArrowRight") {
-      e.preventDefault();
-      active.stepAndSyncAudio(active.video.currentFrame + 1);
-    }
-  });
+  // ---- wiring: frame-preview controls, playback modal, and the ←/→
+  // keyboard shortcut all moved to videoNG.js -- video-exclusive.
 
   // ---- left rail chrome: collapse-all / per-section expand / resize /
   // splitter. Ported from selection-ui.js's wireMiscBlock1() (unchanged
@@ -486,11 +412,10 @@
       collapseAllBtn.textContent = "▸";
     }
 
-    const savedControlsPct = parseFloat(localStorage.getItem("immichRingNG:leftControlsPct"));
-    if (!Number.isNaN(savedControlsPct)) {
-      controlsPaneEl.style.flexBasis = Math.max(24, Math.min(76, savedControlsPct)) + "%";
-    }
-
+    // Per-section expand/collapse (Anchor, Video Analysis, Person
+    // Clusters, Pose Picker, Shot Scale Picker) -- the persisted
+    // controls/frame-preview split percentage this used to also restore
+    // here was removed along with the splitter (see below).
     document.querySelectorAll(".panel-section").forEach((sec) => {
       const key = "immichRingNG:section:" + sec.dataset.section;
       const saved = localStorage.getItem(key);
@@ -510,29 +435,10 @@
       localStorage.setItem("immichRingNG:leftPanelCollapsedAll", collapsed ? "1" : "0");
     });
 
-    let splitDragging = false;
-    splitterEl.addEventListener("mousedown", (e) => {
-      if (leftRailEl.classList.contains("collapsed-all")) return;
-      splitDragging = true;
-      splitterEl.classList.add("dragging");
-      document.body.style.cursor = "ns-resize";
-      e.preventDefault();
-    });
-    document.addEventListener("mousemove", (e) => {
-      if (!splitDragging) return;
-      const rect = leftRailBodyEl.getBoundingClientRect();
-      const pct = ((e.clientY - rect.top) / rect.height) * 100;
-      controlsPaneEl.style.flexBasis = Math.max(24, Math.min(76, pct)) + "%";
-    });
-    document.addEventListener("mouseup", () => {
-      if (!splitDragging) return;
-      splitDragging = false;
-      splitterEl.classList.remove("dragging");
-      document.body.style.cursor = "";
-      const rect = leftRailBodyEl.getBoundingClientRect();
-      const controlsRect = controlsPaneEl.getBoundingClientRect();
-      localStorage.setItem("immichRingNG:leftControlsPct", Math.round((controlsRect.height / rect.height) * 100));
-    });
+    // The controls/frame-preview splitter and its drag-resize logic were
+    // removed once Frame Preview moved out of the rail entirely (see
+    // videoNG.js's header) -- ng-controls-pane is now the rail body's
+    // only content, so there's nothing left to split against.
 
     let widthDragging = false;
     let startX = 0;
@@ -696,7 +602,9 @@
     }
   }
 
-  newProjectBtn.addEventListener("click", () => ProjectManager.createProject());
+  // newProjectBtn click is wired in initguing.js (Void-state handover to
+  // ProjectManager.createProject()) -- do not also bind it here, or every
+  // "+" click creates two projects (e.g. "Default" and "Default1").
   taskButtons.forEach((btn) => {
     btn.addEventListener("click", () => ProjectManager.setTask(btn.dataset.task));
   });

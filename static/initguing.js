@@ -49,6 +49,12 @@
     // Expose to window so ProjectManager can trigger Void state if all projects are closed
     window.initGuiNG = gui;
 
-    // Initial call to ensure the void is rendered on load
-    gui.renderVoid();
+    // Initial call to ensure the void is rendered on load -- but only if
+    // ProjectManager (which runs its own loadState()+render() earlier in
+    // the script load order, in bootstrapWiringNG.js) didn't already
+    // restore a project from localStorage. Calling this unconditionally
+    // stomped the restored project's render on every page refresh.
+    if (!window.ProjectManager || !window.ProjectManager.projects || window.ProjectManager.projects.length === 0) {
+        gui.renderVoid();
+    }
 })();

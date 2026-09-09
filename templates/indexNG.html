@@ -76,6 +76,14 @@
 
     <div id="ng-app">
       <header id="ng-topbar">
+        <a
+          id="ng-switch-to-single"
+          class="ng-btn"
+          href="{{ url_for('main.index') }}"
+          title="Switch to the single-character version"
+        >
+          ← Single-char
+        </a>
         <button
           id="ng-load-project"
           class="ng-btn"
@@ -379,6 +387,7 @@
                       class="ng-video-range-input"
                     />
                   </div>
+                  <div id="ng-rail-video-preview-slot"></div>
                   <div id="ng-analysis-status"></div>
                 </div>
               </div>
@@ -778,97 +787,82 @@
                 </div>
               </div>
             </div>
-            <div
-              id="ng-splitter"
-              title="Resize controls and frame preview"
-            ></div>
-            <div id="ng-preview-pane">
-              <div
-                class="panel-section grow expanded"
-                data-section="frame-preview"
-              >
-                <div class="panel-section-header">
-                  <span class="chev">&#9656;</span
-                  ><span class="sec-title">Frame Preview</span>
-                </div>
-                <div class="panel-section-body">
-                  <div id="ng-preview-container">
-                    <p id="ng-preview-hint" class="ng-video-hint">
-                      No video loaded for this project yet.
-                    </p>
-                    <canvas
-                      id="ng-preview-canvas"
-                      style="display: none"
-                    ></canvas>
-                    <div id="ng-preview-controls-scroll" style="display: none">
-                      <div class="preview-controls">
-                        <button
-                          class="btn-seek"
-                          id="ng-btn-rewind-frame"
-                          title="Rewind to frame 1"
-                        >
-                          |&#9668; 1
-                        </button>
-                        <button
-                          class="btn-seek"
-                          id="ng-btn-prev-frame"
-                          title="Previous frame"
-                        >
-                          &#9668; -1
-                        </button>
-                        <button
-                          class="btn-seek ng-video-play-btn"
-                          id="ng-btn-play-frames"
-                          title="Play (audio-synced)"
-                        >
-                          &#9658; Play
-                        </button>
-                        <button
-                          class="btn-seek"
-                          id="ng-btn-stop-frames"
-                          title="Stop"
-                        >
-                          &#9632; Stop
-                        </button>
-                        <span id="ng-frame-counter">Frame: 1</span>
-                        <button
-                          class="btn-seek"
-                          id="ng-btn-next-frame"
-                          title="Next frame"
-                        >
-                          +1 &#9658;
-                        </button>
-                      </div>
-                      <div id="ng-preview-help">
-                        Use &#8592; / &#8594; keys to scrub one actual decoded
-                        frame at a time.
-                      </div>
-                      <button
-                        class="ng-btn ng-btn-full"
-                        id="ng-btn-popout-video"
-                        title="Pop out the source video, with audio, before any analysis is run"
-                      >
-                        Pop out video
-                      </button>
-                      <button
-                        class="btn-analyze"
-                        id="ng-btn-start-analysis"
-                        disabled
-                        title="Load a video and pick a frame first"
-                      >
-                        Run Analysis with Selected Frame
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </aside>
         <main id="ng-main">
           <p id="ng-main-placeholder" class="ng-placeholder">
             No project open. Press + to start one.
           </p>
+          <div id="ng-main-video-preview" style="display: none">
+            <div id="ng-preview-container">
+              <p id="ng-preview-hint" class="ng-video-hint">
+                No video loaded for this project yet.
+              </p>
+              <canvas
+                id="ng-preview-canvas"
+                style="display: none"
+              ></canvas>
+              <div id="ng-preview-controls-scroll" style="display: none">
+                <div class="preview-controls">
+                  <button
+                    class="btn-seek"
+                    id="ng-btn-rewind-frame"
+                    title="Rewind to frame 1"
+                  >
+                    |&#9668; 1
+                  </button>
+                  <button
+                    class="btn-seek"
+                    id="ng-btn-prev-frame"
+                    title="Previous frame"
+                  >
+                    &#9668; -1
+                  </button>
+                  <button
+                    class="btn-seek ng-video-play-btn"
+                    id="ng-btn-play-frames"
+                    title="Play (audio-synced)"
+                  >
+                    &#9658; Play
+                  </button>
+                  <button
+                    class="btn-seek"
+                    id="ng-btn-stop-frames"
+                    title="Stop"
+                  >
+                    &#9632; Stop
+                  </button>
+                  <span id="ng-frame-counter">Frame: 1</span>
+                  <button
+                    class="btn-seek"
+                    id="ng-btn-next-frame"
+                    title="Next frame"
+                  >
+                    +1 &#9658;
+                  </button>
+                </div>
+                <div id="ng-preview-help">
+                  Use &#8592; / &#8594; keys to scrub one actual decoded
+                  frame at a time.
+                </div>
+                <button
+                  class="ng-btn ng-btn-full"
+                  id="ng-btn-popout-video"
+                  title="Pop out the source video, with audio, before any analysis is run"
+                >
+                  Pop out video
+                </button>
+                <button
+                  class="btn-analyze"
+                  id="ng-btn-start-analysis"
+                  disabled
+                  title="Load a video and pick a frame first"
+                >
+                  Run Analysis with Selected Frame
+                </button>
+              </div>
+            </div>
+          </div>
           <div id="ng-stage-wrap" style="display: none">
             <div id="ng-hud">
               <span id="ng-hud-mode"></span> &middot;
@@ -1088,11 +1082,11 @@
     <script src="{{ url_for('static', filename='exportSettingsNG.js') }}"></script>
     <script src="{{ url_for('static', filename='personClustersNG.js') }}"></script>
     <script src="{{ url_for('static', filename='poseListAndFrameHelpersNG.js') }}"></script>
-    <script src="{{ url_for('static', filename='playbackModalNG.js') }}"></script>
     <script src="{{ url_for('static', filename='chartAndStaticPreviewNG.js') }}"></script>
     <script src="{{ url_for('static', filename='pickersNG.js') }}"></script>
     <script src="{{ url_for('static', filename='characterProjectNG.js') }}"></script>
     <script src="{{ url_for('static', filename='projectManagerNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='videoNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>
     <script src="{{ url_for('static', filename='initguing.js') }}"></script>
     <script src="{{ url_for('static', filename='initchar.js') }}"></script>

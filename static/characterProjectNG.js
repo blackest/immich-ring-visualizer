@@ -235,20 +235,7 @@
       return ProjectManager.activeId === this.id;
     }
 
-    stopPlayIfRunning() {
-      if (!this._playTimer) return;
-      clearInterval(this._playTimer);
-      this._playTimer = null;
-      // videoAudioEl is a single shared element across all projects -- only
-      // pause it if it's still actually pointed at THIS project's video.
-      // Regression fix: switching tabs used to leave a playing project's
-      // timer running in the background, where it would keep reading/
-      // fighting over the shared <audio> element with whichever project
-      // became active (reported as "holding the same video").
-      if (this.video && videoAudioEl.dataset.objectUrl === this.video.objectUrl) {
-        videoAudioEl.pause();
-      }
-    }
+    // stopPlayIfRunning() moved to videoNG.js (CharacterProject.prototype.stopPlayIfRunning)
 
     stopPolling() {
       if (this._pollTimer) {
@@ -298,6 +285,12 @@
       p.task = data.task || null;
       p.video = data.video || null;
       if (p.video) p.video.objectUrl = null; // blob URLs never survive a JSON round-trip
+      // previewId has the same problem as objectUrl: it only exists in the
+      // server's in-memory _preview_jobs_ng dict (see routes/videoNG.py),
+      // which is wiped on every server restart, not just every reload.
+      // Leaving it in place caused a stale previewId to 404 against
+      // /api/ng/preview-frame/ on a restored project after a restart.
+      if (p.video) p.video.previewId = null;
       p.videoLoading = false;
       p.videoFile = null;
       p.simThreshold = typeof data.simThreshold === "number" ? data.simThreshold : 0.1;
@@ -350,141 +343,10 @@
       return p;
     }
 
-    // ---- video ingest (ported from the previous NG pass, unchanged) ----
-    async loadVideo(file) {
-      this.videoLoading = true;
-      ProjectManager.render();
-
-      const formData = new FormData();
-      formData.append("video", file);
-
-      try {
-        const res = await fetch("/api/ng/preview-video", { method: "POST", body: formData });
-        const data = await res.json();
-        if (!res.ok) {
-          alert("Could not load video: " + (data.error || res.status));
-          return;
-        }
-        if (this.video && this.video.objectUrl) URL.revokeObjectURL(this.video.objectUrl);
-        const objectUrl = URL.createObjectURL(file);
-        this.video = {
-          previewId: data.previewId,
-          fps: data.fps,
-          totalFrames: data.totalFrames,
-          duration: data.duration,
-          currentFrame: 1,
-          objectUrl: objectUrl,
-          rangeStartSec: this.video ? this.video.rangeStartSec : null,
-          rangeEndSec: this.video ? this.video.rangeEndSec : null,
-        };
-        this.videoFile = file;
-        // a new video invalidates any previous analysis/ring -- avoid
-        // showing a ring built from a different clip's frames.
-        this.stopPolling();
-        this.job = null;
-        this.ring = null;
-        this.playback = null;
-        this.selectedFrames = new Set();
-        this.staticPreviewFrame = null;
-      } catch (e) {
-        alert("Could not load video: " + e.message);
-      } finally {
-        this.videoLoading = false;
-        ProjectManager.render();
-      }
-    }
-
-    frameTime(frameIdx) {
-      const fps = this.video.fps > 0 ? this.video.fps : 24;
-      return Math.max(0, (frameIdx - 1) / fps);
-    }
-
-    frameFromTime(timeSeconds) {
-      const fps = this.video.fps > 0 ? this.video.fps : 24;
-      return Math.min(this.video.totalFrames, Math.max(1, Math.floor(timeSeconds * fps) + 1));
-    }
-
-    syncAudioToFrame(frameIdx) {
-      if (!videoAudioEl.src || videoAudioEl.dataset.objectUrl !== this.video.objectUrl) return;
-      try {
-        videoAudioEl.currentTime = this.frameTime(frameIdx);
-      } catch (e) {
-        // seeking before metadata is ready can throw -- harmless, ignore
-      }
-    }
-
-    stepTo(frameNo) {
-      const clamped = Math.max(1, Math.min(this.video.totalFrames, frameNo));
-      this.video.currentFrame = clamped;
-      if (this.isActive) {
-        frameCounterEl.textContent = "Frame: " + clamped + " / " + this.video.totalFrames;
-        drawFrame(this, clamped);
-      }
-      ProjectManager.saveState();
-    }
-
-    stepAndSyncAudio(frameNo) {
-      this.stopPlayIfRunning();
-      if (this.isActive) setPlayingVisual(false);
-      this.stepTo(frameNo);
-      this.syncAudioToFrame(this.video.currentFrame);
-    }
-
-    togglePlay() {
-      if (this._playTimer) {
-        this.stopPlayIfRunning();
-        if (this.isActive) {
-          videoAudioEl.pause();
-          setPlayingVisual(false);
-        }
-        return;
-      }
-
-      const hasAudio = !!this.video.objectUrl && videoAudioEl.dataset.objectUrl === this.video.objectUrl;
-      if (!hasAudio) {
-        this.playFramesWithoutAudio();
-        return;
-      }
-
-      if (this.isActive) setPlayingVisual(true);
-      if (this.video.currentFrame >= this.video.totalFrames) this.stepTo(1);
-      this.syncAudioToFrame(this.video.currentFrame);
-
-      const playPromise = videoAudioEl.play();
-      if (playPromise && playPromise.catch) {
-        playPromise.catch(() => this.playFramesWithoutAudio());
-      }
-
-      const sampleMs = (this.video.fps > 0 ? 1000 / this.video.fps : 1000 / 24) / 2;
-      this._playTimer = setInterval(() => {
-        if (videoAudioEl.paused || videoAudioEl.ended) {
-          this.stopPlayIfRunning();
-          if (this.isActive) setPlayingVisual(false);
-          return;
-        }
-        const target = this.frameFromTime(videoAudioEl.currentTime);
-        if (target !== this.video.currentFrame) this.stepTo(target);
-        if (target >= this.video.totalFrames) {
-          this.stopPlayIfRunning();
-          videoAudioEl.pause();
-          if (this.isActive) setPlayingVisual(false);
-        }
-      }, sampleMs);
-    }
-
-    playFramesWithoutAudio() {
-      if (this.isActive) setPlayingVisual(true);
-      const intervalMs = this.video.fps > 0 ? 1000 / this.video.fps : 1000 / 24;
-      this._playTimer = setInterval(() => {
-        const next = this.video.currentFrame + 1;
-        if (next > this.video.totalFrames) {
-          this.stopPlayIfRunning();
-          if (this.isActive) setPlayingVisual(false);
-          return;
-        }
-        this.stepTo(next);
-      }, intervalMs);
-    }
+    // ---- video ingest + scrubbing: loadVideo, frameTime, frameFromTime,
+    // syncAudioToFrame, stepTo, stepAndSyncAudio, togglePlay,
+    // playFramesWithoutAudio -- all moved to videoNG.js (patched onto
+    // CharacterProject.prototype there; see that file's header). ----
 
     // ---- analysis: Run Analysis with Selected Frame -> ring + ranked matches ----
     async startAnalysis(refFrameOverride) {

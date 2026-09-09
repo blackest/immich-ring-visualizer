@@ -213,7 +213,7 @@ html, body {
 }
 
 #ng-controls-pane {
-  flex: 0 0 46%;
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -221,37 +221,6 @@ html, body {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
-}
-
-#ng-preview-pane {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-#ng-splitter {
-  height: 9px;
-  flex: 0 0 9px;
-  cursor: ns-resize;
-  position: relative;
-  margin: -2px 0;
-}
-
-#ng-splitter::before {
-  content: "";
-  position: absolute;
-  left: 36%;
-  right: 36%;
-  top: 4px;
-  height: 1px;
-  background: #32323e; /* matches the original's splitter line exactly */
-}
-
-#ng-splitter:hover::before,
-#ng-splitter.dragging::before {
-  background: var(--ng-accent);
 }
 
 /* ---- panel sections (collapsible), ported from the original ---- */
@@ -268,14 +237,6 @@ html, body {
 .panel-section.expanded.grow {
   flex: 1;
   min-height: 160px;
-}
-
-#ng-preview-pane .panel-section {
-  flex: 1;
-}
-
-#ng-preview-pane .panel-section.expanded {
-  min-height: 0;
 }
 
 .panel-section-header {
@@ -324,12 +285,46 @@ html, body {
   display: flex;
 }
 
-/* ---- frame preview (ported from #preview-container) ---- */
+/* ---- frame preview: now lives in the main stage (moved out of the
+   left rail -- see videoNG.js's header for the full move rationale).
+   ng-main-video-preview is the new main-stage wrapper; everything
+   inside it (ng-preview-container and down) is otherwise unchanged
+   from its old rail-hosted styling except where noted. ---- */
+#ng-main-video-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: hidden;
+}
+
+/* ---- compact mode: applied when the same block is reparented into the
+   rail's Video Analysis section (once a ring exists and the main stage
+   is showing it instead) -- see placeVideoPreview() in videoNG.js ---- */
+#ng-main-video-preview.ng-video-preview-compact {
+  flex: none;
+  padding: 0;
+  margin-top: 8px;
+}
+
+#ng-main-video-preview.ng-video-preview-compact #ng-preview-container {
+  max-width: none;
+}
+
+#ng-main-video-preview.ng-video-preview-compact #ng-preview-canvas {
+  max-height: 160px;
+}
+
 #ng-preview-container {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  flex: 1;
+  width: 100%;
+  max-width: 900px; /* keeps the scrub controls row from stretching
+                        edge-to-edge on a wide monitor */
   overflow: hidden;
 }
 
@@ -338,7 +333,8 @@ html, body {
   height: auto;
   flex: 0 1 auto;
   min-height: 80px;
-  max-height: calc(100% - 82px);
+  max-height: calc(100vh - 220px); /* main stage has much more vertical
+                                        room than the old rail column did */
   object-fit: contain;
   border-radius: 6px;
   background: #050507; /* matches the original's #preview-canvas */

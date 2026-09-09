@@ -66,7 +66,6 @@
   const newProjectBtn = document.getElementById("ng-new-project");
   const loadProjectBtn = document.getElementById("ng-load-project");
   const taskButtons = Array.from(document.querySelectorAll(".ng-task-btn"));
-  const videoAudioEl = document.getElementById("ng-video-audio");
 
   // ---- DOM refs: left rail chrome ----
   const leftRailEl = document.getElementById("ng-leftrail");
@@ -74,8 +73,12 @@
   const leftRailBodyEl = document.getElementById("ng-leftrail-body");
   const collapseAllBtn = document.getElementById("ng-leftrail-collapse-all");
   const resizeHandleEl = document.getElementById("ng-leftrail-resize-handle");
-  const controlsPaneEl = document.getElementById("ng-controls-pane");
-  const splitterEl = document.getElementById("ng-splitter");
+  // controlsPaneEl/splitterEl (ng-controls-pane/ng-splitter) removed --
+  // the rail/frame-preview splitter no longer exists now that Frame
+  // Preview moved to the main stage (see videoNG.js's header). The
+  // ng-controls-pane element itself still exists in the DOM (it's now
+  // the rail body's only content) but nothing needs a JS reference to
+  // it anymore.
 
   // ---- DOM refs: Anchor section ----
   const ringScaleInput = document.getElementById("ng-ring-scale-input");
@@ -91,9 +94,6 @@
   const neutralPoseReadoutEl = document.getElementById("ng-neutral-pose-readout");
 
   // ---- DOM refs: Video / Image-Set Analysis section ----
-  const videoAnalysisBodyEl = document.getElementById("ng-video-analysis-body");
-  const analysisStartInput = document.getElementById("ng-analysis-start-sec");
-  const analysisEndInput = document.getElementById("ng-analysis-end-sec");
   const simThresholdInput = document.getElementById("ng-sim-threshold");
   const blurThresholdInput = document.getElementById("ng-blur-threshold");
   const cacheFormatPngCb = document.getElementById("ng-cache-format-png");
@@ -103,28 +103,21 @@
   const folderRefIndexInput = document.getElementById("ng-folder-ref-index");
   const analysisSectionTitleEl = document.getElementById("ng-analysis-section-title");
   const folderRowEl = document.querySelector(".ng-folder-row");
-  const videoRangeRowEl = document.querySelector(".ng-video-range");
+  // videoAnalysisBodyEl, analysisStartInput, analysisEndInput, and
+  // videoRangeRowEl moved to videoNG.js -- video-exclusive, unlike the
+  // shared thresholds/status/folder refs above.
 
   // ---- DOM refs: Frame Preview section ----
+  // previewCanvasEl/previewHintEl/previewControlsScrollEl stay here --
+  // shared with chartAndStaticPreviewNG.js's folder/zip static preview.
+  // frameCounterEl, rewindBtn, prevFrameBtn, playBtn, stopBtn,
+  // nextFrameBtn, startAnalysisBtn, and popoutVideoBtn moved to
+  // videoNG.js -- video-exclusive.
   const previewHintEl = document.getElementById("ng-preview-hint");
   const previewCanvasEl = document.getElementById("ng-preview-canvas");
   const previewControlsScrollEl = document.getElementById("ng-preview-controls-scroll");
-  const frameCounterEl = document.getElementById("ng-frame-counter");
-  const rewindBtn = document.getElementById("ng-btn-rewind-frame");
-  const prevFrameBtn = document.getElementById("ng-btn-prev-frame");
-  const playBtn = document.getElementById("ng-btn-play-frames");
-  const stopBtn = document.getElementById("ng-btn-stop-frames");
-  const nextFrameBtn = document.getElementById("ng-btn-next-frame");
-  const startAnalysisBtn = document.getElementById("ng-btn-start-analysis");
-  const popoutVideoBtn = document.getElementById("ng-btn-popout-video");
 
-  // ---- DOM refs: playback modal (pop-out, rejected frames blanked) ----
-  const playbackModalEl = document.getElementById("ng-playback-modal");
-  const playbackModalTitleEl = document.getElementById("ng-playback-modal-title");
-  const playbackModalCloseBtn = document.getElementById("ng-playback-modal-close");
-  const playbackVideoEl = document.getElementById("ng-playback-video");
-  const playbackPrevFrameBtn = document.getElementById("ng-playback-prev-frame");
-  const playbackNextFrameBtn = document.getElementById("ng-playback-next-frame");
+  // ---- DOM refs: playback modal -- moved to videoNG.js in full.
 
   // ---- DOM refs: hover preview ----
   const hoverPanel = document.getElementById("ng-preview-hover-panel");

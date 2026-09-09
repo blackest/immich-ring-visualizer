@@ -206,46 +206,12 @@
     return p;
   }
 
-  function videoPickerButton(project, label) {
-    const btn = document.createElement("button");
-    btn.className = "ng-btn";
-    btn.textContent = label;
-
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "video/*";
-    input.style.display = "none";
-    input.addEventListener("change", () => {
-      if (input.files && input.files[0]) project.loadVideo(input.files[0]);
-    });
-
-    btn.addEventListener("click", () => input.click());
-
-    const wrap = document.createElement("div");
-    wrap.appendChild(btn);
-    wrap.appendChild(input);
-    return wrap;
-  }
-
-  function drawFrame(project, frameNo) {
-    const img = new Image();
-    img.onload = () => {
-      const active = ProjectManager.getActive();
-      if (!active || active.id !== project.id) return;
-      previewCanvasEl.width = img.naturalWidth;
-      previewCanvasEl.height = img.naturalHeight;
-      previewCanvasEl.getContext("2d").drawImage(img, 0, 0);
-    };
-    img.src = "/api/ng/preview-frame/" + project.video.previewId + "/" + frameNo + "?t=" + Date.now();
-  }
-
-  function setPlayingVisual(isPlaying) {
-    playBtn.classList.toggle("ng-video-play-active", isPlaying);
-  }
+  // videoPickerButton, drawFrame, and setPlayingVisual moved to videoNG.js
+  // -- all three are video-exclusive, unlike placeholder() above which is
+  // a generic DOM helper used by folder/immich empty-states too.
 
 // ---- exposed for other modules to call ----
 window.poseListAndFrameHelpersNG = {
-  renderPoseListNG, setupPoseListScrubberNG, flashHighlightNG,
-  drawFrame, setPlayingVisual, placeholder, videoPickerButton,
+  renderPoseListNG, setupPoseListScrubberNG, flashHighlightNG, placeholder,
 };
 

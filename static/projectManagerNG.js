@@ -152,6 +152,14 @@
  *      internal split in one step.
  */
 
+  // Was referenced in saveState()/loadState() below but never declared
+  // anywhere in the codebase -- both calls are wrapped in try/catch (for
+  // legitimate localStorage quota/private-mode errors), so the resulting
+  // ReferenceError was silently swallowed every time: saveState() never
+  // actually wrote anything, and loadState() always silently returned
+  // empty. This is why nothing survived a page refresh.
+  const STORAGE_KEY = "immichRingNG:projects";
+
   const ProjectManager = {
     projects: [],
     activeId: null,
@@ -366,6 +374,21 @@
     renderMain() {
       const active = this.getActive();
 
+      // Where (if anywhere) the video preview player lives is decided
+      // once here, independent of which task tab happens to be active --
+      // if this project has a video loaded, keep it reachable: prominent
+      // in the main stage before there's a ring to show instead, tucked
+      // compact into the rail once analysis has run and the main stage
+      // switches over to showing the ring (see placeVideoPreview() in
+      // videoNG.js).
+      if (!active || !active.video) {
+        placeVideoPreview("hidden");
+      } else if (active.ring) {
+        placeVideoPreview("rail");
+      } else {
+        placeVideoPreview("main");
+      }
+
       const showPlaceholder = (text) => {
         mainPlaceholderEl.style.display = "";
         mainPlaceholderEl.textContent = text;
@@ -383,6 +406,16 @@
       }
       if (active.task === "video") {
         if (!active.ring) {
+          if (active.video) {
+            // A video's loaded but not analyzed yet -- the main stage IS
+            // the (already-placed, see above) video preview/scrubber, so
+            // the person can actually watch/judge it and pick a reference
+            // frame, instead of a plain "go do something" text placeholder.
+            mainPlaceholderEl.style.display = "none";
+            stageWrapEl.style.display = "none";
+            sidebarEl.style.display = "none";
+            return;
+          }
           showPlaceholder("No analysis yet for “" + active.name + "” — load a video, pick a frame, and press Run Analysis.");
           return;
         }
@@ -883,37 +916,9 @@
       });
     },
 
-    renderVideoAnalysisBody(project) {
-      if (project.task !== "video") {
-        videoAnalysisBodyEl.innerHTML = "";
-        return;
-      }
-      videoAnalysisBodyEl.innerHTML = "";
-
-      if (project.videoLoading) {
-        videoAnalysisBodyEl.appendChild(placeholder("Loading video..."));
-      } else if (project.video) {
-        const info = document.createElement("p");
-        info.className = "ng-video-hint";
-        info.textContent =
-          project.video.fps.toFixed(2) + " fps, " +
-          project.video.totalFrames + " frames, " +
-          project.video.duration.toFixed(1) + "s";
-        videoAnalysisBodyEl.appendChild(info);
-        videoAnalysisBodyEl.appendChild(videoPickerButton(project, "Replace Video"));
-      } else {
-        videoAnalysisBodyEl.appendChild(placeholder("No video loaded for this project yet."));
-        videoAnalysisBodyEl.appendChild(videoPickerButton(project, "Choose Video..."));
-      }
-
-      analysisStartInput.value = project.video && project.video.rangeStartSec != null ? project.video.rangeStartSec : "";
-      analysisEndInput.value = project.video && project.video.rangeEndSec != null ? project.video.rangeEndSec : "";
-
-      startAnalysisBtn.disabled = !project.video || project.videoLoading || (project.job && project.job.status === "running");
-      startAnalysisBtn.title = !project.video
-        ? "Load a video and pick a frame first"
-        : (project.job && project.job.status === "running" ? "Analysis already running for this tab" : "");
-    },
+    // renderVideoAnalysisBody(project) moved to videoNG.js (patched onto
+    // ProjectManager there; see that file's header). Still called from
+    // renderLeftRail() above via this.renderVideoAnalysisBody(active).
 
     renderAnalysisStatus(project) {
       if (!project.job) {
@@ -1416,52 +1421,9 @@
       };
     },
 
-    renderFramePreview(project) {
-      if (!project.video) {
-        if (project.staticPreviewFrame) {
-          // folder/image-set job with a chart-click preview already shown --
-          // redraw it rather than resetting to the "no video" placeholder,
-          // since a full render() (selection toggles, tab switches, etc.)
-          // must not silently wipe out what the person just clicked to view.
-          showStaticFramePreviewNG(project, project.staticPreviewFrame);
-          return;
-        }
-        previewHintEl.textContent = project.task === "folderzip"
-          ? "No folder/zip analyzed yet for this project."
-          : "No video loaded for this project yet.";
-        previewCanvasEl.style.display = "none";
-        previewControlsScrollEl.style.display = "none";
-        return;
-      }
-
-      // Play button is a single shared element -- always resync its visual
-      // state to whichever project is actually being rendered, rather than
-      // trusting whatever the last togglePlay() call left it as.
-      setPlayingVisual(!!project._playTimer);
-
-      previewHintEl.textContent = "Reference frame — use ← / → to step one actual video frame";
-      previewCanvasEl.style.display = "";
-      previewControlsScrollEl.style.display = "";
-
-      if (project.video.objectUrl && videoAudioEl.dataset.objectUrl !== project.video.objectUrl) {
-        videoAudioEl.src = project.video.objectUrl;
-        videoAudioEl.dataset.objectUrl = project.video.objectUrl;
-        videoAudioEl.dataset.projectId = project.id;
-        videoAudioEl.load();
-      }
-
-      // objectUrl doesn't survive a page reload (blob URLs die with the
-      // page), so after a reload there's nothing left to pop out until
-      // the video is re-picked -- same constraint the audio-synced
-      // scrubber above already lives with.
-      popoutVideoBtn.disabled = !project.video.objectUrl;
-      popoutVideoBtn.title = project.video.objectUrl
-        ? "Pop out the source video, with audio, before any analysis is run"
-        : "Video needs to be re-loaded after a page reload before it can be popped out";
-
-      frameCounterEl.textContent = "Frame: " + project.video.currentFrame + " / " + project.video.totalFrames;
-      drawFrame(project, project.video.currentFrame);
-    },
+    // renderFramePreview(project) moved to videoNG.js (patched onto
+    // ProjectManager there; see that file's header). Still called from
+    // renderLeftRail() above via this.renderFramePreview(active).
   };
 
 // ---- exposed for appNG.js and other modules to call ----
