@@ -55,6 +55,36 @@
       </div>
     </div>
 
+    <div id="ng-settings-modal" class="ng-modal-overlay" style="display: none">
+      <div class="ng-modal ng-settings-modal">
+        <div class="ng-modal-header">
+          <span>Settings</span>
+          <button id="ng-settings-modal-close" class="ng-btn" title="Close">
+            &times;
+          </button>
+        </div>
+        <div class="ng-modal-body">
+          <div class="ng-settings-row">
+            <div class="ng-settings-row-label">
+              <strong>yt-dlp</strong>
+              <span class="ng-settings-row-desc"
+                >Update yt-dlp to the latest version in this project's
+                venv.</span
+              >
+            </div>
+            <button id="ng-settings-update-ytdlp" class="ng-btn">
+              Update
+            </button>
+          </div>
+          <pre
+            id="ng-settings-ytdlp-output"
+            class="ng-settings-output"
+            style="display: none"
+          ></pre>
+        </div>
+      </div>
+    </div>
+
     <!--
   immichRingNG shell.
 
@@ -99,6 +129,13 @@
           title="Start a new blank project"
         >
           +
+        </button>
+        <button
+          id="ng-settings-cog"
+          class="ng-btn ng-btn-cog"
+          title="Settings"
+        >
+          &#9881;
         </button>
       </header>
 
@@ -1088,6 +1125,7 @@
     <script src="{{ url_for('static', filename='projectManagerNG.js') }}"></script>
     <script src="{{ url_for('static', filename='videoNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='settingsNG.js') }}"></script>
     <script src="{{ url_for('static', filename='initguing.js') }}"></script>
     <script src="{{ url_for('static', filename='initchar.js') }}"></script>
   </body>

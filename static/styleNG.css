@@ -132,6 +132,13 @@ html, body {
   font-weight: 600;
 }
 
+.ng-btn-cog {
+  width: 32px;
+  padding: 0;
+  font-size: 16px;
+  margin-left: auto;
+}
+
 /* ---- body: left rail + main ---- */
 #ng-body {
   flex: 1 1 auto;
@@ -1133,6 +1140,36 @@ html, body {
   overflow: hidden;
 }
 .ng-selected-modal-wide { width: min(960px, 94vw); }
+.ng-settings-modal { width: min(480px, 92vw); max-height: none; }
+.ng-modal-body { padding: 14px; }
+.ng-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ng-settings-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ng-settings-row-desc {
+  font-size: 12px;
+  color: var(--ng-text-dim);
+}
+.ng-settings-output {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .ng-modal-header {
   display: flex;
   align-items: center;
