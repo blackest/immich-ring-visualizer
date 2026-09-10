@@ -1601,3 +1601,207 @@ html, body {
   border-radius: 3px;
   display: block;
 }
+
+/* ============================================================
+   Generate view (task === "generate") -- rail pane #ng-generate-pane
+   and main region #ng-generate-main. See static/generateNG.js.
+   ============================================================ */
+#ng-generate-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ng-gen-label {
+  font-size: 11px;
+  color: var(--ng-text-dim);
+  margin-bottom: 4px;
+}
+.ng-gen-linkrow { float: right; }
+.ng-gen-linkrow a { color: var(--ng-accent); text-decoration: none; }
+
+.ng-gen-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text);
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.ng-gen-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.ng-gen-btn {
+  width: 100%;
+  font-size: 11px;
+  padding: 7px;
+  margin-top: 8px;
+  background: var(--ng-accent);
+  color: #0b0b0e;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.ng-gen-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ng-gen-btn-quiet {
+  background: var(--ng-panel-raised);
+  color: var(--ng-text-dim);
+  border: 1px solid var(--ng-border);
+  font-weight: 400;
+  padding: 5px;
+}
+
+.ng-gen-collapse-toggle {
+  font-size: 10px;
+  color: var(--ng-accent);
+  cursor: pointer;
+  user-select: none;
+  margin: 8px 0 4px;
+}
+
+.ng-gen-status {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-top: 6px;
+  min-height: 12px;
+  white-space: pre-wrap;
+}
+
+/* reference tray -- thumbnails of the project's selected candidates +
+   any disk-added photos; click to pick the active reference */
+.ng-gen-ref-tray {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 4px;
+}
+.ng-gen-ref-tray:empty { display: none; }
+.ng-gen-ref {
+  position: relative;
+  aspect-ratio: 1;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--ng-bg);
+}
+.ng-gen-ref img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ng-gen-ref.ng-gen-ref-active { border-color: var(--ng-accent); }
+.ng-gen-ref-badge {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  font-size: 9px;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--ng-text);
+}
+
+.ng-gen-pose-list {
+  border: 1px solid var(--ng-border);
+  border-radius: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.ng-gen-pose-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10px;
+  padding: 2px 2px;
+  cursor: pointer;
+}
+.ng-gen-pose-row:hover { background: var(--ng-panel-raised); }
+.ng-gen-pose-row .k { color: var(--ng-text); flex-shrink: 0; }
+.ng-gen-pose-row .p {
+  color: var(--ng-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* main region: the queue */
+#ng-generate-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+#ng-gen-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--ng-text);
+  margin-bottom: 10px;
+}
+#ng-gen-queue-count { color: var(--ng-text-dim); }
+.ng-gen-queue-row {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--ng-border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--ng-panel-raised);
+}
+.ng-gen-queue-row .thumbs {
+  display: flex;
+  gap: 4px;
+}
+.ng-gen-queue-row .thumbs img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: var(--ng-bg);
+  border: 1px solid var(--ng-border);
+}
+.ng-gen-queue-row .meta { min-width: 0; }
+.ng-gen-queue-row .meta .title { font-size: 12px; color: var(--ng-text); }
+.ng-gen-queue-row .meta .sub {
+  font-size: 10px;
+  color: var(--ng-text-dim);
+  margin-top: 2px;
+}
+.ng-gen-queue-row .st { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.ng-gen-queue-row.st-done .st { color: #4ad46a; }
+.ng-gen-queue-row.st-failed .st { color: var(--ng-danger); }
+.ng-gen-queue-row.st-rendering .st { color: var(--ng-accent); }
+.ng-gen-queue-row.st-queued .st,
+.ng-gen-queue-row.st-pending .st { color: var(--ng-text-dim); }
+.ng-gen-reroll {
+  font-size: 10px;
+  padding: 3px 7px;
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text-dim);
+  border-radius: 3px;
+  cursor: pointer;
+}

@@ -293,6 +293,10 @@
       this.renderLeftRail();
       this.renderMain();
       const active = this.getActive();
+      // Generate view (task === "generate") owns its own rail pane and
+      // main region -- it just needs to be told which project is active
+      // (for the reference image) and when to show/hide itself.
+      if (window.GenerateNG) window.GenerateNG.sync(active);
       applyResolutionSummaryNG(active && active.job ? active.job.resolutionSummary : null);
       this.saveState();
     },
@@ -380,8 +384,9 @@
       // in the main stage before there's a ring to show instead, tucked
       // compact into the rail once analysis has run and the main stage
       // switches over to showing the ring (see placeVideoPreview() in
-      // videoNG.js).
-      if (!active || !active.video) {
+      // videoNG.js). The Generate view takes over the whole main stage
+      // and rail, so the preview is fully hidden there regardless.
+      if (!active || !active.video || active.task === "generate") {
         placeVideoPreview("hidden");
       } else if (active.ring) {
         placeVideoPreview("rail");
@@ -401,7 +406,15 @@
         return;
       }
       if (!active.task) {
-        showPlaceholder("Pick Video, Immich, or Folder / Zip below to get started with “" + active.name + "”.");
+        showPlaceholder("Pick Video, Immich, Folder / Zip, or Generate below to get started with “" + active.name + "”.");
+        return;
+      }
+      if (active.task === "generate") {
+        // The Generate view's main region (#ng-generate-main) is shown by
+        // GenerateNG.sync(); everything else in the main stage stays hidden.
+        mainPlaceholderEl.style.display = "none";
+        stageWrapEl.style.display = "none";
+        sidebarEl.style.display = "none";
         return;
       }
       if (active.task === "video") {
@@ -447,7 +460,7 @@
           }
         }
       } else {
-        showPlaceholder("Pick Video, Immich, or Folder / Zip below to get started with “" + active.name + "”.");
+        showPlaceholder("Pick Video, Immich, Folder / Zip, or Generate below to get started with “" + active.name + "”.");
         return;
       }
 
@@ -813,6 +826,13 @@
       }
       leftRailEmptyEl.style.display = "none";
       leftRailBodyEl.style.display = "flex";
+
+      if (active.task === "generate") {
+        // Generate view swaps the whole rail body for #ng-generate-pane
+        // (see generateNG.js / GenerateNG.sync) -- none of the per-task
+        // section toggling or ring-derived control refresh below applies.
+        return;
+      }
 
       // The three ingest sources are separate switchable "pages" within
       // the tab -- only the section(s) for the active task are shown.

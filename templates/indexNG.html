@@ -825,6 +825,105 @@
               </div>
             </div>
           </div>
+
+          <!-- Generate view's rail pane -- swapped in for #ng-controls-pane
+               by GenerateNG.sync() when the active project's task is
+               "generate". Self-contained: the only thing it reads from the
+               rest of the app is the active project's reference image(s),
+               via generateNG.js. -->
+          <div id="ng-generate-pane" style="display: none">
+            <div
+              id="ng-gen-unavailable"
+              style="
+                display: none;
+                font-size: 11px;
+                color: #e0a030;
+                background: #2a2210;
+                border: 1px solid #4a3a18;
+                border-radius: 6px;
+                padding: 6px;
+                margin-bottom: 8px;
+              "
+            ></div>
+
+            <label class="ng-gen-label" for="ng-gen-name">Character name</label>
+            <input
+              id="ng-gen-name"
+              type="text"
+              class="ng-gen-input"
+              placeholder="e.g. petra (optional)"
+            />
+
+            <div class="ng-gen-label" style="margin-top: 10px">
+              Reference image
+            </div>
+            <div id="ng-gen-ref-tray" class="ng-gen-ref-tray"></div>
+            <input
+              id="ng-gen-ref-file"
+              type="file"
+              accept="image/*"
+              style="display: none"
+            />
+            <button
+              type="button"
+              id="ng-gen-ref-file-btn"
+              class="ng-gen-btn ng-gen-btn-quiet"
+            >
+              + add photo from disk&hellip;
+            </button>
+
+            <label class="ng-gen-label" style="margin-top: 10px" for="ng-gen-style"
+              >Style</label
+            >
+            <select id="ng-gen-style" class="ng-gen-input">
+              <option value="none">No style</option>
+            </select>
+
+            <div id="ng-gen-settings-toggle" class="ng-gen-collapse-toggle">
+              &#9656; more settings
+            </div>
+            <div id="ng-gen-settings-more" style="display: none">
+              <input
+                id="ng-gen-wardrobe"
+                type="text"
+                class="ng-gen-input"
+                placeholder="Wardrobe override (optional)"
+              />
+              <input
+                id="ng-gen-hair"
+                type="text"
+                class="ng-gen-input"
+                placeholder="Hair color (optional, e.g. blonde)"
+              />
+              <div style="display: flex; gap: 6px; align-items: center">
+                <input
+                  id="ng-gen-seed"
+                  type="number"
+                  class="ng-gen-input"
+                  style="flex: 1"
+                  placeholder="Seed (blank = random)"
+                />
+                <label class="ng-gen-check">
+                  <input type="checkbox" id="ng-gen-identity-lock" checked />
+                  identity lock
+                </label>
+              </div>
+            </div>
+
+            <div class="ng-gen-label" style="margin-top: 10px">
+              Poses
+              <span class="ng-gen-linkrow">
+                <a href="#" id="ng-gen-pose-all">all</a> ·
+                <a href="#" id="ng-gen-pose-none">none</a>
+              </span>
+            </div>
+            <div id="ng-gen-pose-list" class="ng-gen-pose-list"></div>
+
+            <button type="button" id="ng-gen-add-btn" class="ng-gen-btn">
+              Add to queue
+            </button>
+            <div id="ng-gen-status" class="ng-gen-status"></div>
+          </div>
         </aside>
         <main id="ng-main">
           <p id="ng-main-placeholder" class="ng-placeholder">
@@ -918,6 +1017,27 @@
               />
               <span id="ng-pose-scrub-right"></span>
             </div>
+          </div>
+          <!-- Generate view's main region -- the render queue ("shared
+               printer"). Shown by GenerateNG.sync() when task is
+               "generate"; every other main-stage element is hidden then. -->
+          <div id="ng-generate-main" style="display: none">
+            <div id="ng-gen-queue-head">
+              <span>Render queue <span id="ng-gen-queue-count"></span></span>
+              <button
+                type="button"
+                id="ng-gen-queue-clear"
+                class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin: 0"
+              >
+                clear finished
+              </button>
+            </div>
+            <p id="ng-gen-queue-empty" class="ng-placeholder">
+              Nothing queued yet. Pick a reference and some poses in the left
+              rail, then press &ldquo;Add to queue&rdquo;.
+            </p>
+            <div id="ng-gen-queue"></div>
           </div>
           <aside id="ng-sidebar" style="display: none">
             <div id="ng-sidebar-current">
@@ -1131,6 +1251,7 @@
     <script src="{{ url_for('static', filename='characterProjectNG.js') }}"></script>
     <script src="{{ url_for('static', filename='projectManagerNG.js') }}"></script>
     <script src="{{ url_for('static', filename='videoNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='generateNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>
     <script src="{{ url_for('static', filename='settingsNG.js') }}"></script>
     <script src="{{ url_for('static', filename='initguing.js') }}"></script>

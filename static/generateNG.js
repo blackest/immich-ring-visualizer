@@ -1,0 +1,677 @@
+/**
+ * generateNG.js -- the "Generate" view (bottom-bar Generate task).
+ *
+ * Self-contained character-sheet generation, wired to the NG backend at
+ * /api/ng/generate/* (routes/generateNG.py). This file deliberately does
+ * NOT touch or reuse phosphene-sheet.js -- that stays the original page's
+ * working code. The only thing this view reads from the rest of the app
+ * is the active project's reference image(s): the ring anchor plus any
+ * ring candidates the user has selected, surfaced as a small tray. A
+ * photo picked from disk works too, with no project at all.
+ *
+ * Model: a flat FIFO "render queue" (a shared printer). Each queue entry
+ * is one (reference image, pose) pairing. "Add to queue" fans the ticked
+ * poses out into one job per pose -- POST /sheet-from-upload with
+ * views=["<key>"] -- so the backend's single worker renders them one at a
+ * time, in add order, and different references/characters interleave
+ * naturally (petra pose A, then petra pose C from another photo, ...).
+ *
+ * Distinct reference images can't share a character id -- the backend's
+ * create_draft_character_ng refuses to overwrite an existing avatar and
+ * the upload route silently swallows that -- so each reference gets its
+ * own trigger: "petra", then "petra-2", "petra-3", ... (auto, invisible;
+ * the queue row shows the ref thumbnail so they're still tellable apart).
+ *
+ * Classic script sharing page scope with the other *NG.js files. Loaded
+ * after projectManagerNG.js and before bootstrapWiringNG.js (which fires
+ * the first ProjectManager.render(), which calls GenerateNG.sync()).
+ * In-memory only -- the queue is lost on refresh, same as the backend's
+ * own job store.
+ */
+(function () {
+  "use strict";
+
+  var POLL_MS = 2000;
+  var API = "/api/ng/generate";
+
+  // ---- module state ----
+  var inited = false;
+  var presetsLoaded = false;
+  var poseCatalogue = []; // [{key, pose, preset}]
+  var styleNames = ["none"];
+  var refs = []; // [{id, label, kind: "proj"|"disk", url, file?}]
+  var activeRefId = null;
+  var queue = []; // [{localId, character, key, refId, refUrl, settings, jobId, status, thumbUrl, error}]
+  var localSeq = 0;
+  var pollTimer = null;
+  var pumping = false;
+  var generationDisabled = false;
+  var refTriggers = {}; // "base|refId" -> trigger
+  var baseCounts = {}; // base -> distinct-ref count so far
+
+  var ST_LABEL = {
+    pending: "waiting",
+    submitting: "submitting…",
+    queued: "queued",
+    rendering: "rendering…",
+    done: "done",
+    failed: "failed",
+  };
+
+  // ---- DOM (owned here; queried lazily so script load order can't bite) ----
+  var els = {};
+  function $(id) {
+    return document.getElementById(id);
+  }
+  function refreshEls() {
+    els.pane = $("ng-generate-pane");
+    els.main = $("ng-generate-main");
+    els.controlsPane = $("ng-controls-pane");
+    els.unavailable = $("ng-gen-unavailable");
+    els.name = $("ng-gen-name");
+    els.refTray = $("ng-gen-ref-tray");
+    els.refFile = $("ng-gen-ref-file");
+    els.refFileBtn = $("ng-gen-ref-file-btn");
+    els.style = $("ng-gen-style");
+    els.settingsToggle = $("ng-gen-settings-toggle");
+    els.settingsMore = $("ng-gen-settings-more");
+    els.wardrobe = $("ng-gen-wardrobe");
+    els.hair = $("ng-gen-hair");
+    els.seed = $("ng-gen-seed");
+    els.identityLock = $("ng-gen-identity-lock");
+    els.poseAll = $("ng-gen-pose-all");
+    els.poseNone = $("ng-gen-pose-none");
+    els.poseList = $("ng-gen-pose-list");
+    els.addBtn = $("ng-gen-add-btn");
+    els.status = $("ng-gen-status");
+    els.queue = $("ng-gen-queue");
+    els.queueEmpty = $("ng-gen-queue-empty");
+    els.queueCount = $("ng-gen-queue-count");
+    els.queueClear = $("ng-gen-queue-clear");
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  // Trigger / character-id: the backend's _safe_id_ng allows only
+  // [A-Za-z0-9 _-], so strip everything else.
+  function slugName(s) {
+    var v = String(s || "")
+      .replace(/[^A-Za-z0-9 _-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return v || "character";
+  }
+
+  function setStatus(msg) {
+    if (els.status) els.status.textContent = msg || "";
+  }
+
+  // ---- one-time wiring ----
+  function init() {
+    if (inited) return;
+    refreshEls();
+    if (!els.pane) return;
+    inited = true;
+
+    els.refFileBtn.addEventListener("click", function () {
+      els.refFile.click();
+    });
+    els.refFile.addEventListener("change", onDiskFile);
+
+    els.settingsToggle.addEventListener("click", function () {
+      var open = els.settingsMore.style.display !== "none";
+      els.settingsMore.style.display = open ? "none" : "block";
+      els.settingsToggle.innerHTML =
+        (open ? "▸" : "▾") + " more settings";
+    });
+
+    els.poseAll.addEventListener("click", function (e) {
+      e.preventDefault();
+      togglePoses(true);
+    });
+    els.poseNone.addEventListener("click", function (e) {
+      e.preventDefault();
+      togglePoses(false);
+    });
+
+    els.addBtn.addEventListener("click", addToQueue);
+    els.queueClear.addEventListener("click", function () {
+      queue = queue.filter(function (q) {
+        return q.status !== "done" && q.status !== "failed";
+      });
+      renderQueue();
+    });
+  }
+
+  // ---- called from ProjectManager.render() every tick ----
+  function sync(active) {
+    refreshEls();
+    if (!els.pane || !els.main) return;
+    var on = !!(active && active.task === "generate");
+    els.pane.style.display = on ? "" : "none";
+    els.main.style.display = on ? "" : "none";
+    if (els.controlsPane) els.controlsPane.style.display = on ? "none" : "";
+    if (!on) return;
+
+    init();
+    ensurePresetsAndHealth();
+
+    if (els.name && !els.name.value && active && active.name) {
+      els.name.placeholder = "e.g. " + slugName(active.name);
+    }
+    rebuildRefTray(active);
+    renderQueue();
+  }
+
+  // ---- presets + engine-health, fetched once ----
+  function ensurePresetsAndHealth() {
+    if (presetsLoaded) return;
+    presetsLoaded = true;
+
+    fetch(API + "/presets")
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        styleNames =
+          data && data.styles && data.styles.length ? data.styles : ["none"];
+        var seen = {};
+        poseCatalogue = [];
+        var presets = (data && data.presets) || {};
+        Object.keys(presets).forEach(function (pname) {
+          (presets[pname] || []).forEach(function (s) {
+            if (seen[s.key]) return;
+            seen[s.key] = true;
+            poseCatalogue.push({
+              key: s.key,
+              pose: s.pose_phrase || "",
+              preset: pname,
+            });
+          });
+        });
+        renderStyleOptions();
+        renderPoseList();
+      })
+      .catch(function () {
+        presetsLoaded = false; // let a later sync retry
+      });
+
+    fetch(API + "/status")
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (h) {
+        setGenerationDisabled(!!(h && h.reachable === false), h);
+      })
+      .catch(function () {
+        /* fail open */
+      });
+  }
+
+  function renderStyleOptions() {
+    if (!els.style) return;
+    var cur = els.style.value;
+    els.style.innerHTML = "";
+    styleNames.forEach(function (name) {
+      var o = document.createElement("option");
+      o.value = name;
+      o.textContent = name === "none" ? "No style" : name.replace(/_/g, " ");
+      els.style.appendChild(o);
+    });
+    if (styleNames.indexOf(cur) >= 0) els.style.value = cur;
+  }
+
+  function renderPoseList() {
+    if (!els.poseList) return;
+    var checked = {};
+    els.poseList.querySelectorAll("input:checked").forEach(function (cb) {
+      checked[cb.value] = true;
+    });
+    els.poseList.innerHTML = "";
+    poseCatalogue.forEach(function (p) {
+      var row = document.createElement("label");
+      row.className = "ng-gen-pose-row";
+      row.innerHTML =
+        '<input type="checkbox" value="' +
+        escapeHtml(p.key) +
+        '">' +
+        '<span class="k">' +
+        escapeHtml(p.key) +
+        "</span>" +
+        '<span class="p">' +
+        escapeHtml(p.pose) +
+        "</span>";
+      if (checked[p.key]) row.querySelector("input").checked = true;
+      els.poseList.appendChild(row);
+    });
+  }
+
+  function togglePoses(on) {
+    els.poseList.querySelectorAll("input").forEach(function (cb) {
+      cb.checked = on;
+    });
+  }
+
+  // ---- reference tray ----
+  function rebuildRefTray(active) {
+    var disk = refs.filter(function (r) {
+      return r.kind === "disk";
+    });
+    var proj = [];
+    var ring = active && active.ring;
+    if (ring) {
+      if (ring.anchorUrl) {
+        proj.push({
+          id: "anchor",
+          label: "anchor",
+          kind: "proj",
+          url: ring.anchorUrl,
+        });
+      }
+      if (active.selectedFrames && active.selectedFrames.size && active.sortedRanked) {
+        active
+          .sortedRanked()
+          .filter(function (r) {
+            return active.selectedFrames.has(r.frame);
+          })
+          .forEach(function (r) {
+            if (r.thumbUrl) {
+              proj.push({
+                id: "f" + r.frame,
+                label: "#" + r.frame,
+                kind: "proj",
+                url: r.thumbUrl,
+              });
+            }
+          });
+      }
+    }
+    refs = proj.concat(disk);
+    var stillThere = refs.some(function (r) {
+      return r.id === activeRefId;
+    });
+    if (!stillThere) activeRefId = refs.length ? refs[0].id : null;
+    renderRefTray();
+  }
+
+  function renderRefTray() {
+    if (!els.refTray) return;
+    els.refTray.innerHTML = "";
+    refs.forEach(function (ref) {
+      var d = document.createElement("div");
+      d.className =
+        "ng-gen-ref" + (ref.id === activeRefId ? " ng-gen-ref-active" : "");
+      d.innerHTML =
+        '<img src="' +
+        escapeHtml(ref.url) +
+        '" alt=""><span class="ng-gen-ref-badge">' +
+        escapeHtml(ref.label) +
+        "</span>";
+      d.addEventListener("click", function () {
+        activeRefId = ref.id;
+        renderRefTray();
+      });
+      els.refTray.appendChild(d);
+    });
+  }
+
+  function onDiskFile() {
+    var f = els.refFile.files && els.refFile.files[0];
+    if (!f) return;
+    var n = ++localSeq;
+    var diskCount = refs.filter(function (r) {
+      return r.kind === "disk";
+    }).length;
+    refs.push({
+      id: "disk" + n,
+      label: "disk " + (diskCount + 1),
+      kind: "disk",
+      url: URL.createObjectURL(f),
+      file: f,
+    });
+    activeRefId = "disk" + n;
+    els.refFile.value = "";
+    renderRefTray();
+  }
+
+  // ---- settings ----
+  function readSettings() {
+    var seedRaw = (els.seed.value || "").trim();
+    return {
+      style: els.style.value || "none",
+      wardrobe: (els.wardrobe.value || "").trim(),
+      hair_color: (els.hair.value || "").trim(),
+      seed: seedRaw === "" ? -1 : parseInt(seedRaw, 10),
+      identity_lock: !!els.identityLock.checked,
+    };
+  }
+
+  function triggerForRef(refId, base) {
+    var k = base + "|" + refId;
+    if (refTriggers[k]) return refTriggers[k];
+    var n = (baseCounts[base] || 0) + 1;
+    baseCounts[base] = n;
+    var trig = n === 1 ? base : base + "-" + n;
+    refTriggers[k] = trig;
+    return trig;
+  }
+
+  // ---- add ticked poses to the queue ----
+  function addToQueue() {
+    if (generationDisabled) return;
+    var ref = refs.find(function (r) {
+      return r.id === activeRefId;
+    });
+    if (!ref) {
+      setStatus("Pick a reference image first (a ring candidate or a photo from disk).");
+      return;
+    }
+    var keys = Array.prototype.slice
+      .call(els.poseList.querySelectorAll("input:checked"))
+      .map(function (cb) {
+        return cb.value;
+      });
+    if (!keys.length) {
+      setStatus("Tick at least one pose.");
+      return;
+    }
+
+    var activeProj = window.ProjectManager && window.ProjectManager.getActive();
+    var base = slugName(
+      els.name.value || (activeProj && activeProj.name) || "character"
+    );
+    var character = triggerForRef(ref.id, base);
+    var settings = readSettings();
+
+    keys.forEach(function (key) {
+      queue.push({
+        localId: ++localSeq,
+        character: character,
+        key: key,
+        refId: ref.id,
+        refUrl: ref.url,
+        settings: settings,
+        jobId: null,
+        status: "pending",
+        thumbUrl: null,
+        error: null,
+      });
+    });
+    setStatus(
+      "Queued " +
+        keys.length +
+        " pose" +
+        (keys.length === 1 ? "" : "s") +
+        " for “" +
+        character +
+        "”."
+    );
+    renderQueue();
+    pump();
+  }
+
+  function fetchRefBlob(ref) {
+    if (ref && ref.file) return Promise.resolve(ref.file);
+    return fetch(ref.url).then(function (r) {
+      if (!r.ok)
+        throw new Error("could not fetch the reference image (HTTP " + r.status + ")");
+      return r.blob();
+    });
+  }
+
+  // Submit pending entries one at a time so the backend's FIFO queue
+  // ends up in the same order they were added.
+  function pump() {
+    if (pumping) return;
+    pumping = true;
+    (function next() {
+      var item = queue.find(function (q) {
+        return q.status === "pending";
+      });
+      if (!item) {
+        pumping = false;
+        ensurePolling();
+        return;
+      }
+      item.status = "submitting";
+      item.error = null;
+      renderQueue();
+
+      var ref = refs.find(function (r) {
+        return r.id === item.refId;
+      }) || { url: item.refUrl };
+
+      fetchRefBlob(ref)
+        .then(function (blob) {
+          var form = new FormData();
+          var ext = blob.type === "image/png" ? ".png" : ".jpg";
+          form.append("file", blob, "reference" + ext);
+          form.append("trigger", item.character);
+          form.append("views", JSON.stringify([item.key]));
+          form.append("style", item.settings.style);
+          form.append("wardrobe", item.settings.wardrobe);
+          form.append("hair_color", item.settings.hair_color);
+          form.append("seed", String(item.settings.seed));
+          form.append(
+            "identity_lock",
+            item.settings.identity_lock ? "true" : "false"
+          );
+          return fetch(API + "/sheet-from-upload", {
+            method: "POST",
+            body: form,
+          });
+        })
+        .then(function (res) {
+          return res.json().then(function (payload) {
+            return { ok: res.ok, status: res.status, payload: payload };
+          });
+        })
+        .then(function (r) {
+          if (!r.ok || !r.payload || !r.payload.ok || !r.payload.job_id) {
+            item.status = "failed";
+            item.error =
+              (r.payload && r.payload.error) || "HTTP " + r.status;
+          } else {
+            item.jobId = r.payload.job_id;
+            item.status = "queued";
+          }
+        })
+        .catch(function (e) {
+          item.status = "failed";
+          item.error = String(e);
+        })
+        .then(function () {
+          renderQueue();
+          next();
+        });
+    })();
+  }
+
+  // ---- polling ----
+  function ensurePolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(pollOnce, POLL_MS);
+    pollOnce();
+  }
+
+  function pollOnce() {
+    var active = queue.filter(function (q) {
+      return q.jobId && (q.status === "queued" || q.status === "rendering");
+    });
+    if (!active.length) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      return;
+    }
+    active.forEach(function (item) {
+      fetch(API + "/sheet-jobs/" + item.jobId)
+        .then(function (r) {
+          return r.json();
+        })
+        .then(function (job) {
+          if (!job || !job.status) return;
+          var shot = (job.shots || [])[0];
+          if (job.status === "completed") {
+            item.status = "done";
+            item.thumbUrl =
+              API +
+              "/characters/" +
+              encodeURIComponent(item.character) +
+              "/shots/" +
+              encodeURIComponent(item.key) +
+              "?v=" +
+              Date.now();
+          } else if (job.status === "failed") {
+            item.status = "failed";
+            item.error =
+              job.error || (shot && shot.status) || "generation failed";
+          } else if (shot && shot.status === "rendering") {
+            item.status = "rendering";
+          } else {
+            item.status = "queued";
+          }
+          renderQueue();
+        })
+        .catch(function () {
+          /* transient -- try again next tick */
+        });
+    });
+  }
+
+  function reroll(item) {
+    fetch(
+      API +
+        "/characters/" +
+        encodeURIComponent(item.character) +
+        "/sheet/reroll",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shot_key: item.key }),
+      }
+    )
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (payload) {
+        if (payload && payload.ok && payload.job_id) {
+          item.jobId = payload.job_id;
+          item.status = "queued";
+          item.thumbUrl = null;
+          item.error = null;
+          renderQueue();
+          ensurePolling();
+        } else {
+          setStatus(
+            "Reroll failed: " + ((payload && payload.error) || "unknown error")
+          );
+        }
+      })
+      .catch(function (e) {
+        setStatus("Reroll failed: " + e);
+      });
+  }
+
+  // ---- queue view ----
+  function renderQueue() {
+    if (!els.queue) return;
+    els.queue.innerHTML = "";
+    queue.forEach(function (item) {
+      var row = document.createElement("div");
+      row.className = "ng-gen-queue-row st-" + item.status;
+
+      var thumbs = document.createElement("div");
+      thumbs.className = "thumbs";
+      if (item.refUrl) {
+        var ri = document.createElement("img");
+        ri.src = item.refUrl;
+        ri.title = "reference";
+        thumbs.appendChild(ri);
+      }
+      if (item.thumbUrl) {
+        var oi = document.createElement("img");
+        oi.src = item.thumbUrl;
+        oi.title = "result";
+        thumbs.appendChild(oi);
+      }
+
+      var meta = document.createElement("div");
+      meta.className = "meta";
+      var sub =
+        item.settings.style === "none" ? "no style" : item.settings.style;
+      if (item.error) sub += " · " + item.error;
+      meta.innerHTML =
+        '<div class="title">' +
+        escapeHtml(item.character) +
+        " · " +
+        escapeHtml(item.key) +
+        "</div>" +
+        '<div class="sub">' +
+        escapeHtml(sub) +
+        "</div>";
+
+      var right = document.createElement("div");
+      var st = document.createElement("div");
+      st.className = "st";
+      st.textContent = ST_LABEL[item.status] || item.status;
+      right.appendChild(st);
+
+      if (item.status === "failed") {
+        var retry = document.createElement("button");
+        retry.className = "ng-gen-reroll";
+        retry.textContent = "retry";
+        retry.addEventListener("click", function () {
+          item.status = "pending";
+          item.jobId = null;
+          item.error = null;
+          renderQueue();
+          pump();
+        });
+        right.appendChild(retry);
+      } else if (item.status === "done") {
+        var rb = document.createElement("button");
+        rb.className = "ng-gen-reroll";
+        rb.textContent = "reroll";
+        rb.addEventListener("click", function () {
+          reroll(item);
+        });
+        right.appendChild(rb);
+      }
+
+      row.appendChild(thumbs);
+      row.appendChild(meta);
+      row.appendChild(right);
+      els.queue.appendChild(row);
+    });
+
+    var n = queue.length;
+    if (els.queueCount) els.queueCount.textContent = n ? "(" + n + ")" : "";
+    if (els.queueEmpty) els.queueEmpty.style.display = n ? "none" : "";
+  }
+
+  function setGenerationDisabled(disabled, health) {
+    generationDisabled = !!disabled;
+    if (els.addBtn) els.addBtn.disabled = generationDisabled;
+    if (!els.unavailable) return;
+    if (generationDisabled) {
+      var missing = [];
+      if (health && !health.python_ok) missing.push("HiDream venv");
+      if (health && !health.model_ok) missing.push("HiDream model");
+      if (health && !health.script_ok) missing.push("generator script");
+      els.unavailable.textContent =
+        "Character-sheet generation needs the local HiDream engine, which " +
+        "isn't set up on this machine" +
+        (missing.length ? " (missing: " + missing.join(", ") + ")" : "") +
+        ". This view only works where the HiDream-O1 MLX lab is installed.";
+      els.unavailable.style.display = "block";
+    } else {
+      els.unavailable.style.display = "none";
+    }
+  }
+
+  window.GenerateNG = { sync: sync };
+})();

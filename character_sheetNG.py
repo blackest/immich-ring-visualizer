@@ -308,8 +308,10 @@ def resolve_shots_ng(*, preset: str = "default",
     list up front -- before any rendering starts -- to report initial
     per-shot status.
 
-    Precedence: explicit `shots` wins, then legacy `views` (validated
-    against the default 3-view catalogue only), else `preset` by name.
+    Precedence: explicit `shots` wins, then `views` (a list of shot
+    keys, validated against every registered preset's catalogue so the
+    Generate view can cherry-pick individual poses out of the 15-shot
+    "extended" preset one at a time), else `preset` by name.
     """
     if shots is not None:
         if not isinstance(shots, list) or not all(isinstance(s, ShotSpec) for s in shots):
@@ -328,7 +330,9 @@ def resolve_shots_ng(*, preset: str = "default",
     if views is not None:
         if not isinstance(views, list) or not all(isinstance(v, str) for v in views):
             raise ValueError("views must be a list of view-name strings")
-        by_key = {s.key: s for s in shot_presets.DEFAULT_PRESET}
+        by_key = {s.key: s
+                  for preset_shots in shot_presets.PRESETS.values()
+                  for s in preset_shots}
         keys = list(dict.fromkeys(v.strip() for v in views if v.strip()))
         unknown = [k for k in keys if k not in by_key]
         if unknown:

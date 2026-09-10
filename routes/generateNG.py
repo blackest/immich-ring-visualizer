@@ -24,6 +24,7 @@ run_folder_analysis_ng doesn't support always_cache yet. Add this route
 back once that lands.
 """
 
+import json
 import os
 import tempfile
 
@@ -226,8 +227,11 @@ def generate_sheet_from_upload_ng():
 
     Form fields: file (required, multipart), trigger (required), name
     (optional), plus the same optional generation-settings fields as
-    sheet-from-asset, sent as individual form fields -- preset/
-    wardrobe/hair_color/seed/anchor_chain/identity_lock/style.
+    sheet-from-asset, sent as individual form fields -- preset/views/
+    wardrobe/hair_color/seed/anchor_chain/identity_lock/style. `views`,
+    if present, is a JSON array of shot keys (["chest_profile_left",
+    ...]) -- the Generate view sends one key at a time so each pose
+    queues as its own job.
     """
     if "file" not in request.files:
         return jsonify({"error": "no field 'file'"}), 400
@@ -243,10 +247,21 @@ def generate_sheet_from_upload_ng():
     form = request.form
     custom_prompt = (form.get("custom_prompt") or "").strip()
     shots = [shot_presets.ShotSpec("custom", prompt_override=custom_prompt)] if custom_prompt else None
+
+    views = None
+    views_raw = (form.get("views") or "").strip()
+    if views_raw:
+        try:
+            views = json.loads(views_raw)
+        except ValueError:
+            return jsonify({"error": "views must be a JSON array of shot-key strings"}), 400
+        if not isinstance(views, list) or not all(isinstance(v, str) for v in views):
+            return jsonify({"error": "views must be a JSON array of shot-key strings"}), 400
+
     settings = {
         "preset": form.get("preset") or "default",
         "shots": shots,
-        "views": None,
+        "views": None if shots else views,
         "wardrobe": form.get("wardrobe", ""),
         "hair_color": (form.get("hair_color") or "").strip(),
         "seed": form.get("seed", -1, type=int),
