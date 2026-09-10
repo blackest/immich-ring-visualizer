@@ -194,6 +194,7 @@
       this.playbackBuilding = false;
       this.rankedSortMetric = "sim";
       this.selectedFrames = new Set();
+      this.excludedFrames = new Set(); // frame numbers manually rejected -- excluded from ring even if passed
       this.staticPreviewFrame = null; // folder/image-set jobs only -- a chart-click result row, since there's no live decode to scrub (see renderFramePreview)
 
       // Pose Picker / Shot Scale Picker state -- ported from viz-render.js's
@@ -272,6 +273,7 @@
         ring: this.ring,
         rankedSortMetric: this.rankedSortMetric,
         selectedFrames: Array.from(this.selectedFrames),
+        excludedFrames: Array.from(this.excludedFrames),
         immichRing: this.immichRing,
         immichRankedSortMetric: this.immichRankedSortMetric,
         selectedAssetIds: Array.from(this.selectedAssetIds),
@@ -320,6 +322,7 @@
       p.ring = data.ring || null;
       p.rankedSortMetric = data.rankedSortMetric || "sim";
       p.selectedFrames = new Set(Array.isArray(data.selectedFrames) ? data.selectedFrames : []);
+      p.excludedFrames = new Set(Array.isArray(data.excludedFrames) ? data.excludedFrames : []);
       // transient, rebuilt on first render from p.ring -- see the
       // _posePickerRingRef/_scalePickerRingRef comment in the constructor.
       p.posePickerPool = [];
@@ -354,6 +357,7 @@
       const refFrame = refFrameOverride != null ? refFrameOverride : this.video.currentFrame;
       this.stopPolling();
       this.selectedFrames = new Set();
+      this.excludedFrames = new Set();
       this.playback = null; // a new analysis run invalidates any previous playback build
       this.staticPreviewFrame = null;
       this.job = {
@@ -397,6 +401,7 @@
     async startFolderAnalysis({ images, zip }, refIndexOverride) {
       this.stopPolling();
       this.selectedFrames = new Set();
+      this.excludedFrames = new Set();
       this.playback = null;
       this.staticPreviewFrame = null;
       const refIndex = refIndexOverride != null ? refIndexOverride : this.folderRefIndex;
@@ -454,6 +459,7 @@
       if (!assetIds || !assetIds.length) return;
       this.stopPolling();
       this.selectedFrames = new Set();
+      this.excludedFrames = new Set();
       this.playback = null;
       this.staticPreviewFrame = null;
       const refIndex = refIndexOverride != null ? refIndexOverride : this.immichAnalyzeRefIndex;
@@ -545,6 +551,7 @@
       const sourceType = this.job.sourceType || "video";
       const baseResults = results
         .filter((r) => r.passed)
+        .filter((r) => !this.excludedFrames.has(r.frame))
         .map((r) => ({
           filename: r.origName || `frame_${r.frame}`,
           frame: r.frame,
@@ -649,6 +656,15 @@
     toggleFrameSelection(frame) {
       if (this.selectedFrames.has(frame)) this.selectedFrames.delete(frame);
       else this.selectedFrames.add(frame);
+      ProjectManager.saveState();
+    }
+
+    toggleFrameExclusion(frame) {
+      if (this.excludedFrames.has(frame)) this.excludedFrames.delete(frame);
+      else this.excludedFrames.add(frame);
+      // an excluded frame should never linger in the selection either
+      if (this.excludedFrames.has(frame)) this.selectedFrames.delete(frame);
+      if (this.ring && this.job && this.job.results) this.buildRing(this.job.results);
       ProjectManager.saveState();
     }
 

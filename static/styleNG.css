@@ -872,6 +872,21 @@ html, body {
   text-align: right;
 }
 
+.ng-btn-reject-frame {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin-left: 6px;
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ng-text-dim);
+}
+.ng-btn-reject-frame:hover {
+  color: #e05a5a;
+  border-color: #e05a5a;
+}
+
 .ng-anchor-row {
   display: flex;
   align-items: center;

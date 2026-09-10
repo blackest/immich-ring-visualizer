@@ -613,10 +613,17 @@
             ${poseHtml}
           </div>
           <div class="simpct">${pct}%</div>
+          <button type="button" class="ng-btn ng-btn-reject-frame" data-frame="${r.frame}" title="Reject this frame -- exclude it from the character sheet even though it passed">✕</button>
         `;
         const cb = row.querySelector(".ng-frame-select-cb");
         cb.addEventListener("change", () => {
           project.toggleFrameSelection(r.frame);
+          this.renderStage(project);
+        });
+        const rejectBtn = row.querySelector(".ng-btn-reject-frame");
+        rejectBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          project.toggleFrameExclusion(r.frame);
           this.renderStage(project);
         });
         row.addEventListener("mouseenter", () => showHoverPreview(r));

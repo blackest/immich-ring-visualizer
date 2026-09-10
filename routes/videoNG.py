@@ -90,7 +90,8 @@ def download_video_url_ng():
             result = subprocess.run(
                 [
                     sys.executable, "-m", "yt_dlp",
-                    "-f", "mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+                    "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                    "--merge-output-format", "mp4",
                     "--no-playlist",
                     "-o", outtmpl,
                     url,

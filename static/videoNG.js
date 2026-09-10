@@ -115,6 +115,7 @@
   const playbackVideoEl = document.getElementById("ng-playback-video");
   const playbackPrevFrameBtn = document.getElementById("ng-playback-prev-frame");
   const playbackNextFrameBtn = document.getElementById("ng-playback-next-frame");
+  const playbackRejectFrameBtn = document.getElementById("ng-playback-reject-frame");
 
   // =========================================================================
   // PlaybackModal -- real <video>-element popout player. Was
@@ -147,6 +148,7 @@
         : `${project.name} — source video`;
       playbackVideoEl.src = project.video.objectUrl;
       playbackModalEl.style.display = "flex";
+      this.refreshRejectButton();
     },
 
     openBuild(project) {
@@ -158,6 +160,7 @@
       playbackModalTitleEl.textContent = `${project.name} — playback (rejected frames blanked)`;
       playbackVideoEl.src = project.playback.url;
       playbackModalEl.style.display = "flex";
+      this.refreshRejectButton();
     },
 
     close() {
@@ -180,6 +183,26 @@
       playbackVideoEl.pause();
       const step = delta / fps;
       playbackVideoEl.currentTime = Math.max(0, Math.min(playbackVideoEl.duration || Infinity, playbackVideoEl.currentTime + step));
+    },
+
+    // 1-based frame number at the modal's current playhead position,
+    // matching the numbering used by results/ring/excludedFrames
+    // (see CharacterProject.frameFromTime for the same formula).
+    currentFrame() {
+      const project = ProjectManager.projects.find((p) => p.id === this.projectId);
+      const fps = this.kind === "raw"
+        ? ((project && project.video && project.video.fps) || 24)
+        : ((project && project.playback && project.playback.fps) || 24);
+      return Math.max(1, Math.round(playbackVideoEl.currentTime * fps) + 1);
+    },
+
+    refreshRejectButton() {
+      const project = ProjectManager.projects.find((p) => p.id === this.projectId);
+      if (!project) return;
+      const frame = this.currentFrame();
+      const isExcluded = project.excludedFrames.has(frame);
+      playbackRejectFrameBtn.textContent = isExcluded ? "Un-reject this frame" : "Reject this frame";
+      playbackRejectFrameBtn.classList.toggle("ng-btn-danger", !isExcluded);
     },
   };
 
@@ -625,8 +648,15 @@
 
   playbackModalCloseBtn.addEventListener("click", () => PlaybackModal.close());
   playbackModalEl.querySelector(".ng-playback-modal-backdrop").addEventListener("click", () => PlaybackModal.close());
-  playbackPrevFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(-1));
-  playbackNextFrameBtn.addEventListener("click", () => PlaybackModal.stepFrame(1));
+  playbackPrevFrameBtn.addEventListener("click", () => { PlaybackModal.stepFrame(-1); PlaybackModal.refreshRejectButton(); });
+  playbackNextFrameBtn.addEventListener("click", () => { PlaybackModal.stepFrame(1); PlaybackModal.refreshRejectButton(); });
+  playbackRejectFrameBtn.addEventListener("click", () => {
+    const project = ProjectManager.projects.find((p) => p.id === PlaybackModal.projectId);
+    if (!project) return;
+    project.toggleFrameExclusion(PlaybackModal.currentFrame());
+    PlaybackModal.refreshRejectButton();
+    if (project.isActive) ProjectManager.render();
+  });
   // Range-bounded raw preview: jump to rangeStartSec once the clip is
   // seekable, and stop (rather than rolling on to the rest of the video)
   // once rangeEndSec is reached.
@@ -641,6 +671,7 @@
       playbackVideoEl.pause();
       playbackVideoEl.currentTime = PlaybackModal.rangeEndSec;
     }
+    PlaybackModal.refreshRejectButton();
   });
 
   document.addEventListener("keydown", (e) => {

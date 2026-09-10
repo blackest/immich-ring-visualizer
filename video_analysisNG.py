@@ -190,6 +190,19 @@ class MemoryVideo:
         container, stream = self._open_container()
         fps = float(stream.average_rate) if stream.average_rate else 25.0
         frame_count = stream.frames or 0
+        if frame_count <= 0:
+            # Some containers (notably ffmpeg-remuxed/merged output, e.g.
+            # from yt-dlp's bestvideo+bestaudio merge) don't write a frame
+            # count into their metadata, even though duration + fps are
+            # present. Fall back to estimating it from duration instead
+            # of failing outright.
+            duration_sec = None
+            if stream.duration and stream.time_base:
+                duration_sec = float(stream.duration * stream.time_base)
+            elif container.duration:
+                duration_sec = float(container.duration) / 1_000_000.0
+            if duration_sec and fps:
+                frame_count = max(1, round(duration_sec * fps))
         width, height = stream.width, stream.height
         container.close()
         return fps, frame_count, width, height
