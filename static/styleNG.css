@@ -443,6 +443,28 @@ html, body {
   margin: 0 0 8px 0;
 }
 
+.ng-video-url-loader {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ng-video-url-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  border-radius: 4px;
+  color: var(--ng-text);
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.ng-video-url-input:disabled {
+  color: var(--ng-text-dim);
+  opacity: 0.7;
+}
+
 .ng-video-range {
   display: flex;
   align-items: center;

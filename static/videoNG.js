@@ -251,6 +251,71 @@
     return wrap;
   }
 
+  function videoUrlLoader(project) {
+    const wrap = document.createElement("div");
+    wrap.className = "ng-video-url-loader";
+
+    const urlInput = document.createElement("input");
+    urlInput.type = "text";
+    urlInput.className = "ng-video-url-input";
+    urlInput.placeholder = "Video URL (yt-dlp)...";
+
+    const btn = document.createElement("button");
+    btn.className = "ng-btn";
+    btn.textContent = "Load from URL";
+
+    async function loadFromUrl() {
+      const url = urlInput.value.trim();
+      if (!url) return;
+
+      btn.disabled = true;
+      urlInput.disabled = true;
+      btn.textContent = "Downloading...";
+
+      try {
+        const res = await fetch("/api/ng/download-video-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+
+        if (!res.ok) {
+          let message = res.status;
+          try {
+            const data = await res.json();
+            message = data.error || message;
+          } catch (e) { /* non-JSON error body, fall back to status */ }
+          alert("Could not load video from URL: " + message);
+          return;
+        }
+
+        const rawName = res.headers.get("X-Video-Filename") || "video.mp4";
+        let filename = "video.mp4";
+        try { filename = decodeURIComponent(rawName); } catch (e) { filename = rawName; }
+
+        const blob = await res.blob();
+        const file = new File([blob], filename, { type: "video/mp4" });
+        project.loadVideo(file);
+        urlInput.value = "";
+      } catch (e) {
+        alert("Could not load video from URL: " + e.message);
+      } finally {
+        btn.disabled = false;
+        urlInput.disabled = false;
+        btn.textContent = "Load from URL";
+      }
+    }
+
+    btn.addEventListener("click", loadFromUrl);
+    urlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") loadFromUrl();
+    });
+
+    wrap.appendChild(urlInput);
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
   // =========================================================================
   // CharacterProject.prototype patches -- were method bodies inside the
   // `class CharacterProject` literal in characterProjectNG.js. Requires
@@ -432,9 +497,11 @@
         project.video.duration.toFixed(1) + "s";
       videoAnalysisBodyEl.appendChild(info);
       videoAnalysisBodyEl.appendChild(videoPickerButton(project, "Replace Video"));
+      videoAnalysisBodyEl.appendChild(videoUrlLoader(project));
     } else {
       videoAnalysisBodyEl.appendChild(placeholder("No video loaded for this project yet."));
       videoAnalysisBodyEl.appendChild(videoPickerButton(project, "Choose Video..."));
+      videoAnalysisBodyEl.appendChild(videoUrlLoader(project));
     }
 
     analysisStartInput.value = project.video && project.video.rangeStartSec != null ? project.video.rangeStartSec : "";
@@ -594,5 +661,5 @@
   });
 
 // ---- exposed for other modules to call ----
-window.VideoNG = { PlaybackModal, drawFrame, setPlayingVisual, videoPickerButton };
+window.VideoNG = { PlaybackModal, drawFrame, setPlayingVisual, videoPickerButton, videoUrlLoader };
 window.PlaybackModalNG = PlaybackModal; // kept for continuity with the old playbackModalNG.js export name

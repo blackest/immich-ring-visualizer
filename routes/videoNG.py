@@ -15,8 +15,12 @@ character tabs can analyze in parallel -- no queuing at this layer
 """
 
 import os
+import subprocess
+import sys
+import tempfile
 import threading
 import uuid
+from urllib.parse import quote
 
 import cv2
 import numpy as np
@@ -59,6 +63,62 @@ def preview_video_ng():
         "totalFrames": mv.frame_count,
         "duration": mv.frame_count / mv.fps,
     })
+
+
+@videoNG_bp.route("/api/ng/download-video-url", methods=["POST"])
+def download_video_url_ng():
+    """Fetch a video from a URL via yt-dlp and hand the raw bytes back to
+    the browser (video/mp4 response, filename in X-Video-Filename).
+
+    Deliberately does NOT create a preview job here -- the browser treats
+    the returned bytes exactly like a locally-chosen File (wraps them in
+    a File object and calls the same loadVideo()/preview-video path it
+    already uses for "Choose Video..."), so this is the one new piece:
+    everything downstream (ingest, analysis, playback) is unchanged.
+    Downloaded to a temp dir and read into memory rather than kept on
+    disk, matching the no-writes-for-cheap-to-redo-ingestion principle
+    used elsewhere in this file.
+    """
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "url required"}), 400
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        outtmpl = os.path.join(tmpdir, "%(title).100B.%(ext)s")
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "yt_dlp",
+                    "-f", "mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+                    "--no-playlist",
+                    "-o", outtmpl,
+                    url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            return jsonify({"error": "Download timed out after 10 minutes."}), 504
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+        if result.returncode != 0:
+            tail = "\n".join((result.stderr or result.stdout or "").strip().splitlines()[-10:])
+            return jsonify({"error": f"yt-dlp failed: {tail}"}), 500
+
+        downloaded = [f for f in os.listdir(tmpdir) if os.path.isfile(os.path.join(tmpdir, f))]
+        if not downloaded:
+            return jsonify({"error": "yt-dlp reported success but produced no file"}), 500
+
+        filename = downloaded[0]
+        with open(os.path.join(tmpdir, filename), "rb") as f:
+            video_bytes = f.read()
+
+    resp = Response(video_bytes, mimetype="video/mp4")
+    resp.headers["X-Video-Filename"] = quote(filename)
+    return resp
 
 
 @videoNG_bp.route("/api/ng/preview-frame/<preview_id>/<int:frame_no>")
