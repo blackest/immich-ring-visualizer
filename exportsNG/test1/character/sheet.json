@@ -1,0 +1,30 @@
+{
+  "schema": "ringviz/character_sheet@2",
+  "character_id": "test1",
+  "engine": "hidream",
+  "reference": "/Users/john/immich-app/repo/immichring/exportsNG/test1/character/avatar.png",
+  "preset": "custom",
+  "wardrobe": "",
+  "hair_color": "",
+  "identity_lock": true,
+  "style": "cinematic",
+  "seed": -1,
+  "resolved_seed": 1940713535,
+  "views": [
+    {
+      "key": "fullbody_three_quarter",
+      "prompt": "Keep this person exactly as they are in the reference image -- same face, same skin tone and complexion, same hair color, same exact hairstyle (do not restyle, tie back, loosen, or otherwise change how the hair is worn -- keep the same length and the same way it falls), same build, wearing exactly the same clothes as in the reference image. Change only the camera and pose: a full-body shot from head to feet, standing, turned three-quarters between front and profile, the person centered in the frame and filling most of it. A minimalist indoor space, warm ambient lighting, photorealistic. Cinematic color grading, directional key lighting with soft shadow falloff, shallow depth of field, filmic contrast.",
+      "seed": 1940713535,
+      "png_path": "/Users/john/immich-app/repo/immichring/exportsNG/test1/character/sheet_views/fullbody_three_quarter/cand_00_hidream_1789008199053.png",
+      "engine": "hidream-o1-dev-bf16",
+      "width": 2048,
+      "height": 2048,
+      "refs": [
+        "/Users/john/immich-app/repo/immichring/exportsNG/test1/character/avatar.png"
+      ]
+    }
+  ],
+  "sheet_png": "/Users/john/immich-app/repo/immichring/exportsNG/test1/character/sheet.png",
+  "created_at": 1789008723.718625,
+  "elapsed_sec": 524.67
+}

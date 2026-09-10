@@ -149,7 +149,10 @@ def start_job_ng(character_id: str, *,
                   seed: int = -1,
                   anchor_chain: bool = True,
                   identity_lock: bool = True,
-                  style: str = "none") -> SheetJobNG:
+                  style: str = "none",
+                  width: int = character_sheet.DEFAULT_RENDER_W,
+                  height: int = character_sheet.DEFAULT_RENDER_H,
+                  steps: int = character_sheet.DEFAULT_RENDER_STEPS) -> SheetJobNG:
     """Validate and enqueue a full sheet-generation job. Raises
     synchronously (before anything is queued) for bad input, a missing
     character, or a missing reference image -- everything else (engine
@@ -158,6 +161,7 @@ def start_job_ng(character_id: str, *,
     its turn in the queue."""
     cid = character_sheet._safe_id_ng(character_id)
     shot_list = character_sheet.resolve_shots_ng(preset=preset, shots=shots, views=views)
+    width, height, steps = character_sheet._validate_render_params_ng(width, height, steps)
     if not character_sheet.character_exists_ng(cid):
         raise LookupError(f"character {cid!r} not found")
     if character_sheet.character_avatar_ng(cid) is None:
@@ -168,7 +172,8 @@ def start_job_ng(character_id: str, *,
     params = {"preset": preset if (shots is None and views is None) else "custom",
              "wardrobe": wardrobe, "hair_color": hair_color, "seed": seed,
              "anchor_chain": anchor_chain,
-             "identity_lock": identity_lock, "style": style}
+             "identity_lock": identity_lock, "style": style,
+             "width": width, "height": height, "steps": steps}
 
     # Same prompt-building call generate_character_sheet_ng will make
     # for each shot -- pure function of (spec, wardrobe, identity_lock,
@@ -185,7 +190,7 @@ def start_job_ng(character_id: str, *,
             cid, preset=preset, shots=shots, views=views, wardrobe=wardrobe,
             hair_color=hair_color,
             seed=seed, anchor_chain=anchor_chain, identity_lock=identity_lock,
-            style=style, on_log=on_log)
+            style=style, width=width, height=height, steps=steps, on_log=on_log)
 
     job = _enqueue(cid, [s.key for s in shot_list], params, target)
     job.shot_prompts = shot_prompts
@@ -194,8 +199,13 @@ def start_job_ng(character_id: str, *,
 
 def start_reroll_ng(character_id: str, shot_key: str, *,
                      seed: Optional[int] = None,
-                     prompt: Optional[str] = None) -> SheetJobNG:
-    """Validate and enqueue a single-shot re-roll."""
+                     prompt: Optional[str] = None,
+                     width: Optional[int] = None,
+                     height: Optional[int] = None,
+                     steps: Optional[int] = None) -> SheetJobNG:
+    """Validate and enqueue a single-shot re-roll. width/height/steps
+    default to the shot's previous render size (steps: DEFAULT_RENDER_STEPS)
+    when not given -- see regenerate_shot_ng."""
     cid = character_sheet._safe_id_ng(character_id)
     if not character_sheet.character_exists_ng(cid):
         raise LookupError(f"character {cid!r} not found")
@@ -206,9 +216,12 @@ def start_reroll_ng(character_id: str, shot_key: str, *,
 
     def target(on_log):
         character_sheet.regenerate_shot_ng(cid, shot_key, seed=seed, prompt=prompt,
+                                           width=width, height=height, steps=steps,
                                            on_log=on_log)
 
-    job = _enqueue(cid, [shot_key], {"reroll": True, "shot_key": shot_key, "seed": seed}, target)
+    job = _enqueue(cid, [shot_key],
+                   {"reroll": True, "shot_key": shot_key, "seed": seed,
+                    "width": width, "height": height, "steps": steps}, target)
     job.shot_prompts = {shot_key: prompt if prompt is not None else existing.get("prompt", "")}
     return job
 

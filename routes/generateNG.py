@@ -76,7 +76,9 @@ def generate_status_ng():
 def list_presets_ng():
     """Feeds the settings panel's preset/style dropdowns -- shot keys
     and pose text per preset, plus the available style names, so the
-    frontend doesn't hardcode any of shot_presetsNG.py's content."""
+    frontend doesn't hardcode any of shot_presetsNG.py's content. Also
+    the render-size defaults/bounds and the trained resolutions, so the
+    panel's width/height/steps controls stay in sync with the engine."""
     return jsonify({
         "presets": {
             name: [{"key": s.key, "pose_phrase": s.pose_phrase,
@@ -85,6 +87,17 @@ def list_presets_ng():
             for name, shots in shot_presets.PRESETS.items()
         },
         "styles": list(shot_presets.STYLE_PRESETS),
+        "render": {
+            "default_width": character_sheet.DEFAULT_RENDER_W,
+            "default_height": character_sheet.DEFAULT_RENDER_H,
+            "default_steps": character_sheet.DEFAULT_RENDER_STEPS,
+            "dim_min": character_sheet.RENDER_DIM_MIN,
+            "dim_max": character_sheet.RENDER_DIM_MAX,
+            "steps_min": character_sheet.RENDER_STEPS_MIN,
+            "steps_max": character_sheet.RENDER_STEPS_MAX,
+            "trained_resolutions": [list(wh) for wh in
+                                    hidream_engineNG.HIDREAM_TRAINED_RESOLUTIONS],
+        },
     })
 
 
@@ -136,6 +149,9 @@ def _generation_settings_from_body_ng(body: dict) -> dict:
         "anchor_chain": body.get("anchor_chain", True),
         "identity_lock": body.get("identity_lock", True),
         "style": str(body.get("style") or "none"),
+        "width": body.get("width", character_sheet.DEFAULT_RENDER_W),
+        "height": body.get("height", character_sheet.DEFAULT_RENDER_H),
+        "steps": body.get("steps", character_sheet.DEFAULT_RENDER_STEPS),
     }
 
 
@@ -268,6 +284,9 @@ def generate_sheet_from_upload_ng():
         "anchor_chain": form.get("anchor_chain", "true").lower() != "false",
         "identity_lock": form.get("identity_lock", "true").lower() != "false",
         "style": form.get("style") or "none",
+        "width": form.get("width", character_sheet.DEFAULT_RENDER_W, type=int),
+        "height": form.get("height", character_sheet.DEFAULT_RENDER_H, type=int),
+        "steps": form.get("steps", character_sheet.DEFAULT_RENDER_STEPS, type=int),
     }
 
     tmp_path = None
@@ -308,7 +327,8 @@ def reroll_shot_route_ng(character_id):
 
     Body: {"shot_key": str (required), "seed": int (optional, random if
     omitted), "prompt": str (optional full prompt override -- omit to
-    reuse the shot's existing prompt)}.
+    reuse the shot's existing prompt), "width"/"height"/"steps": int
+    (optional -- default to the shot's previous render size)}.
     """
     body = request.get_json(silent=True) or {}
     shot_key = str(body.get("shot_key") or "").strip()
@@ -317,7 +337,9 @@ def reroll_shot_route_ng(character_id):
     try:
         job = sheet_jobs.start_reroll_ng(
             character_id, shot_key,
-            seed=body.get("seed"), prompt=body.get("prompt"))
+            seed=body.get("seed"), prompt=body.get("prompt"),
+            width=body.get("width"), height=body.get("height"),
+            steps=body.get("steps"))
     except Exception as e:  # noqa: BLE001
         return _map_job_start_error(e)
     return _job_started_response(job)

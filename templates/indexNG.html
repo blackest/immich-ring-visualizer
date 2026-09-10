@@ -117,11 +117,23 @@
         <button
           id="ng-load-project"
           class="ng-btn"
-          title="Load an existing project"
-          disabled
+          title="Load a character .json file"
         >
-          Load Project
+          Load
         </button>
+        <button
+          id="ng-save-project"
+          class="ng-btn"
+          title="Save the current character to a .json file"
+        >
+          Save
+        </button>
+        <input
+          type="file"
+          id="ng-load-project-file"
+          accept="application/json,.json"
+          style="display: none"
+        />
         <div id="ng-tabs" role="tablist" aria-label="Character projects"></div>
         <button
           id="ng-new-project"
@@ -879,6 +891,59 @@
               <option value="none">No style</option>
             </select>
 
+            <label class="ng-gen-label" style="margin-top: 10px"
+              >Render size &amp; steps</label
+            >
+            <select id="ng-gen-size-preset" class="ng-gen-input">
+              <option value="2048x2048">2048 × 2048 — trained, best (slow)</option>
+              <option value="1024x1024">1024 × 1024 — ~4× faster (off-spec)</option>
+              <option value="1024x576">1024 × 576 — 16:9 (off-spec)</option>
+              <option value="832x480">832 × 480 — 16:9, ~10× faster (off-spec)</option>
+              <option value="480x832">480 × 832 — 9:16 (off-spec)</option>
+              <option value="512x512">512 × 512 — ~16× faster (off-spec)</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <div style="display: flex; gap: 6px; align-items: center">
+              <input
+                id="ng-gen-width"
+                type="number"
+                class="ng-gen-input"
+                style="flex: 1"
+                min="256"
+                max="4096"
+                step="32"
+                value="2048"
+                title="Width (px, patch-aligned to 32)"
+              />
+              <span class="ng-gen-label" style="margin: 0">×</span>
+              <input
+                id="ng-gen-height"
+                type="number"
+                class="ng-gen-input"
+                style="flex: 1"
+                min="256"
+                max="4096"
+                step="32"
+                value="2048"
+                title="Height (px, patch-aligned to 32)"
+              />
+              <span class="ng-gen-label" style="margin: 0">steps</span>
+              <input
+                id="ng-gen-steps"
+                type="number"
+                class="ng-gen-input"
+                style="width: 52px"
+                min="1"
+                max="100"
+                value="28"
+                title="Inference steps — fewer = faster, softer"
+              />
+            </div>
+            <div class="ng-gen-label" style="margin-top: 2px">
+              Off-spec sizes render faster but can show a faint 32px patch
+              grid — fine for checking pose &amp; framing.
+            </div>
+
             <div id="ng-gen-settings-toggle" class="ng-gen-collapse-toggle">
               &#9656; more settings
             </div>
@@ -923,6 +988,45 @@
               Add to queue
             </button>
             <div id="ng-gen-status" class="ng-gen-status"></div>
+          </div>
+
+          <!-- Chat view's rail pane -- swapped in for #ng-controls-pane by
+               ChatNG.sync() when the active project's task is "chat". Fully
+               self-contained: reads nothing from the rest of the app. One
+               global conversation lives in chatNG.js. -->
+          <div id="ng-chat-pane" style="display: none">
+            <div id="ng-chat-unavailable" class="ng-chat-banner" style="display: none"></div>
+
+            <label class="ng-gen-label" for="ng-chat-model">Model</label>
+            <select id="ng-chat-model" class="ng-gen-input"></select>
+            <div id="ng-chat-model-hint" class="ng-chat-hint"></div>
+
+            <label class="ng-gen-label" for="ng-chat-system" style="margin-top: 10px">
+              System prompt
+            </label>
+            <textarea
+              id="ng-chat-system"
+              class="ng-gen-input ng-chat-system"
+              rows="4"
+              placeholder="Optional. Sets the assistant's behaviour for the whole conversation."
+            ></textarea>
+
+            <label class="ng-gen-label" for="ng-chat-temp" style="margin-top: 10px">
+              Temperature <span id="ng-chat-temp-val">0.7</span>
+            </label>
+            <input
+              id="ng-chat-temp"
+              type="range"
+              min="0"
+              max="2"
+              step="0.1"
+              value="0.7"
+              style="width: 100%"
+            />
+
+            <button type="button" id="ng-chat-new" class="ng-gen-btn ng-gen-btn-quiet">
+              New chat
+            </button>
           </div>
         </aside>
         <main id="ng-main">
@@ -1038,6 +1142,28 @@
               rail, then press &ldquo;Add to queue&rdquo;.
             </p>
             <div id="ng-gen-queue"></div>
+          </div>
+          <!-- Chat view's main region -- the transcript + composer. Shown by
+               ChatNG.sync() when task is "chat"; every other main-stage
+               element is hidden then. -->
+          <div id="ng-chat-main" style="display: none">
+            <div id="ng-chat-transcript">
+              <p id="ng-chat-empty" class="ng-placeholder">
+                Pick a model in the left rail and say something. One
+                conversation, kept in memory until you refresh.
+              </p>
+            </div>
+            <form id="ng-chat-composer" autocomplete="off">
+              <textarea
+                id="ng-chat-input"
+                rows="1"
+                placeholder="Message… (Enter to send, Shift+Enter for a newline)"
+              ></textarea>
+              <button type="submit" id="ng-chat-send" class="ng-gen-btn">Send</button>
+              <button type="button" id="ng-chat-stop" class="ng-gen-btn ng-gen-btn-quiet" style="display: none">
+                Stop
+              </button>
+            </form>
           </div>
           <aside id="ng-sidebar" style="display: none">
             <div id="ng-sidebar-current">
@@ -1208,6 +1334,7 @@
         <button class="ng-task-btn" data-task="immich">Immich</button>
         <button class="ng-task-btn" data-task="folderzip">Folder / Zip</button>
         <button class="ng-task-btn" data-task="generate">Generate</button>
+        <button class="ng-task-btn" data-task="chat">Chat</button>
       </footer>
     </div>
 
@@ -1252,6 +1379,8 @@
     <script src="{{ url_for('static', filename='projectManagerNG.js') }}"></script>
     <script src="{{ url_for('static', filename='videoNG.js') }}"></script>
     <script src="{{ url_for('static', filename='generateNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='characterIONG.js') }}"></script>
+    <script src="{{ url_for('static', filename='chatNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>
     <script src="{{ url_for('static', filename='settingsNG.js') }}"></script>
     <script src="{{ url_for('static', filename='initguing.js') }}"></script>

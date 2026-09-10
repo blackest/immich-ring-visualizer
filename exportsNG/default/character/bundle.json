@@ -1,0 +1,7 @@
+{
+  "schema": "ringviz/character_bundle@1",
+  "id": "default",
+  "name": "default",
+  "pronoun": "they",
+  "subject_noun": "person"
+}

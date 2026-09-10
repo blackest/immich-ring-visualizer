@@ -73,6 +73,10 @@
     els.refFile = $("ng-gen-ref-file");
     els.refFileBtn = $("ng-gen-ref-file-btn");
     els.style = $("ng-gen-style");
+    els.sizePreset = $("ng-gen-size-preset");
+    els.width = $("ng-gen-width");
+    els.height = $("ng-gen-height");
+    els.steps = $("ng-gen-steps");
     els.settingsToggle = $("ng-gen-settings-toggle");
     els.settingsMore = $("ng-gen-settings-more");
     els.wardrobe = $("ng-gen-wardrobe");
@@ -127,6 +131,19 @@
       els.settingsMore.style.display = open ? "none" : "block";
       els.settingsToggle.innerHTML =
         (open ? "▸" : "▾") + " more settings";
+    });
+
+    els.sizePreset.addEventListener("change", function () {
+      var v = els.sizePreset.value;
+      if (v === "custom") return;
+      var wh = v.split("x");
+      els.width.value = wh[0];
+      els.height.value = wh[1];
+    });
+    [els.width, els.height].forEach(function (inp) {
+      inp.addEventListener("input", function () {
+        els.sizePreset.value = "custom";
+      });
     });
 
     els.poseAll.addEventListener("click", function (e) {
@@ -347,6 +364,9 @@
       hair_color: (els.hair.value || "").trim(),
       seed: seedRaw === "" ? -1 : parseInt(seedRaw, 10),
       identity_lock: !!els.identityLock.checked,
+      width: parseInt(els.width.value, 10) || 2048,
+      height: parseInt(els.height.value, 10) || 2048,
+      steps: parseInt(els.steps.value, 10) || 28,
     };
   }
 
@@ -399,6 +419,7 @@
         status: "pending",
         thumbUrl: null,
         error: null,
+        logTail: null,
       });
     });
     setStatus(
@@ -460,6 +481,9 @@
             "identity_lock",
             item.settings.identity_lock ? "true" : "false"
           );
+          form.append("width", String(item.settings.width));
+          form.append("height", String(item.settings.height));
+          form.append("steps", String(item.settings.steps));
           return fetch(API + "/sheet-from-upload", {
             method: "POST",
             body: form,
@@ -515,6 +539,7 @@
         .then(function (job) {
           if (!job || !job.status) return;
           var shot = (job.shots || [])[0];
+          if (job.log_tail && job.log_tail.length) item.logTail = job.log_tail;
           if (job.status === "completed") {
             item.status = "done";
             item.thumbUrl =
@@ -551,7 +576,12 @@
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shot_key: item.key }),
+        body: JSON.stringify({
+          shot_key: item.key,
+          width: item.settings.width,
+          height: item.settings.height,
+          steps: item.settings.steps,
+        }),
       }
     )
       .then(function (r) {
@@ -645,7 +675,20 @@
       row.appendChild(thumbs);
       row.appendChild(meta);
       row.appendChild(right);
+
+      // Live progress -- the HiDream subprocess's own stdout (step
+      // counter etc.), surfaced by job_status_ng()'s log_tail. Shown
+      // while a job is in flight, and kept on a failed row for context.
+      var logEl = null;
+      if (item.logTail && item.logTail.length && item.status !== "done") {
+        logEl = document.createElement("div");
+        logEl.className = "log";
+        logEl.textContent = item.logTail.slice(-10).join("\n");
+        row.appendChild(logEl);
+      }
+
       els.queue.appendChild(row);
+      if (logEl) logEl.scrollTop = logEl.scrollHeight;
     });
 
     var n = queue.length;
@@ -673,5 +716,54 @@
     }
   }
 
-  window.GenerateNG = { sync: sync };
+  // ---- hooks for characterIONG.js (Save/Load) ----
+
+  // The currently-picked reference, for Save to embed. {url, origin} or null.
+  function getActiveReference() {
+    var r = refs.find(function (x) {
+      return x.id === activeRefId;
+    });
+    if (!r) return null;
+    var origin =
+      r.kind === "disk"
+        ? "disk"
+        : r.id === "anchor"
+        ? "anchor"
+        : "selected-frame:" + r.label.replace(/^#/, "");
+    return { url: r.url, origin: origin };
+  }
+
+  // Load calls this with a saved reference's data URI -- lands it in the
+  // tray as a disk-kind ref (survives rebuildRefTray) and selects it.
+  function addExternalReference(dataUri, label) {
+    if (!dataUri) return;
+    var blob;
+    try {
+      var parts = String(dataUri).split(",");
+      var mime = (parts[0].match(/data:([^;]+)/) || [])[1] || "image/jpeg";
+      var bin = atob(parts[1] || "");
+      var arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      blob = new Blob([arr], { type: mime });
+    } catch (e) {
+      return;
+    }
+    var id = "ext" + ++localSeq;
+    refs.push({
+      id: id,
+      label: label || "saved",
+      kind: "disk",
+      url: URL.createObjectURL(blob),
+      file: blob,
+    });
+    activeRefId = id;
+    refreshEls();
+    renderRefTray();
+  }
+
+  window.GenerateNG = {
+    sync: sync,
+    getActiveReference: getActiveReference,
+    addExternalReference: addExternalReference,
+  };
 })();

@@ -297,6 +297,10 @@
       // main region -- it just needs to be told which project is active
       // (for the reference image) and when to show/hide itself.
       if (window.GenerateNG) window.GenerateNG.sync(active);
+      // Chat view (task === "chat") -- same deal as Generate: owns its own
+      // rail pane (#ng-chat-pane) and main region (#ng-chat-main), just
+      // needs to be told when to show/hide itself.
+      if (window.ChatNG) window.ChatNG.sync(active);
       applyResolutionSummaryNG(active && active.job ? active.job.resolutionSummary : null);
       this.saveState();
     },
@@ -386,7 +390,7 @@
       // switches over to showing the ring (see placeVideoPreview() in
       // videoNG.js). The Generate view takes over the whole main stage
       // and rail, so the preview is fully hidden there regardless.
-      if (!active || !active.video || active.task === "generate") {
+      if (!active || !active.video || active.task === "generate" || active.task === "chat") {
         placeVideoPreview("hidden");
       } else if (active.ring) {
         placeVideoPreview("rail");
@@ -406,12 +410,13 @@
         return;
       }
       if (!active.task) {
-        showPlaceholder("Pick Video, Immich, Folder / Zip, or Generate below to get started with “" + active.name + "”.");
+        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, or Chat below to get started with “" + active.name + "”.");
         return;
       }
-      if (active.task === "generate") {
-        // The Generate view's main region (#ng-generate-main) is shown by
-        // GenerateNG.sync(); everything else in the main stage stays hidden.
+      if (active.task === "generate" || active.task === "chat") {
+        // The Generate/Chat view's main region (#ng-generate-main /
+        // #ng-chat-main) is shown by GenerateNG.sync() / ChatNG.sync();
+        // everything else in the main stage stays hidden.
         mainPlaceholderEl.style.display = "none";
         stageWrapEl.style.display = "none";
         sidebarEl.style.display = "none";
@@ -460,7 +465,7 @@
           }
         }
       } else {
-        showPlaceholder("Pick Video, Immich, Folder / Zip, or Generate below to get started with “" + active.name + "”.");
+        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, or Chat below to get started with “" + active.name + "”.");
         return;
       }
 
@@ -825,14 +830,18 @@
         return;
       }
       leftRailEmptyEl.style.display = "none";
-      leftRailBodyEl.style.display = "flex";
 
-      if (active.task === "generate") {
-        // Generate view swaps the whole rail body for #ng-generate-pane
-        // (see generateNG.js / GenerateNG.sync) -- none of the per-task
-        // section toggling or ring-derived control refresh below applies.
+      if (active.task === "generate" || active.task === "chat") {
+        // Generate/Chat views swap the whole rail body for their own pane
+        // (#ng-generate-pane / #ng-chat-pane, siblings of #ng-leftrail-body
+        // under #ng-leftrail, shown by GenerateNG.sync / ChatNG.sync).
+        // Collapse the now-empty #ng-leftrail-body so their pane gets the
+        // full rail height instead of splitting it 50/50 -- none of the
+        // per-task section toggling or ring-derived refresh below applies.
+        leftRailBodyEl.style.display = "none";
         return;
       }
+      leftRailBodyEl.style.display = "flex";
 
       // The three ingest sources are separate switchable "pages" within
       // the tab -- only the section(s) for the active task are shown.

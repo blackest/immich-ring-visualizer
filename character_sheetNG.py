@@ -57,6 +57,32 @@ MAX_BYTES_PER_IMAGE = 32 * 1024 * 1024
 # useful -- see generate_character_sheet_ng.
 MAX_SHOTS_FOR_COMPOSITE = 6
 
+# Render-size / step bounds for the Generate view's per-job width/height/
+# steps controls. Width/height are patch-aligned to 32 downstream (see
+# hidream_engineNG._patch_align_ng); anything outside the trained
+# resolutions renders off-spec (faster, faint 32px patch grid possible).
+RENDER_DIM_MIN, RENDER_DIM_MAX = 256, 4096
+RENDER_STEPS_MIN, RENDER_STEPS_MAX = 1, 100
+DEFAULT_RENDER_W = DEFAULT_RENDER_H = 2048
+DEFAULT_RENDER_STEPS = 28
+
+
+def _validate_render_params_ng(width, height, steps):
+    """(width, height, steps) -> validated ints. Raises ValueError (which
+    the routes map to HTTP 400) on non-integers or out-of-range values."""
+    try:
+        w, h, s = int(width), int(height), int(steps)
+    except (TypeError, ValueError):
+        raise ValueError("width, height and steps must be integers")
+    if not (RENDER_DIM_MIN <= w <= RENDER_DIM_MAX
+            and RENDER_DIM_MIN <= h <= RENDER_DIM_MAX):
+        raise ValueError(
+            f"width/height must be between {RENDER_DIM_MIN} and {RENDER_DIM_MAX}")
+    if not (RENDER_STEPS_MIN <= s <= RENDER_STEPS_MAX):
+        raise ValueError(
+            f"steps must be between {RENDER_STEPS_MIN} and {RENDER_STEPS_MAX}")
+    return w, h, s
+
 
 class DraftCharacterExistsError(Exception):
     """Raised by create_draft_character_ng() when `name` is already taken."""
@@ -355,6 +381,9 @@ def generate_character_sheet_ng(name: str, *,
                                  anchor_chain: bool = True,
                                  identity_lock: bool = True,
                                  style: str = "none",
+                                 width: int = DEFAULT_RENDER_W,
+                                 height: int = DEFAULT_RENDER_H,
+                                 steps: int = DEFAULT_RENDER_STEPS,
                                  on_log=None) -> dict:
     """Render a shot-list character sheet from one reference photo.
 
@@ -379,6 +408,7 @@ def generate_character_sheet_ng(name: str, *,
     """
     cid = _safe_id_ng(name)
     shot_list = resolve_shots_ng(preset=preset, shots=shots, views=views)
+    width, height, steps = _validate_render_params_ng(width, height, steps)
 
     wardrobe = str(wardrobe or "").strip()
     hair_color = str(hair_color or "").strip()
@@ -401,7 +431,7 @@ def generate_character_sheet_ng(name: str, *,
 
     with _SHEET_LOCK_NG:
         t0 = time.time()
-        cfg = hidream_engineNG.HiDreamConfig()
+        cfg = hidream_engineNG.HiDreamConfig(steps=steps)
         view_records = []
         anchor_png = None
         for i, spec in enumerate(shot_list):
@@ -422,11 +452,12 @@ def generate_character_sheet_ng(name: str, *,
             # img2img noising). Still fully deterministic/reproducible
             # from one job-level `seed` input.
             candidates = hidream_engineNG.generate_hidream_ng(
-                prompt=prompt, n=1, width=1024, height=1024,
+                prompt=prompt, n=1, width=width, height=height,
                 output_dir=view_dir,
                 base_seed=resolved_seed + i,
                 refs=view_refs,
                 config=cfg,
+                allow_offspec_res=True,
                 on_log=on_log,
             )
             if not candidates or not candidates[0].get("png_path"):
@@ -502,6 +533,9 @@ def generate_character_sheet_ng(name: str, *,
 def regenerate_shot_ng(name: str, shot_key: str, *,
                         seed: Optional[int] = None,
                         prompt: Optional[str] = None,
+                        width: Optional[int] = None,
+                        height: Optional[int] = None,
+                        steps: Optional[int] = None,
                         on_log=None) -> dict:
     """Re-render a single shot from an already-generated sheet and
     recomposite (when the shot count is small enough to composite at
@@ -532,9 +566,17 @@ def regenerate_shot_ng(name: str, shot_key: str, *,
     if idx is None:
         raise LookupError(f"no shot {shot_key!r} in character {cid!r}'s current sheet")
 
+    # Fall back to the shot's previous render size when the caller didn't
+    # ask for a specific one; steps aren't persisted per shot, so default.
+    prev = views[idx]
+    use_w, use_h, use_steps = _validate_render_params_ng(
+        width if width is not None else (prev.get("width") or DEFAULT_RENDER_W),
+        height if height is not None else (prev.get("height") or DEFAULT_RENDER_H),
+        steps if steps is not None else DEFAULT_RENDER_STEPS)
+
     with _SHEET_LOCK_NG:
         t0 = time.time()
-        cfg = hidream_engineNG.HiDreamConfig()
+        cfg = hidream_engineNG.HiDreamConfig(steps=use_steps)
         use_prompt = prompt if prompt is not None else views[idx]["prompt"]
         use_seed = int(seed) if seed is not None else random.randint(0, 2**31 - 1)
         refs = views[idx].get("refs") or []
@@ -543,9 +585,9 @@ def regenerate_shot_ng(name: str, shot_key: str, *,
         if on_log:
             on_log(f"[sheet] {cid}: re-rolling shot {shot_key!r}")
         candidates = hidream_engineNG.generate_hidream_ng(
-            prompt=use_prompt, n=1, width=1024, height=1024,
+            prompt=use_prompt, n=1, width=use_w, height=use_h,
             output_dir=view_dir, base_seed=use_seed, refs=refs,
-            config=cfg, on_log=on_log)
+            config=cfg, allow_offspec_res=True, on_log=on_log)
         if not candidates or not candidates[0].get("png_path"):
             raise RuntimeError(f"engine returned no image for shot {shot_key!r}")
         c = candidates[0]

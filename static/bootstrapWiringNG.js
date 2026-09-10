@@ -608,7 +608,8 @@
   taskButtons.forEach((btn) => {
     btn.addEventListener("click", () => ProjectManager.setTask(btn.dataset.task));
   });
-  loadProjectBtn.disabled = true; // stays disabled until the persistence layer exists
+  // load/save of a character .json is wired in characterIONG.js (it also
+  // enables loadProjectBtn) -- runs before this file in load order.
 
   wireLeftRailChrome();
   wireRightSidebarListToggle();

@@ -147,6 +147,7 @@ def generate_hidream_ng(prompt: str, n: int, width: int, height: int,
                          output_dir: Path, base_seed: Optional[int],
                          config: HiDreamConfig,
                          refs: Optional[list] = None,
+                         allow_offspec_res: bool = False,
                          on_log: Optional[Callable[[str], None]] = None) -> list:
     """One subprocess call, n candidates in one call (the generator
     script accepts multiple --output/--seed values so the model loads
@@ -156,6 +157,11 @@ def generate_hidream_ng(prompt: str, n: int, width: int, height: int,
     instruction edit, K=2-3 composes multiple references. Character-sheet
     generation always calls this with n=1 (one full-res image per shot;
     a batched n>1 call would give every candidate the same prompt).
+
+    allow_offspec_res=True renders the requested width/height as given
+    (only 32px patch-aligned), skipping the snap to a trained resolution.
+    Off-spec dims render much faster but can show a faint 32px patch grid
+    -- fine for draft/framing passes, not final output.
     """
     py = _resolve_hidream_python_ng(config)
     if not py:
@@ -171,11 +177,18 @@ def generate_hidream_ng(prompt: str, n: int, width: int, height: int,
     if not Path(script).is_file():
         raise FileNotFoundError(f"HiDream generator script missing at {script}")
 
-    snap_w, snap_h = _snap_to_trained_resolution_ng(width, height)
-    if (snap_w, snap_h) != (width, height) and on_log:
-        on_log(f"[hidream] snapping {width}x{height} -> {snap_w}x{snap_h} (trained dim)")
-    aligned_w = _patch_align_ng(snap_w)
-    aligned_h = _patch_align_ng(snap_h)
+    if allow_offspec_res:
+        aligned_w = _patch_align_ng(width)
+        aligned_h = _patch_align_ng(height)
+        if (aligned_w, aligned_h) != (width, height) and on_log:
+            on_log(f"[hidream] patch-aligning {width}x{height} -> "
+                   f"{aligned_w}x{aligned_h} (off-spec: trained-resolution snap skipped)")
+    else:
+        snap_w, snap_h = _snap_to_trained_resolution_ng(width, height)
+        if (snap_w, snap_h) != (width, height) and on_log:
+            on_log(f"[hidream] snapping {width}x{height} -> {snap_w}x{snap_h} (trained dim)")
+        aligned_w = _patch_align_ng(snap_w)
+        aligned_h = _patch_align_ng(snap_h)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

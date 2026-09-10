@@ -1,0 +1,30 @@
+{
+  "schema": "ringviz/character_sheet@2",
+  "character_id": "test1-2",
+  "engine": "hidream",
+  "reference": "/Users/john/immich-app/repo/immichring/exportsNG/test1-2/character/avatar.jpg",
+  "preset": "custom",
+  "wardrobe": "",
+  "hair_color": "",
+  "identity_lock": true,
+  "style": "cinematic",
+  "seed": -1,
+  "resolved_seed": 1313097718,
+  "views": [
+    {
+      "key": "waist_front",
+      "prompt": "Keep this person exactly as they are in the reference image -- same face, same skin tone and complexion, same hair color, same exact hairstyle (do not restyle, tie back, loosen, or otherwise change how the hair is worn -- keep the same length and the same way it falls), same build, wearing exactly the same clothes as in the reference image. Change only the camera and pose: a waist-up portrait, upper body visible, facing the camera directly, the person centered in the frame and filling most of it. An outdoor setting with soft overcast daylight, a gently blurred natural background, photorealistic. Cinematic color grading, directional key lighting with soft shadow falloff, shallow depth of field, filmic contrast.",
+      "seed": 1313097718,
+      "png_path": "/Users/john/immich-app/repo/immichring/exportsNG/test1-2/character/sheet_views/waist_front/cand_00_hidream_1789008723719.png",
+      "engine": "hidream-o1-dev-bf16",
+      "width": 2048,
+      "height": 2048,
+      "refs": [
+        "/Users/john/immich-app/repo/immichring/exportsNG/test1-2/character/avatar.jpg"
+      ]
+    }
+  ],
+  "sheet_png": "/Users/john/immich-app/repo/immichring/exportsNG/test1-2/character/sheet.png",
+  "created_at": 1789009255.227747,
+  "elapsed_sec": 531.51
+}

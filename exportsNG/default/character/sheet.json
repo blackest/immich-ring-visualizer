@@ -1,0 +1,30 @@
+{
+  "schema": "ringviz/character_sheet@2",
+  "character_id": "default",
+  "engine": "hidream",
+  "reference": "/Users/john/immich-app/repo/immichring/exportsNG/default/character/avatar.jpg",
+  "preset": "custom",
+  "wardrobe": "wearing a green dress",
+  "hair_color": "",
+  "identity_lock": false,
+  "style": "dramatic",
+  "seed": 42,
+  "resolved_seed": 42,
+  "views": [
+    {
+      "key": "fullbody_front",
+      "prompt": "a full-body shot from head to feet, standing, facing the camera directly A minimalist indoor space, warm ambient lighting. High-contrast dramatic lighting with deep, defined shadows, moody atmosphere, strong directional key light. They are wearing wearing a green dress.",
+      "seed": 42,
+      "png_path": "/Users/john/immich-app/repo/immichring/exportsNG/default/character/sheet_views/fullbody_front/cand_00_hidream_1789033947742.png",
+      "engine": "hidream-o1-dev-bf16",
+      "width": 2048,
+      "height": 2048,
+      "refs": [
+        "/Users/john/immich-app/repo/immichring/exportsNG/default/character/avatar.jpg"
+      ]
+    }
+  ],
+  "sheet_png": "/Users/john/immich-app/repo/immichring/exportsNG/default/character/sheet.png",
+  "created_at": 1789034469.1934988,
+  "elapsed_sec": 521.45
+}
