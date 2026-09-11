@@ -617,8 +617,7 @@
   wireNgPoseListLensEffect();
   wireExportSettingsNG();
   wirePersonClustersNG();
-  wirePosePickerControlsNG();
-  wireScalePickerControlsNG();
+  PickerStageNG.wire();
   ProjectManager.loadState();
   ProjectManager.render();
 

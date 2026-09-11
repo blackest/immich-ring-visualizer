@@ -420,6 +420,7 @@
         thumbUrl: null,
         error: null,
         logTail: null,
+        prompt: null, // the full text sent to the engine, from job_status_ng()
       });
     });
     setStatus(
@@ -539,6 +540,7 @@
         .then(function (job) {
           if (!job || !job.status) return;
           var shot = (job.shots || [])[0];
+          if (shot && shot.prompt) item.prompt = shot.prompt;
           if (job.log_tail && job.log_tail.length) item.logTail = job.log_tail;
           if (job.status === "completed") {
             item.status = "done";
@@ -685,6 +687,44 @@
         logEl.className = "log";
         logEl.textContent = item.logTail.slice(-10).join("\n");
         row.appendChild(logEl);
+      }
+
+      // The exact prompt sent to the engine (from job_status_ng). Handy
+      // for judging a bad render and as a starting point for a custom
+      // prompt -- collapsed by default, auto-open on a failed row.
+      if (item.prompt) {
+        var pWrap = document.createElement("div");
+        pWrap.className = "prompt";
+        var open = item._promptOpen || item.status === "failed";
+
+        var pHead = document.createElement("div");
+        pHead.className = "prompt-head";
+        var tog = document.createElement("span");
+        tog.className = "prompt-tog";
+        tog.textContent = (open ? "▾ " : "▸ ") + "prompt";
+        tog.addEventListener("click", function () {
+          item._promptOpen = !open;
+          renderQueue();
+        });
+        var cp = document.createElement("button");
+        cp.className = "ng-gen-reroll prompt-copy";
+        cp.textContent = "copy";
+        cp.addEventListener("click", function () {
+          if (navigator.clipboard) navigator.clipboard.writeText(item.prompt);
+          cp.textContent = "copied";
+          setTimeout(function () { cp.textContent = "copy"; }, 1200);
+        });
+        pHead.appendChild(tog);
+        pHead.appendChild(cp);
+        pWrap.appendChild(pHead);
+
+        if (open) {
+          var pBody = document.createElement("div");
+          pBody.className = "prompt-body";
+          pBody.textContent = item.prompt;
+          pWrap.appendChild(pBody);
+        }
+        row.appendChild(pWrap);
       }
 
       els.queue.appendChild(row);

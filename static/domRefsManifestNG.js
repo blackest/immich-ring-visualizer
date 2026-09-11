@@ -122,8 +122,46 @@
   // ---- DOM refs: hover preview ----
   const hoverPanel = document.getElementById("ng-preview-hover-panel");
   const hoverImg = document.getElementById("ng-preview-hover-img");
+  const hoverBox = document.getElementById("ng-preview-hover-box");
+  const hoverImgWrap = document.getElementById("ng-preview-hover-imgwrap");
   const hoverCaption = document.getElementById("ng-preview-hover-caption");
+  const showFaceBoxToggle = document.getElementById("ng-show-facebox");
   let hoverTimer = null;
+
+  // Position #ng-preview-hover-box over the matched face. The preview img
+  // is the FULL frame shown object-fit:contain, so we first work out the
+  // letterboxed display rect, then place the bbox (full-frame px) inside it.
+  function placeHoverFaceBox(r) {
+    if (!hoverBox) return;
+    const on = showFaceBoxToggle && showFaceBoxToggle.checked;
+    const bb = r && r.bbox;
+    const fw = r && (r.frameW || r.width);
+    const fh = r && (r.frameH || r.height);
+    if (!on || !bb || bb.length !== 4 || !fw || !fh) {
+      hoverBox.style.display = "none";
+      return;
+    }
+    const draw = () => {
+      const cw = hoverImgWrap.clientWidth;
+      const ch = hoverImgWrap.clientHeight;
+      if (!cw || !ch) { hoverBox.style.display = "none"; return; }
+      const ar = fw / fh;
+      let dispW = cw, dispH = cw / ar;
+      if (dispH > ch) { dispH = ch; dispW = ch * ar; }
+      const offX = (cw - dispW) / 2;
+      const offY = (ch - dispH) / 2;
+      hoverBox.style.display = "block";
+      hoverBox.style.left = offX + (bb[0] / fw) * dispW + "px";
+      hoverBox.style.top = offY + (bb[1] / fh) * dispH + "px";
+      hoverBox.style.width = ((bb[2] - bb[0]) / fw) * dispW + "px";
+      hoverBox.style.height = ((bb[3] - bb[1]) / fh) * dispH + "px";
+    };
+    // Always (re)bind onload to THIS draw so a slow previous image can't
+    // fire a stale draw after a newer hover; also draw now if it's ready.
+    hoverImg.onload = draw;
+    if (hoverImg.complete && hoverImg.naturalWidth) draw();
+  }
+
   function showHoverPreview(r) {
     clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => {
@@ -137,6 +175,12 @@
       }
       hoverCaption.innerHTML = `${r.filename}${pctText ? ` &mdash; ${pctText}` : ""}${poseText}`;
       hoverPanel.classList.add("active");
+      // Must run AFTER the panel is made active: placeHoverFaceBox reads
+      // hoverImgWrap's layout box to place the overlay, which is 0x0 while
+      // the panel is still display:none. If the image happened to load
+      // synchronously (cached), calling this before "active" would size
+      // the box against a hidden panel and never get a chance to redraw.
+      placeHoverFaceBox(r);
     }, 80);
   }
   function hideHoverPreview() {

@@ -379,6 +379,7 @@
       const objectUrl = URL.createObjectURL(file);
       this.video = {
         previewId: data.previewId,
+        name: file.name || null, // shown in the Video Analysis panel; survives reload via toPlain()
         fps: data.fps,
         totalFrames: data.totalFrames,
         duration: data.duration,
@@ -512,6 +513,15 @@
     if (project.videoLoading) {
       videoAnalysisBodyEl.appendChild(placeholder("Loading video..."));
     } else if (project.video) {
+      if (project.video.name) {
+        const nameEl = document.createElement("p");
+        nameEl.className = "ng-video-hint";
+        nameEl.style.fontWeight = "600";
+        nameEl.style.overflowWrap = "anywhere";
+        nameEl.textContent = project.video.name;
+        nameEl.title = project.video.name;
+        videoAnalysisBodyEl.appendChild(nameEl);
+      }
       const info = document.createElement("p");
       info.className = "ng-video-hint";
       info.textContent =

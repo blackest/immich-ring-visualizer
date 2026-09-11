@@ -11,7 +11,10 @@
   </head>
   <body>
     <div id="ng-preview-hover-panel">
-      <img id="ng-preview-hover-img" />
+      <div id="ng-preview-hover-imgwrap">
+        <img id="ng-preview-hover-img" />
+        <div id="ng-preview-hover-box"></div>
+      </div>
       <div class="ng-preview-caption" id="ng-preview-hover-caption"></div>
     </div>
 
@@ -259,6 +262,10 @@
                       Find neutral pose (calibration frame)
                     </button>
                   </div>
+                  <label class="ng-facebox-toggle">
+                    <input type="checkbox" id="ng-show-facebox" />
+                    Show the matched face box on hover previews
+                  </label>
                   <div
                     id="ng-neutral-pose-readout"
                     class="ng-stub-note"
@@ -485,181 +492,31 @@
                 </div>
               </div>
 
-              <div class="panel-section" data-section="pose-picker">
+              <div class="panel-section expanded" data-section="pickers">
                 <div class="panel-section-header">
                   <span class="chev">&#9656;</span
-                  ><span class="sec-title">Pose Picker</span>
+                  ><span class="sec-title">Frame Pickers</span>
                 </div>
                 <div class="panel-section-body">
                   <div class="ng-picker-blurb">
-                    Dial in a target pitch/yaw &mdash; shows the 9 closest
-                    matches from the analyzed pool. Click a thumbnail to add or
-                    remove it from your export selection.
+                    Dial a target pose or shot scale and browse the nearest
+                    matches from the analyzed pool full-width. Opens in the
+                    main stage.
                   </div>
-                  <div id="ng-pose-picker-empty" class="ng-picker-empty">
-                    Run an analysis first (Video or Folder/Zip) &mdash; this
-                    searches the analyzed pool, not the whole library.
-                  </div>
-                  <div
-                    id="ng-pose-picker-controls"
-                    class="ng-picker-controls"
-                    style="display: none"
+                  <button
+                    type="button"
+                    id="ng-open-pose-picker"
+                    class="ng-btn ng-btn-full"
                   >
-                    <div class="ng-picker-slider-row">
-                      <div class="ng-picker-slider-label">
-                        <span>Pitch</span
-                        ><input
-                          type="number"
-                          id="ng-pose-picker-pitch-num"
-                          min="-90"
-                          max="90"
-                          step="1"
-                          value="0"
-                          class="ng-picker-num"
-                        />
-                      </div>
-                      <input
-                        type="range"
-                        id="ng-pose-picker-pitch"
-                        min="-90"
-                        max="90"
-                        value="0"
-                        step="1"
-                        class="ng-picker-range"
-                      />
-                    </div>
-                    <div class="ng-picker-slider-row">
-                      <div class="ng-picker-slider-label">
-                        <span>Yaw</span
-                        ><input
-                          type="number"
-                          id="ng-pose-picker-yaw-num"
-                          min="-90"
-                          max="90"
-                          step="1"
-                          value="0"
-                          class="ng-picker-num"
-                        />
-                      </div>
-                      <input
-                        type="range"
-                        id="ng-pose-picker-yaw"
-                        min="-90"
-                        max="90"
-                        value="0"
-                        step="1"
-                        class="ng-picker-range"
-                      />
-                    </div>
-                    <div class="ng-picker-tolerance-row">
-                      <label class="ng-picker-tolerance-label"
-                        ><input
-                          type="checkbox"
-                          id="ng-pose-picker-tolerance-enable"
-                        />
-                        Tolerance (max distance from target)</label
-                      >
-                      <input
-                        type="number"
-                        id="ng-pose-picker-tolerance-val"
-                        min="0.5"
-                        step="0.5"
-                        value="5"
-                        disabled
-                        class="ng-picker-num"
-                      />
-                    </div>
-                    <div id="ng-pose-picker-grid" class="ng-picker-grid"></div>
-                    <button
-                      type="button"
-                      id="ng-pose-picker-select-btn"
-                      class="ng-btn ng-btn-full"
-                    >
-                      Add these 9 to selection
-                    </button>
-                    <div
-                      id="ng-pose-picker-count"
-                      class="ng-picker-count"
-                    ></div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="panel-section" data-section="scale-picker">
-                <div class="panel-section-header">
-                  <span class="chev">&#9656;</span
-                  ><span class="sec-title">Shot Scale Picker</span>
-                </div>
-                <div class="panel-section-body">
-                  <div class="ng-picker-blurb">
-                    Dial in a target face-to-frame ratio &mdash; 0% is a
-                    distant/wide shot, 100% is an extreme close-up. Frames below
-                    Export Settings' "Min face" are excluded, since too-distant
-                    shots are too small to be useful regardless of match.
-                  </div>
-                  <div id="ng-scale-picker-empty" class="ng-picker-empty">
-                    Run an analysis first &mdash; this searches the analyzed
-                    pool, not the whole library.
-                  </div>
-                  <div
-                    id="ng-scale-picker-controls"
-                    class="ng-picker-controls"
-                    style="display: none"
+                    Pose Picker
+                  </button>
+                  <button
+                    type="button"
+                    id="ng-open-scale-picker"
+                    class="ng-btn ng-btn-full"
                   >
-                    <div class="ng-picker-slider-row">
-                      <div class="ng-picker-slider-label">
-                        <span>Face % of frame</span
-                        ><input
-                          type="number"
-                          id="ng-scale-picker-num"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value="30"
-                          class="ng-picker-num"
-                        />
-                      </div>
-                      <input
-                        type="range"
-                        id="ng-scale-picker-slider"
-                        min="0"
-                        max="100"
-                        value="30"
-                        step="1"
-                        class="ng-picker-range"
-                      />
-                    </div>
-                    <div class="ng-picker-tolerance-row">
-                      <label class="ng-picker-tolerance-label"
-                        ><input
-                          type="checkbox"
-                          id="ng-scale-picker-tolerance-enable"
-                        />
-                        Tolerance (max distance from target)</label
-                      >
-                      <input
-                        type="number"
-                        id="ng-scale-picker-tolerance-val"
-                        min="0.5"
-                        step="0.5"
-                        value="10"
-                        disabled
-                        class="ng-picker-num"
-                      />
-                    </div>
-                    <div id="ng-scale-picker-grid" class="ng-picker-grid"></div>
-                    <button
-                      type="button"
-                      id="ng-scale-picker-select-btn"
-                      class="ng-btn ng-btn-full"
-                    >
-                      Add these 9 to selection
-                    </button>
-                    <div
-                      id="ng-scale-picker-count"
-                      class="ng-picker-count"
-                    ></div>
-                  </div>
+                    Shot Scale Picker
+                  </button>
                 </div>
               </div>
 
@@ -1028,6 +885,39 @@
               New chat
             </button>
           </div>
+
+          <!-- Rachel view's rail pane -- swapped in for #ng-controls-pane by
+               RachelNG.sync() when the active project's task is "rachel".
+               Like the Chat pane but no model picker: one fixed Hermes
+               agent. See static/rachelNG.js. -->
+          <div id="ng-rachel-pane" style="display: none">
+            <div id="ng-rachel-unavailable" class="ng-chat-banner" style="display: none"></div>
+
+            <label class="ng-gen-label" for="ng-rachel-system">System prompt</label>
+            <textarea
+              id="ng-rachel-system"
+              class="ng-gen-input ng-chat-system"
+              rows="4"
+              placeholder="Optional. Prepended each turn — the agent already has its own persona and memory."
+            ></textarea>
+
+            <label class="ng-gen-label" for="ng-rachel-temp" style="margin-top: 10px">
+              Temperature <span id="ng-rachel-temp-val">0.7</span>
+            </label>
+            <input
+              id="ng-rachel-temp"
+              type="range"
+              min="0"
+              max="2"
+              step="0.1"
+              value="0.7"
+              style="width: 100%"
+            />
+
+            <button type="button" id="ng-rachel-new" class="ng-gen-btn ng-gen-btn-quiet">
+              New chat
+            </button>
+          </div>
         </aside>
         <main id="ng-main">
           <p id="ng-main-placeholder" class="ng-placeholder">
@@ -1121,6 +1011,74 @@
               />
               <span id="ng-pose-scrub-right"></span>
             </div>
+
+            <!-- Pose / Shot Scale picker workspace. Takes over the stage
+                 when project.stageMode is "posePicker" / "scalePicker".
+                 Shown/hidden and populated by PickerStageNG (pickersNG.js);
+                 renderVideoStage() decides which mode is live. -->
+            <div id="ng-picker-stage" style="display: none">
+              <div id="ng-picker-stage-bar">
+                <div class="ng-picker-tabs">
+                  <button type="button" class="ng-picker-tab" data-picker="posePicker">Pose</button>
+                  <button type="button" class="ng-picker-tab" data-picker="scalePicker">Shot scale</button>
+                </div>
+                <span id="ng-picker-stage-target" class="ng-picker-stage-target"></span>
+                <button type="button" id="ng-picker-stage-back" class="ng-btn">&larr; Ring</button>
+              </div>
+
+              <div id="ng-picker-stage-controls">
+                <div id="ng-pose-picker-controls" class="ng-picker-controls">
+                  <div class="ng-picker-slider-row">
+                    <div class="ng-picker-slider-label">
+                      <span>Pitch</span
+                      ><input type="number" id="ng-pose-picker-pitch-num" min="-90" max="90" step="1" value="0" class="ng-picker-num" />
+                    </div>
+                    <input type="range" id="ng-pose-picker-pitch" min="-90" max="90" value="0" step="1" class="ng-picker-range" />
+                  </div>
+                  <div class="ng-picker-slider-row">
+                    <div class="ng-picker-slider-label">
+                      <span>Yaw</span
+                      ><input type="number" id="ng-pose-picker-yaw-num" min="-90" max="90" step="1" value="0" class="ng-picker-num" />
+                    </div>
+                    <input type="range" id="ng-pose-picker-yaw" min="-90" max="90" value="0" step="1" class="ng-picker-range" />
+                  </div>
+                  <div class="ng-picker-tolerance-row">
+                    <label class="ng-picker-tolerance-label"
+                      ><input type="checkbox" id="ng-pose-picker-tolerance-enable" />
+                      Tolerance (max Δ from target)</label
+                    >
+                    <input type="number" id="ng-pose-picker-tolerance-val" min="0.5" step="0.5" value="5" disabled class="ng-picker-num" />
+                  </div>
+                </div>
+                <div id="ng-scale-picker-controls" class="ng-picker-controls" style="display: none">
+                  <div class="ng-picker-slider-row">
+                    <div class="ng-picker-slider-label">
+                      <span>Face % of frame</span
+                      ><input type="number" id="ng-scale-picker-num" min="0" max="100" step="1" value="30" class="ng-picker-num" />
+                    </div>
+                    <input type="range" id="ng-scale-picker-slider" min="0" max="100" value="30" step="1" class="ng-picker-range" />
+                  </div>
+                  <div class="ng-picker-tolerance-row">
+                    <label class="ng-picker-tolerance-label"
+                      ><input type="checkbox" id="ng-scale-picker-tolerance-enable" />
+                      Tolerance (max Δ from target)</label
+                    >
+                    <input type="number" id="ng-scale-picker-tolerance-val" min="0.5" step="0.5" value="10" disabled class="ng-picker-num" />
+                  </div>
+                </div>
+              </div>
+
+              <div id="ng-picker-stage-empty" class="ng-picker-empty" style="display: none">
+                No analyzed frames with the data this picker needs. Run a Video,
+                Folder / Zip, or Immich batch analysis first.
+              </div>
+              <div id="ng-picker-stage-grid" class="ng-picker-stage-grid"></div>
+
+              <div id="ng-picker-stage-foot">
+                <button type="button" id="ng-picker-stage-add" class="ng-btn">Add all shown to selection</button>
+                <span id="ng-picker-stage-count" class="ng-picker-count"></span>
+              </div>
+            </div>
           </div>
           <!-- Generate view's main region -- the render queue ("shared
                printer"). Shown by GenerateNG.sync() when task is
@@ -1161,6 +1119,28 @@
               ></textarea>
               <button type="submit" id="ng-chat-send" class="ng-gen-btn">Send</button>
               <button type="button" id="ng-chat-stop" class="ng-gen-btn ng-gen-btn-quiet" style="display: none">
+                Stop
+              </button>
+            </form>
+          </div>
+          <!-- Rachel view's main region -- transcript + composer. Shown by
+               RachelNG.sync() when task is "rachel". Reuses the .ng-chat-*
+               bubble styles. -->
+          <div id="ng-rachel-main" style="display: none">
+            <div id="ng-rachel-transcript">
+              <p id="ng-rachel-empty" class="ng-placeholder">
+                Say something to Rachel. Replies can take a minute or two to
+                start. One conversation, kept until you refresh.
+              </p>
+            </div>
+            <form id="ng-rachel-composer" autocomplete="off">
+              <textarea
+                id="ng-rachel-input"
+                rows="1"
+                placeholder="Message… (Enter to send, Shift+Enter for a newline)"
+              ></textarea>
+              <button type="submit" id="ng-rachel-send" class="ng-gen-btn">Send</button>
+              <button type="button" id="ng-rachel-stop" class="ng-gen-btn ng-gen-btn-quiet" style="display: none">
                 Stop
               </button>
             </form>
@@ -1335,6 +1315,7 @@
         <button class="ng-task-btn" data-task="folderzip">Folder / Zip</button>
         <button class="ng-task-btn" data-task="generate">Generate</button>
         <button class="ng-task-btn" data-task="chat">Chat</button>
+        <button class="ng-task-btn" data-task="rachel">Rachel</button>
       </footer>
     </div>
 
@@ -1381,6 +1362,7 @@
     <script src="{{ url_for('static', filename='generateNG.js') }}"></script>
     <script src="{{ url_for('static', filename='characterIONG.js') }}"></script>
     <script src="{{ url_for('static', filename='chatNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='rachelNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>
     <script src="{{ url_for('static', filename='settingsNG.js') }}"></script>
     <script src="{{ url_for('static', filename='initguing.js') }}"></script>

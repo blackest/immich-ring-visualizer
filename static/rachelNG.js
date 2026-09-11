@@ -1,36 +1,35 @@
 /**
- * chatNG.js -- the "Chat" view (bottom-bar Chat task).
+ * rachelNG.js -- the "Rachel" view (bottom-bar Rachel task).
  *
- * A plain chat interface in front of the local Ollama daemon, wired to
- * the NG backend proxy at /api/ng/chat/* (routes/chatNG.py). Self-
- * contained: it reads nothing from the rest of the app -- no project, no
- * ring, no reference image. The bottom-bar button just flips the active
- * project's task to "chat"; this view then owns the whole left rail
- * (#ng-chat-pane) and main stage (#ng-chat-main).
+ * A plain chat interface in front of a Hermes agent gateway (NousResearch
+ * hermes-agent), wired to the NG backend proxy at /api/ng/rachel/*
+ * (routes/rachelNG.py). Structurally a trimmed copy of chatNG.js:
  *
- * ONE global conversation. It is module state, not per-project -- switch
- * tabs, switch tasks, come back, it's the same thread. This is
- * deliberate: a single Ollama model is loaded at a time, and juggling
- * several independent histories against it just invites contention and a
- * confused model. Lost on refresh (same as generateNG.js's queue).
+ *   * ONE fixed agent -- no model picker. The rail pane is just the
+ *     status banner, an optional system prompt, a temperature slider and
+ *     "New chat".
+ *   * The backend translates the gateway's SSE stream into the same
+ *     NDJSON line shape chatNG.js uses, so readStream() here is identical.
+ *   * Replies can take minutes to start (long agent loop + big context on
+ *     a slow local backend); the Stop button aborts via AbortController.
  *
- * Streaming: POST the full message list to /api/ng/chat/send, read the
- * response body as a stream, parse the NDJSON Ollama emits line by line,
- * and append each message-content delta into the live assistant bubble.
+ * ONE global conversation, module state, not per-project -- switch tabs
+ * or tasks and come back to the same thread. Lost on refresh (the agent
+ * keeps its own server-side memory regardless, via the session headers
+ * the backend sends).
  *
  * Classic script sharing page scope with the other *NG.js files. Loaded
- * after projectManagerNG.js and before bootstrapWiringNG.js (whose first
- * ProjectManager.render() calls ChatNG.sync()).
+ * after chatNG.js and before bootstrapWiringNG.js (whose first
+ * ProjectManager.render() calls RachelNG.sync()).
  */
 (function () {
   "use strict";
 
-  var API = "/api/ng/chat";
+  var API = "/api/ng/rachel";
 
   // ---- module state (the one conversation) ----
   var inited = false;
-  var bootstrapped = false; // models + health fetched once
-  var models = []; // [{name, parameter_size, ...}]
+  var healthChecked = false;
   var conversation = []; // [{role: "user"|"assistant", content, error?}]
   var streaming = false;
   var abortCtl = null;
@@ -42,28 +41,20 @@
     return document.getElementById(id);
   }
   function refreshEls() {
-    els.pane = $("ng-chat-pane");
-    els.main = $("ng-chat-main");
+    els.pane = $("ng-rachel-pane");
+    els.main = $("ng-rachel-main");
     els.controlsPane = $("ng-controls-pane");
-    els.unavailable = $("ng-chat-unavailable");
-    els.model = $("ng-chat-model");
-    els.modelHint = $("ng-chat-model-hint");
-    els.system = $("ng-chat-system");
-    els.temp = $("ng-chat-temp");
-    els.tempVal = $("ng-chat-temp-val");
-    els.newBtn = $("ng-chat-new");
-    els.transcript = $("ng-chat-transcript");
-    els.empty = $("ng-chat-empty");
-    els.composer = $("ng-chat-composer");
-    els.input = $("ng-chat-input");
-    els.send = $("ng-chat-send");
-    els.stop = $("ng-chat-stop");
-  }
-
-  function escapeHtml(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
+    els.unavailable = $("ng-rachel-unavailable");
+    els.system = $("ng-rachel-system");
+    els.temp = $("ng-rachel-temp");
+    els.tempVal = $("ng-rachel-temp-val");
+    els.newBtn = $("ng-rachel-new");
+    els.transcript = $("ng-rachel-transcript");
+    els.empty = $("ng-rachel-empty");
+    els.composer = $("ng-rachel-composer");
+    els.input = $("ng-rachel-input");
+    els.send = $("ng-rachel-send");
+    els.stop = $("ng-rachel-stop");
   }
 
   // ---- one-time wiring ----
@@ -112,29 +103,29 @@
   function sync(active) {
     refreshEls();
     if (!els.pane || !els.main) return;
-    var on = !!(active && active.task === "chat");
+    var on = !!(active && active.task === "rachel");
     els.pane.style.display = on ? "" : "none";
     els.main.style.display = on ? "flex" : "none";
-    // #ng-controls-pane is shared: the Generate view hides it too. Only
-    // hide it when Chat is on; when Chat is off, let whoever owns the
-    // active task decide (don't un-hide it out from under Generate).
+    // #ng-controls-pane is shared with the Generate and Chat views. Only
+    // hide it when Rachel is on; when Rachel is off, don't un-hide it out
+    // from under whichever of those owns the active task. RachelNG.sync
+    // runs last in render(), so forcing "none" here wins for "rachel".
     if (els.controlsPane) {
       if (on) els.controlsPane.style.display = "none";
-      else if (!active || (active.task !== "generate" && active.task !== "rachel"))
+      else if (!active || (active.task !== "generate" && active.task !== "chat"))
         els.controlsPane.style.display = "";
     }
     if (!on) return;
 
     init();
-    ensureModelsAndHealth();
+    ensureHealth();
     renderTranscript();
   }
 
-  // ---- models + daemon health, fetched once ----
-  function ensureModelsAndHealth() {
-    if (bootstrapped) return;
-    bootstrapped = true;
-
+  // ---- gateway health, checked once ----
+  function ensureHealth() {
+    if (healthChecked) return;
+    healthChecked = true;
     fetch(API + "/status")
       .then(function (r) {
         return r.json();
@@ -143,79 +134,8 @@
         setUnavailable(!(h && h.reachable), h);
       })
       .catch(function () {
-        /* fail open -- the models fetch below will show the real problem */
+        healthChecked = false; // let a later sync retry
       });
-
-    fetch(API + "/models")
-      .then(function (r) {
-        return r.json().then(function (d) {
-          return { ok: r.ok, data: d };
-        });
-      })
-      .then(function (r) {
-        if (!r.ok || !r.data || r.data.error) {
-          bootstrapped = false; // let a later sync retry
-          setUnavailable(true, { error: r.data && r.data.error });
-          return;
-        }
-        models = r.data.models || [];
-        renderModelOptions(r.data.loaded || []);
-      })
-      .catch(function () {
-        bootstrapped = false;
-      });
-  }
-
-  function renderModelOptions(loaded) {
-    if (!els.model) return;
-    var cur = els.model.value;
-    els.model.innerHTML = "";
-    if (!models.length) {
-      var o = document.createElement("option");
-      o.value = "";
-      o.textContent = "No models installed";
-      els.model.appendChild(o);
-      els.model.disabled = true;
-      return;
-    }
-    els.model.disabled = false;
-    models.forEach(function (m) {
-      var opt = document.createElement("option");
-      opt.value = m.name;
-      var size = m.parameter_size ? " · " + m.parameter_size : "";
-      var warm = loaded.indexOf(m.name) >= 0 ? " · loaded" : "";
-      opt.textContent = m.name + size + warm;
-      els.model.appendChild(opt);
-    });
-
-    // Preselect: keep the user's pick if still valid, else the model the
-    // running agent already has warm in memory, else the first one.
-    var pick =
-      (cur && modelExists(cur) && cur) ||
-      (loaded && loaded.filter(modelExists)[0]) ||
-      models[0].name;
-    els.model.value = pick;
-    updateModelHint(loaded);
-    els.model.addEventListener("change", function () {
-      updateModelHint(loaded);
-    });
-  }
-
-  function modelExists(name) {
-    return models.some(function (m) {
-      return m.name === name;
-    });
-  }
-
-  function updateModelHint(loaded) {
-    if (!els.modelHint) return;
-    var name = els.model.value;
-    if (loaded && loaded.indexOf(name) >= 0) {
-      els.modelHint.textContent = "Already loaded in memory.";
-    } else {
-      els.modelHint.textContent =
-        "Not loaded yet — the first reply will wait on the model loading.";
-    }
   }
 
   function setUnavailable(off, health) {
@@ -224,12 +144,12 @@
     if (els.input) els.input.disabled = unavailable;
     if (!els.unavailable) return;
     if (unavailable) {
-      var base = (health && health.base_url) || "http://localhost:11434";
+      var base = (health && health.base_url) || "the Hermes gateway";
       els.unavailable.textContent =
-        "Ollama isn't reachable at " +
+        "Can't reach Rachel at " +
         base +
         (health && health.error ? " (" + health.error + ")" : "") +
-        ". Start it with `ollama serve` (or the Ollama app) and reopen this view.";
+        ". Check the gateway is up and reopen this view.";
       els.unavailable.style.display = "block";
     } else {
       els.unavailable.style.display = "none";
@@ -241,11 +161,6 @@
     if (streaming || unavailable) return;
     var text = (els.input.value || "").trim();
     if (!text) return;
-    var model = els.model && els.model.value;
-    if (!model) {
-      setUnavailable(true, { error: "no model selected" });
-      return;
-    }
 
     conversation.push({ role: "user", content: text });
     els.input.value = "";
@@ -264,7 +179,6 @@
     });
 
     var body = {
-      model: model,
       messages: messages,
       options: { temperature: Number(els.temp.value) },
     };
@@ -316,7 +230,7 @@
     function pump() {
       return reader.read().then(function (chunk) {
         if (chunk.done) {
-          flush(buf, assistant, true);
+          flush(buf, assistant);
           return;
         }
         buf += decoder.decode(chunk.value, { stream: true });
@@ -343,7 +257,7 @@
     try {
       obj = JSON.parse(line);
     } catch (e) {
-      return; // partial / non-JSON keepalive -- ignore
+      return; // partial / non-JSON -- ignore
     }
     if (obj.error) {
       assistant.error = obj.error;
@@ -359,10 +273,9 @@
     streaming = on;
     if (els.send) els.send.disabled = on || unavailable;
     if (els.stop) els.stop.style.display = on ? "" : "none";
-    if (els.model) els.model.disabled = on || !models.length;
   }
 
-  // ---- transcript view ----
+  // ---- transcript view (reuses the .ng-chat-* bubble styles) ----
   function renderTranscript() {
     if (!els.transcript) return;
     var atBottom = nearBottom();
@@ -385,13 +298,12 @@
     row.className = "ng-chat-msg ng-chat-" + m.role;
     var who = document.createElement("div");
     who.className = "ng-chat-who";
-    who.textContent = m.role === "user" ? "You" : "Assistant";
+    who.textContent = m.role === "user" ? "You" : "Rachel";
     var body = document.createElement("div");
     body.className = "ng-chat-body";
     if (m.error) {
       body.classList.add("ng-chat-error");
-      body.textContent =
-        (m.content ? m.content + "\n\n" : "") + "⚠ " + m.error;
+      body.textContent = (m.content ? m.content + "\n\n" : "") + "⚠ " + m.error;
     } else if (!m.content && m.role === "assistant") {
       body.classList.add("ng-chat-typing");
       body.textContent = "…";
@@ -425,5 +337,5 @@
     if (els.transcript) els.transcript.scrollTop = els.transcript.scrollHeight;
   }
 
-  window.ChatNG = { sync: sync };
+  window.RachelNG = { sync: sync };
 })();

@@ -125,7 +125,7 @@ def random_face_ng():
             SELECT a.id, a."originalFileName"
             FROM asset_face af
             JOIN asset a ON a.id = af."assetId"
-            WHERE af."personId" IS NOT NULL
+            WHERE af."personGroupId" IS NOT NULL
             ORDER BY random()
             LIMIT 1;
         """)
@@ -297,20 +297,20 @@ def person_clusters_ng():
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT af."personId", p.name,
+            SELECT af."personGroupId", p.name,
                    COUNT(*) AS face_count,
                    AVG(1 - (fs.embedding <=> centroid.emb)) AS avg_sim
             FROM asset_face af
             JOIN face_search fs ON fs."faceId" = af.id
-            JOIN person p ON p.id = af."personId"
+            JOIN person p ON p."personGroupId" = af."personGroupId"
             CROSS JOIN LATERAL (
                 SELECT AVG(fs2.embedding) AS emb
                 FROM face_search fs2
                 JOIN asset_face af2 ON af2.id = fs2."faceId"
-                WHERE af2."personId" = af."personId"
+                WHERE af2."personGroupId" = af."personGroupId"
             ) centroid
-            WHERE af."personId" IS NOT NULL
-            GROUP BY af."personId", p.name
+            WHERE af."personGroupId" IS NOT NULL
+            GROUP BY af."personGroupId", p.name
             HAVING COUNT(*) >= %s
             ORDER BY avg_sim DESC
             LIMIT %s;
@@ -341,7 +341,7 @@ def person_assets_ng(person_id):
             SELECT a.id, a."originalFileName"
             FROM asset_face af
             JOIN asset a ON a.id = af."assetId"
-            WHERE af."personId" = %s
+            WHERE af."personGroupId" = %s
             LIMIT %s;
         """, (person_id, limit))
         rows = cur.fetchall()

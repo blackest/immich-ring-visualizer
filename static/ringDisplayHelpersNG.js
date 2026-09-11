@@ -118,25 +118,13 @@
   // to a sensible starting point for that metric's scale, unless the
   // person has already dragged the slider themselves this session.
   const SQUEEZE_DEFAULTS = { sim: 65, yaw: 20, pitch: 20, roll: 20, blur: 65 };
-  function showHoverPreview(r) {
-    clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => {
-      hoverImg.src = thumbUrlFor(r);
-      const pctText = typeof r.similarity === "number" ? `${(r.similarity * 100).toFixed(1)}%` : "";
-      let poseText = "";
-      if (r.pitch !== undefined && r.yaw !== undefined && r.roll !== undefined && r.pitch !== null) {
-        poseText = `<br>pitch: ${r.pitch.toFixed(1)} yaw: ${r.yaw.toFixed(1)} roll: ${r.roll.toFixed(1)}`;
-        if (typeof r.blur === "number") poseText += ` &middot; sharpness: ${r.blur.toFixed(0)}`;
-        if (typeof r.vertFillPct === "number") poseText += ` &middot; face: ${(r.vertFillPct * 100).toFixed(0)}% frame height`;
-      }
-      hoverCaption.innerHTML = `${r.filename}${pctText ? ` &mdash; ${pctText}` : ""}${poseText}`;
-      hoverPanel.classList.add("active");
-    }, 80);
-  }
-  function hideHoverPreview() {
-    clearTimeout(hoverTimer);
-    hoverPanel.classList.remove("active");
-  }
+  // showHoverPreview()/hideHoverPreview() used to be duplicated here --
+  // this file loads after domRefsManifestNG.js, so the copy here silently
+  // won (last top-level `function` declaration at shared script scope
+  // wins) and shadowed domRefsManifestNG.js's version, including its
+  // face-box overlay call (see [[face-box-overlay]]). Removed; the real
+  // definitions live in domRefsManifestNG.js, which already has
+  // hoverImg/hoverCaption/hoverPanel/hoverTimer captured.
 
 
 // ---- exposed for other modules (renderVideoStage, pickersNG, chart) to call ----

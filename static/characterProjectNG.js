@@ -559,6 +559,9 @@
           thumbUrl: `/api/ng/framefile/${r.frameId}`,
           pitch: r.pitch, yaw: r.yaw, roll: r.roll, blur: r.blur,
           bboxRatio: r.bboxRatio, vertFillPct: r.vertFillPct, bbox: r.bbox,
+          // full-frame pixel dims -- carried so the face-box overlay can
+          // map bbox onto the (full-frame) preview image.
+          frameW: r.width, frameH: r.height,
         }))
         .sort((a, b) => b.similarity - a.similarity);
 

@@ -301,6 +301,10 @@
       // rail pane (#ng-chat-pane) and main region (#ng-chat-main), just
       // needs to be told when to show/hide itself.
       if (window.ChatNG) window.ChatNG.sync(active);
+      // Rachel view (task === "rachel") -- same deal, Hermes agent chat.
+      // Must run last: it force-hides the shared #ng-controls-pane when
+      // active and relies on running after Generate/Chat's syncs.
+      if (window.RachelNG) window.RachelNG.sync(active);
       applyResolutionSummaryNG(active && active.job ? active.job.resolutionSummary : null);
       this.saveState();
     },
@@ -390,7 +394,7 @@
       // switches over to showing the ring (see placeVideoPreview() in
       // videoNG.js). The Generate view takes over the whole main stage
       // and rail, so the preview is fully hidden there regardless.
-      if (!active || !active.video || active.task === "generate" || active.task === "chat") {
+      if (!active || !active.video || active.task === "generate" || active.task === "chat" || active.task === "rachel") {
         placeVideoPreview("hidden");
       } else if (active.ring) {
         placeVideoPreview("rail");
@@ -410,12 +414,12 @@
         return;
       }
       if (!active.task) {
-        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, or Chat below to get started with “" + active.name + "”.");
+        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Chat, or Rachel below to get started with “" + active.name + "”.");
         return;
       }
-      if (active.task === "generate" || active.task === "chat") {
-        // The Generate/Chat view's main region (#ng-generate-main /
-        // #ng-chat-main) is shown by GenerateNG.sync() / ChatNG.sync();
+      if (active.task === "generate" || active.task === "chat" || active.task === "rachel") {
+        // The Generate/Chat/Rachel view's main region (#ng-generate-main /
+        // #ng-chat-main / #ng-rachel-main) is shown by that view's sync();
         // everything else in the main stage stays hidden.
         mainPlaceholderEl.style.display = "none";
         stageWrapEl.style.display = "none";
@@ -465,7 +469,7 @@
           }
         }
       } else {
-        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, or Chat below to get started with “" + active.name + "”.");
+        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Chat, or Rachel below to get started with “" + active.name + "”.");
         return;
       }
 
@@ -522,6 +526,19 @@
       const { kept, total } = project.squeezeFiltered(sorted);
       squeezeVal.textContent = `${project.squeezeMinPct}% (${kept.length}/${total})`;
       sharpVal.textContent = `${project.sharpMinVal} (${kept.length}/${total})`;
+
+      // Pose / Shot Scale picker workspace takes over the stage. Its own
+      // toolbar has the "← Ring" button that clears stageMode.
+      project.stageMode = project.stageMode || "ring";
+      if (project.stageMode === "posePicker" || project.stageMode === "scalePicker") {
+        stageEl.style.display = "none";
+        poseListViewEl.style.display = "none";
+        poseListScrubberEl.style.display = "none";
+        if (window.PickerStageNG) PickerStageNG.render(project);
+        this.renderRankedList(project, kept);
+        return;
+      }
+      if (window.PickerStageNG) PickerStageNG.hide();
 
       if (project.ringSortMetric !== "sim") {
         stageEl.style.display = "none";
@@ -662,6 +679,7 @@
     // philosophy and is safer than reshaping the working video path. ----
     renderImmichStage(project) {
       framesSectionEl.style.display = "none";
+      if (window.PickerStageNG) PickerStageNG.hide();
       const ring = project.immichRing;
       const anchorUrl = `/api/ng/preview/${ring.centerAssetId}`;
       const modeLabel = ring.mode === "clip" ? "CLIP image embedding (no face match found)" : "face embedding";
@@ -831,10 +849,10 @@
       }
       leftRailEmptyEl.style.display = "none";
 
-      if (active.task === "generate" || active.task === "chat") {
-        // Generate/Chat views swap the whole rail body for their own pane
-        // (#ng-generate-pane / #ng-chat-pane, siblings of #ng-leftrail-body
-        // under #ng-leftrail, shown by GenerateNG.sync / ChatNG.sync).
+      if (active.task === "generate" || active.task === "chat" || active.task === "rachel") {
+        // Generate/Chat/Rachel views swap the whole rail body for their own
+        // pane (#ng-generate-pane / #ng-chat-pane / #ng-rachel-pane, siblings
+        // of #ng-leftrail-body under #ng-leftrail, shown by that view's sync).
         // Collapse the now-empty #ng-leftrail-body so their pane gets the
         // full rail height instead of splitting it 50/50 -- none of the
         // per-task section toggling or ring-derived refresh below applies.
@@ -858,20 +876,9 @@
       if (videoRangeRowEl) videoRangeRowEl.style.display = active.task === "video" ? "" : "none";
       if (folderRowEl) folderRowEl.style.display = active.task === "folderzip" ? "" : "none";
 
-      // Pose Picker / Shot Scale Picker: re-run setup (reset sliders to the
-      // pool's centroid, reset sticky grid slots) only when this project's
-      // ring identity actually changed since we last looked -- not on
-      // every render tick (polling, unrelated toggles, etc.).
-      if (active.ring !== active._posePickerRingRef) {
-        active._posePickerRingRef = active.ring;
-        setupPosePickerNG(active);
-      }
-      if (active.ring !== active._scalePickerRingRef) {
-        active._scalePickerRingRef = active.ring;
-        setupScalePickerNG(active);
-      }
-      renderPosePickerGridNG(active);
-      renderScalePickerGridNG(active);
+      // Pose Picker / Shot Scale Picker now live in the main stage
+      // (PickerStageNG, pickersNG.js) -- pool building + rendering happen
+      // there, keyed off project.stageMode, not from the left rail.
 
       ringScaleInput.value = active.ringScale;
       ringScaleVal.textContent = active.ringScale + "%";
