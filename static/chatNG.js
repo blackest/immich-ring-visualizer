@@ -31,10 +31,12 @@
   var inited = false;
   var bootstrapped = false; // models + health fetched once
   var models = []; // [{name, parameter_size, ...}]
-  var conversation = []; // [{role: "user"|"assistant", content, error?}]
+  var conversation = []; // [{role: "user"|"assistant", content, error?, images?}]
   var streaming = false;
   var abortCtl = null;
   var unavailable = false;
+  var pendingImages = []; // [{dataUrl, base64}] attached to the next send
+  var MAX_IMAGE_DIM = 1568; // downscale above this so payloads stay sane
 
   // ---- DOM (owned here; queried lazily so load order can't bite) ----
   var els = {};
@@ -58,6 +60,9 @@
     els.input = $("ng-chat-input");
     els.send = $("ng-chat-send");
     els.stop = $("ng-chat-stop");
+    els.attach = $("ng-chat-attach");
+    els.file = $("ng-chat-file");
+    els.attachments = $("ng-chat-attachments");
   }
 
   function escapeHtml(s) {
@@ -100,6 +105,91 @@
       conversation = [];
       renderTranscript();
       els.input.focus();
+    });
+
+    els.attach.addEventListener("click", function () {
+      els.file.click();
+    });
+    els.file.addEventListener("change", function () {
+      addImageFiles(els.file.files);
+      els.file.value = "";
+    });
+    // Paste an image straight from the clipboard; let plain text paste
+    // through untouched.
+    els.input.addEventListener("paste", function (e) {
+      var items = (e.clipboardData && e.clipboardData.items) || [];
+      var files = [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === "file" && /^image\//.test(items[i].type)) {
+          files.push(items[i].getAsFile());
+        }
+      }
+      if (files.length) {
+        e.preventDefault();
+        addImageFiles(files);
+      }
+    });
+  }
+
+  // ---- image attachments ----
+  function addImageFiles(fileList) {
+    Array.prototype.forEach.call(fileList || [], function (f) {
+      if (!/^image\//.test(f.type)) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        downscaleDataUrl(reader.result, function (dataUrl) {
+          pendingImages.push({ dataUrl: dataUrl, base64: dataUrl.split(",")[1] });
+          renderAttachments();
+        });
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+
+  // Vision models generally cap useful input resolution well below what a
+  // phone camera produces -- shrink oversized images client-side so we
+  // aren't shipping multi-megabyte base64 blobs for no quality gain.
+  function downscaleDataUrl(dataUrl, cb) {
+    var img = new Image();
+    img.onload = function () {
+      var w = img.naturalWidth, h = img.naturalHeight;
+      if (w <= MAX_IMAGE_DIM && h <= MAX_IMAGE_DIM) {
+        cb(dataUrl);
+        return;
+      }
+      var scale = MAX_IMAGE_DIM / Math.max(w, h);
+      var canvas = document.createElement("canvas");
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      cb(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = function () {
+      cb(dataUrl); // fall back to the original rather than dropping it
+    };
+    img.src = dataUrl;
+  }
+
+  function renderAttachments() {
+    if (!els.attachments) return;
+    els.attachments.innerHTML = "";
+    els.attachments.hidden = !pendingImages.length;
+    pendingImages.forEach(function (im, idx) {
+      var thumb = document.createElement("div");
+      thumb.className = "ng-chat-attach-thumb";
+      var img = document.createElement("img");
+      img.src = im.dataUrl;
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.title = "Remove";
+      rm.addEventListener("click", function () {
+        pendingImages.splice(idx, 1);
+        renderAttachments();
+      });
+      thumb.appendChild(img);
+      thumb.appendChild(rm);
+      els.attachments.appendChild(thumb);
     });
   }
 
@@ -240,15 +330,19 @@
   function submit() {
     if (streaming || unavailable) return;
     var text = (els.input.value || "").trim();
-    if (!text) return;
+    if (!text && !pendingImages.length) return;
     var model = els.model && els.model.value;
     if (!model) {
       setUnavailable(true, { error: "no model selected" });
       return;
     }
 
-    conversation.push({ role: "user", content: text });
+    var userMsg = { role: "user", content: text };
+    if (pendingImages.length) userMsg.images = pendingImages.slice();
+    conversation.push(userMsg);
     els.input.value = "";
+    pendingImages = [];
+    renderAttachments();
     autoGrow();
 
     var assistant = { role: "assistant", content: "" };
@@ -260,7 +354,13 @@
     if (sys) messages.push({ role: "system", content: sys });
     conversation.forEach(function (m) {
       if (m === assistant) return; // don't send the empty placeholder
-      messages.push({ role: m.role, content: m.content });
+      var out = { role: m.role, content: m.content };
+      if (m.images && m.images.length) {
+        out.images = m.images.map(function (im) {
+          return im.base64;
+        });
+      }
+      messages.push(out);
     });
 
     var body = {
@@ -386,6 +486,18 @@
     var who = document.createElement("div");
     who.className = "ng-chat-who";
     who.textContent = m.role === "user" ? "You" : "Assistant";
+    if (m.images && m.images.length) {
+      var thumbs = document.createElement("div");
+      thumbs.className = "ng-chat-msg-thumbs";
+      m.images.forEach(function (im) {
+        var img = document.createElement("img");
+        img.src = im.dataUrl;
+        thumbs.appendChild(img);
+      });
+      row.appendChild(who);
+      row.appendChild(thumbs);
+      who = null; // already appended
+    }
     var body = document.createElement("div");
     body.className = "ng-chat-body";
     if (m.error) {
@@ -398,8 +510,8 @@
     } else {
       body.textContent = m.content;
     }
-    row.appendChild(who);
-    row.appendChild(body);
+    if (who) row.appendChild(who);
+    if (m.content || m.error || m.role === "assistant") row.appendChild(body);
     return row;
   }
 

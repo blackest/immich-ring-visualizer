@@ -1112,15 +1112,20 @@
               </p>
             </div>
             <form id="ng-chat-composer" autocomplete="off">
-              <textarea
-                id="ng-chat-input"
-                rows="1"
-                placeholder="Message… (Enter to send, Shift+Enter for a newline)"
-              ></textarea>
-              <button type="submit" id="ng-chat-send" class="ng-gen-btn">Send</button>
-              <button type="button" id="ng-chat-stop" class="ng-gen-btn ng-gen-btn-quiet" style="display: none">
-                Stop
-              </button>
+              <div id="ng-chat-attachments" class="ng-chat-attachments" hidden></div>
+              <div class="ng-chat-composer-row">
+                <input type="file" id="ng-chat-file" accept="image/*" multiple hidden />
+                <button type="button" id="ng-chat-attach" class="ng-gen-btn ng-gen-btn-quiet" title="Attach image (vision models only)">📎</button>
+                <textarea
+                  id="ng-chat-input"
+                  rows="1"
+                  placeholder="Message… (Enter to send, Shift+Enter for a newline). Paste or attach an image for vision models."
+                ></textarea>
+                <button type="submit" id="ng-chat-send" class="ng-gen-btn">Send</button>
+                <button type="button" id="ng-chat-stop" class="ng-gen-btn ng-gen-btn-quiet" style="display: none">
+                  Stop
+                </button>
+              </div>
             </form>
           </div>
           <!-- Rachel view's main region -- transcript + composer. Shown by
@@ -1134,15 +1139,20 @@
               </p>
             </div>
             <form id="ng-rachel-composer" autocomplete="off">
-              <textarea
-                id="ng-rachel-input"
-                rows="1"
-                placeholder="Message… (Enter to send, Shift+Enter for a newline)"
-              ></textarea>
-              <button type="submit" id="ng-rachel-send" class="ng-gen-btn">Send</button>
-              <button type="button" id="ng-rachel-stop" class="ng-gen-btn ng-gen-btn-quiet" style="display: none">
-                Stop
-              </button>
+              <div id="ng-rachel-attachments" class="ng-chat-attachments" hidden></div>
+              <div class="ng-chat-composer-row">
+                <input type="file" id="ng-rachel-file" accept="image/*" multiple hidden />
+                <button type="button" id="ng-rachel-attach" class="ng-gen-btn ng-gen-btn-quiet" title="Attach image (if the agent's model supports vision)">📎</button>
+                <textarea
+                  id="ng-rachel-input"
+                  rows="1"
+                  placeholder="Message… (Enter to send, Shift+Enter for a newline). Paste or attach an image."
+                ></textarea>
+                <button type="submit" id="ng-rachel-send" class="ng-gen-btn">Send</button>
+                <button type="button" id="ng-rachel-stop" class="ng-gen-btn ng-gen-btn-quiet" style="display: none">
+                  Stop
+                </button>
+              </div>
             </form>
           </div>
           <aside id="ng-sidebar" style="display: none">
