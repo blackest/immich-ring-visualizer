@@ -1729,8 +1729,10 @@ html, body {
 .ng-gen-label {
   font-size: 0.7857rem;
   color: var(--ng-text-dim);
-  margin-bottom: 4px;
+  margin-top: 14px;
+  margin-bottom: 6px;
 }
+.ng-gen-label:first-child { margin-top: 0; }
 .ng-gen-linkrow { float: right; }
 .ng-gen-linkrow a { color: var(--ng-accent); text-decoration: none; }
 
@@ -1740,10 +1742,10 @@ html, body {
   background: var(--ng-panel-raised);
   border: 1px solid var(--ng-border);
   color: var(--ng-text);
-  padding: 5px 6px;
+  padding: 7px 8px;
   border-radius: 4px;
   font-size: 0.7857rem;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .ng-gen-check {
@@ -1798,8 +1800,8 @@ html, body {
    any disk-added photos; click to pick the active reference */
 .ng-gen-ref-tray {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 8px;
 }
 .ng-gen-ref-tray:empty { display: none; }
 .ng-gen-ref {
@@ -1831,36 +1833,41 @@ html, body {
 }
 
 .ng-gen-pose-list {
-  border: 1px solid var(--ng-border);
-  border-radius: 4px;
-  max-height: 220px;
-  overflow-y: auto;
-  padding: 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
 }
 .ng-gen-pose-row {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 0.7143rem;
-  padding: 2px 2px;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  border-radius: 7px;
   cursor: pointer;
 }
-.ng-gen-pose-row:hover { background: var(--ng-panel-raised); }
-.ng-gen-pose-row .k { color: var(--ng-text); flex-shrink: 0; }
+.ng-gen-pose-row:hover { border-color: var(--ng-accent); }
+.ng-gen-pose-row input { margin-top: 2px; accent-color: var(--ng-accent); flex: 0 0 auto; }
+.ng-gen-pose-row .pose-body { min-width: 0; }
+.ng-gen-pose-row .k {
+  display: block;
+  font-size: 0.7857rem;
+  color: var(--ng-text);
+  font-weight: 600;
+}
 .ng-gen-pose-row .p {
+  display: block;
+  font-size: 0.7143rem;
   color: var(--ng-text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin-top: 3px;
+  line-height: 1.45;
+  white-space: normal;
 }
 
-/* main region: the queue */
-#ng-generate-main {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 16px;
-}
+/* rail: the render queue. Compact status rows -- a narrow rail suits a
+   status list far better than the settings form ever did (redesign,
+   Sept 2026: settings moved to the main stage, queue moved here). */
 #ng-gen-queue-head {
   display: flex;
   align-items: center;
@@ -1872,9 +1879,8 @@ html, body {
 #ng-gen-queue-count { color: var(--ng-text-dim); }
 .ng-gen-queue-row {
   display: grid;
-  grid-template-columns: 96px 1fr auto;
-  gap: 10px;
-  align-items: center;
+  grid-template-columns: 42px 1fr;
+  gap: 8px;
   padding: 8px;
   border: 1px solid var(--ng-border);
   border-radius: 6px;
@@ -1883,21 +1889,34 @@ html, body {
 }
 .ng-gen-queue-row .thumbs {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 3px;
 }
 .ng-gen-queue-row .thumbs img {
-  width: 44px;
-  height: 44px;
+  width: 42px;
+  height: 42px;
   object-fit: cover;
   border-radius: 3px;
   background: var(--ng-bg);
   border: 1px solid var(--ng-border);
 }
 .ng-gen-queue-row .meta { min-width: 0; }
-.ng-gen-queue-row .meta .title { font-size: 0.8571rem; color: var(--ng-text); }
+.ng-gen-queue-row .meta .title {
+  font-size: 0.7857rem;
+  color: var(--ng-text);
+  overflow-wrap: anywhere;
+}
 .ng-gen-queue-row .meta .sub {
   font-size: 0.7143rem;
   color: var(--ng-text-dim);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.ng-gen-queue-row .status-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-top: 2px;
 }
 .ng-gen-queue-row .st { font-size: 0.7143rem; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -1907,13 +1926,70 @@ html, body {
 .ng-gen-queue-row.st-queued .st,
 .ng-gen-queue-row.st-pending .st { color: var(--ng-text-dim); }
 .ng-gen-reroll {
-  font-size: 0.7143rem;
+  font-size: 0.6429rem;
   padding: 3px 7px;
   background: var(--ng-panel);
   border: 1px solid var(--ng-border);
   color: var(--ng-text-dim);
   border-radius: 3px;
   cursor: pointer;
+}
+
+/* main stage: the settings canvas. Capped + centered rather than
+   stretched edge to edge, matching the queue-row treatment it replaced
+   here (redesign, Sept 2026). */
+#ng-generate-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 16px 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ng-gen-canvas {
+  width: 100%;
+  max-width: 1180px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+.ng-gen-identity-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 24px;
+}
+.ng-gen-settings-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+.ng-gen-settings-card {
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.ng-gen-settings-card .ng-gen-input:last-of-type { margin-bottom: 0; }
+.ng-gen-action-bar {
+  position: sticky;
+  bottom: 0;
+  padding: 14px 16px;
+  background: rgba(15, 15, 19, 0.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.ng-gen-action-bar .ng-gen-btn { width: auto; margin: 0; padding: 10px 20px; }
+.ng-gen-action-bar .ng-gen-status { margin: 0; }
+@media (max-width: 860px) {
+  .ng-gen-identity-row,
+  .ng-gen-settings-row {
+    grid-template-columns: 1fr;
+  }
 }
 .ng-gen-queue-row .log {
   grid-column: 1 / -1;

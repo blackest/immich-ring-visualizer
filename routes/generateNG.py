@@ -155,26 +155,74 @@ def _generation_settings_from_body_ng(body: dict) -> dict:
     }
 
 
+_MAX_TRIGGER_SUFFIX_ATTEMPTS = 50
+
+
 def _register_draft_and_start_job_ng(trigger: str, tmp_path: str, settings: dict):
     """Shared tail for every "photo -> sheet" route below, regardless of
-    where the photo came from: register it as a draft character (already
-    existing is fine -- a re-click on the same face reuses it), then
-    enqueue a background generation job."""
-    try:
-        character_sheet.create_draft_character_ng(trigger, tmp_path, pronoun="",
-                                                   subject_noun="")
-    except character_sheet.DraftCharacterExistsError:
-        pass  # fine -- reuse the existing character for this trigger
-    except FileNotFoundError as e:
-        return jsonify({"error": str(e)}), 404
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    where the photo came from: register it as a draft character, then
+    enqueue a background generation job.
+
+    `trigger` colliding with an existing character used to just reuse
+    whatever avatar was already on disk under that name, silently
+    discarding the newly-uploaded photo -- harmless for a genuine
+    re-click on the same face, but a trap for the common case of a
+    generic/placeholder project name (e.g. "default") outliving the
+    character it was first used for. Mirrors the frontend's own
+    per-reference trigger suffixing (petra, petra-2, petra-3, ...) at
+    the backend instead, which is the actual source of truth across
+    page reloads and separate sessions: same photo re-added under the
+    same name reuses that character; a genuinely different photo gets
+    the next free "<trigger>-N" id instead of clobbering someone else's
+    render queue."""
+    final_trigger = trigger
+    for n in range(2, _MAX_TRIGGER_SUFFIX_ATTEMPTS + 2):
+        try:
+            character_sheet.create_draft_character_ng(final_trigger, tmp_path,
+                                                       pronoun="", subject_noun="")
+            break  # fresh character created under this id
+        except character_sheet.DraftCharacterExistsError:
+            existing = character_sheet.character_avatar_ng(final_trigger)
+            if existing is not None and _same_file_bytes_ng(existing, tmp_path):
+                break  # same photo re-added under the same name -- reuse it
+            final_trigger = f"{trigger}-{n}"
+            continue
+        except FileNotFoundError as e:
+            return jsonify({"error": str(e)}), 404
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+    else:
+        return jsonify({
+            "error": f"could not find a free character id for {trigger!r} "
+                     f"after {_MAX_TRIGGER_SUFFIX_ATTEMPTS} attempts"
+        }), 500
 
     try:
-        job = sheet_jobs.start_job_ng(trigger, **settings)
+        job = sheet_jobs.start_job_ng(final_trigger, **settings)
     except Exception as e:  # noqa: BLE001
         return _map_job_start_error(e)
     return _job_started_response(job)
+
+
+def _same_file_bytes_ng(path_a, path_b, chunk_size: int = 1 << 20) -> bool:
+    """Cheap identity check for 'is this the same upload as last time' --
+    size first (near-free), then a streamed byte comparison so we never
+    have to load either file fully into memory."""
+    import os as _os
+
+    try:
+        if _os.path.getsize(path_a) != _os.path.getsize(path_b):
+            return False
+    except OSError:
+        return False
+    with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
+        while True:
+            a = fa.read(chunk_size)
+            b = fb.read(chunk_size)
+            if a != b:
+                return False
+            if not a:
+                return True
 
 
 @generateNG_bp.route("/api/ng/generate/sheet-from-asset", methods=["POST"])

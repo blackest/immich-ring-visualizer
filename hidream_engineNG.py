@@ -215,12 +215,22 @@ def generate_hidream_ng(prompt: str, n: int, width: int, height: int,
         "--noise-scale-end", str(config.noise_scale),
         "--noise-clip-std", str(config.noise_clip_std),
     ]
+    if allow_offspec_res:
+        # The script has its own independent trained-resolution snap that
+        # runs by default regardless of what we computed above -- without
+        # this flag it silently re-snaps aligned_w/aligned_h back up,
+        # which both defeats allow_offspec_res entirely and makes the
+        # actual-size check below raise a false "partial write" (the
+        # image is fine, it's just not the size we told the caller to
+        # expect).
+        cmd.append("--no-snap-resolution")
     if refs:
         cmd.extend(["--ref-images", *map(str, refs)])
         cmd.extend(["--editing-scheduler", config.editing_scheduler])
 
     if on_log:
-        on_log(f"[hidream] launching {n} candidate(s) in one process, seeds={seeds}"
+        on_log(f"[hidream] launching {n} candidate(s) at {aligned_w}x{aligned_h}, "
+               f"{config.steps} steps, seeds={seeds}"
                + (f" with {len(refs)} ref(s)" if refs else ""))
 
     proc = subprocess.Popen(

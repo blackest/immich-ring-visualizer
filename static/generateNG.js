@@ -33,10 +33,12 @@
 
   var POLL_MS = 2000;
   var API = "/api/ng/generate";
+  var POSE_STORAGE_KEY = "ringviz-ng-generate-poses";
 
   // ---- module state ----
   var inited = false;
   var presetsLoaded = false;
+  var poseListSeeded = false; // seed ticks from localStorage on first render only
   var poseCatalogue = []; // [{key, pose, preset}]
   var styleNames = ["none"];
   var refs = []; // [{id, label, kind: "proj"|"disk", url, file?}]
@@ -77,8 +79,6 @@
     els.width = $("ng-gen-width");
     els.height = $("ng-gen-height");
     els.steps = $("ng-gen-steps");
-    els.settingsToggle = $("ng-gen-settings-toggle");
-    els.settingsMore = $("ng-gen-settings-more");
     els.wardrobe = $("ng-gen-wardrobe");
     els.hair = $("ng-gen-hair");
     els.seed = $("ng-gen-seed");
@@ -126,13 +126,6 @@
     });
     els.refFile.addEventListener("change", onDiskFile);
 
-    els.settingsToggle.addEventListener("click", function () {
-      var open = els.settingsMore.style.display !== "none";
-      els.settingsMore.style.display = open ? "none" : "block";
-      els.settingsToggle.innerHTML =
-        (open ? "▸" : "▾") + " more settings";
-    });
-
     els.sizePreset.addEventListener("change", function () {
       var v = els.sizePreset.value;
       if (v === "custom") return;
@@ -153,6 +146,13 @@
     els.poseNone.addEventListener("click", function (e) {
       e.preventDefault();
       togglePoses(false);
+    });
+    // Delegated: fires for every checkbox tick/untick since the rows are
+    // rebuilt wholesale by renderPoseList(). Persist so a page refresh
+    // doesn't wipe the picks (they used to be pure DOM state -- gone the
+    // moment you reloaded).
+    els.poseList.addEventListener("change", function (e) {
+      if (e.target && e.target.type === "checkbox") savePoseKeys();
     });
 
     els.addBtn.addEventListener("click", addToQueue);
@@ -242,12 +242,48 @@
     if (styleNames.indexOf(cur) >= 0) els.style.value = cur;
   }
 
+  function loadSavedPoseKeys() {
+    try {
+      var raw = localStorage.getItem(POSE_STORAGE_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) {
+      return []; // storage unavailable (private mode, etc.) -- just skip
+    }
+  }
+
+  function savePoseKeys() {
+    if (!els.poseList) return;
+    try {
+      var keys = Array.prototype.map.call(
+        els.poseList.querySelectorAll("input:checked"),
+        function (cb) {
+          return cb.value;
+        }
+      );
+      localStorage.setItem(POSE_STORAGE_KEY, JSON.stringify(keys));
+    } catch (e) {
+      /* storage unavailable -- fine, ticks just won't survive a refresh */
+    }
+  }
+
   function renderPoseList() {
     if (!els.poseList) return;
     var checked = {};
-    els.poseList.querySelectorAll("input:checked").forEach(function (cb) {
-      checked[cb.value] = true;
-    });
+    var existing = els.poseList.querySelectorAll("input:checked");
+    if (existing.length) {
+      existing.forEach(function (cb) {
+        checked[cb.value] = true;
+      });
+    } else if (!poseListSeeded) {
+      // First render this page load: nothing is ticked yet in the DOM
+      // (there's no DOM), so seed from what was ticked last session
+      // instead of always starting from a blank slate.
+      loadSavedPoseKeys().forEach(function (k) {
+        checked[k] = true;
+      });
+    }
+    poseListSeeded = true;
     els.poseList.innerHTML = "";
     poseCatalogue.forEach(function (p) {
       var row = document.createElement("label");
@@ -256,12 +292,14 @@
         '<input type="checkbox" value="' +
         escapeHtml(p.key) +
         '">' +
+        '<div class="pose-body">' +
         '<span class="k">' +
         escapeHtml(p.key) +
         "</span>" +
         '<span class="p">' +
         escapeHtml(p.pose) +
-        "</span>";
+        "</span>" +
+        "</div>";
       if (checked[p.key]) row.querySelector("input").checked = true;
       els.poseList.appendChild(row);
     });
@@ -271,6 +309,7 @@
     els.poseList.querySelectorAll("input").forEach(function (cb) {
       cb.checked = on;
     });
+    savePoseKeys();
   }
 
   // ---- reference tray ----
@@ -411,6 +450,7 @@
       queue.push({
         localId: ++localSeq,
         character: character,
+        base: base, // for correcting refTriggers below if the server suffixes
         key: key,
         refId: ref.id,
         refUrl: ref.url,
@@ -503,6 +543,15 @@
           } else {
             item.jobId = r.payload.job_id;
             item.status = "queued";
+            // The backend auto-suffixes the trigger (default, default-2, ...)
+            // when this name already belongs to a different photo, so it
+            // can differ from our client-side guess -- without this,
+            // thumbUrl/reroll() below would keep pointing at the wrong
+            // (or nonexistent) character.
+            if (r.payload.trigger && r.payload.trigger !== item.character) {
+              refTriggers[item.base + "|" + item.refId] = r.payload.trigger;
+              item.character = r.payload.trigger;
+            }
           }
         })
         .catch(function (e) {
@@ -647,6 +696,7 @@
         "</div>";
 
       var right = document.createElement("div");
+      right.className = "status-row";
       var st = document.createElement("div");
       st.className = "st";
       st.textContent = ST_LABEL[item.status] || item.status;
