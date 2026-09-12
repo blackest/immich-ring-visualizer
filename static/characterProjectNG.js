@@ -506,6 +506,59 @@
       }
     }
 
+    // ---- analysis: a character-sheet's rendered shots -> ring, same
+    // pipeline as folder/zip but the images are HiDream renders already
+    // sitting on disk (character_sheetNG.py's sheet_views/), not an
+    // upload -- the server starts the job itself given just the
+    // character id. always_cache=True server-side (see
+    // routes/generateNG.py's add_sheet_to_ring_ng) so a low-similarity
+    // side/three-quarter shot still gets cached and shows up here
+    // instead of silently vanishing. Ported from routes/phosphene.py's
+    // add_sheet_to_ring via generateNG.js's "Add to ring" button. ----
+    async startSheetAnalysis(characterId) {
+      this.stopPolling();
+      this.selectedFrames = new Set();
+      this.excludedFrames = new Set();
+      this.playback = null;
+      this.staticPreviewFrame = null;
+      this.job = {
+        status: "running",
+        sourceType: "folder",
+        sourceName: `${characterId} (character sheet)`,
+        simThreshold: this.simThreshold,
+        blurThreshold: this.blurThreshold,
+        frameCount: 0, passed: 0, failedSim: 0, failedBlur: 0,
+        results: [],
+        refFrame: 1,
+      };
+      ProjectManager.render();
+
+      const params = new URLSearchParams({
+        simThreshold: this.simThreshold,
+        blurThreshold: this.blurThreshold,
+        cacheFormat: this.cacheFormatPng ? "png" : "jpg",
+      });
+
+      try {
+        const res = await fetch(
+          `/api/ng/generate/characters/${encodeURIComponent(characterId)}/sheet/add-to-ring?${params}`,
+          { method: "POST" },
+        );
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          this.job = { status: "error", error: data.error || res.status };
+          if (this.isActive) ProjectManager.render();
+          return;
+        }
+        this.job.jobId = data.jobId;
+        this.job.frameCount = data.imageCount;
+        this.poll();
+      } catch (e) {
+        this.job = { status: "error", error: e.message };
+        if (this.isActive) ProjectManager.render();
+      }
+    }
+
     async poll() {
       if (!this.job || !this.job.jobId) return;
       try {

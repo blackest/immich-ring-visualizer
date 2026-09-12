@@ -15,18 +15,13 @@ GET /api/ng/generate/sheet-jobs/<job_id> for progress. Unlike the
 original, a second concurrent request never gets a busy error -- it
 queues (see sheet_jobsNG.py's module docstring).
 
-Deliberately NOT ported in this patch: the original's
-.../sheet/add-to-ring route. That route relies on
-folder_analysis.run_folder_analysis's always_cache=True behavior so a
-low-similarity side/profile generated shot still lands in the ring
-instead of being silently dropped -- folder_analysisNG.py's
-run_folder_analysis_ng doesn't support always_cache yet. Add this route
-back once that lands.
 """
 
 import json
 import os
 import tempfile
+import threading
+import uuid
 
 from flask import Blueprint, jsonify, request, send_file
 
@@ -35,6 +30,8 @@ import hidream_engineNG
 import sheet_jobsNG as sheet_jobs
 import shot_presetsNG as shot_presets
 from configNG import IMMICH_API_KEY, IMMICH_BASE_URL
+from folder_analysisNG import run_folder_analysis_ng
+from stateNG import _analysis_jobs_ng
 
 generateNG_bp = Blueprint("generateNG", __name__)
 
@@ -451,3 +448,61 @@ def serve_shot_thumbnail_ng(character_id, shot_key):
     if not candidates:
         return jsonify({"error": f"shot {shot_key!r} has no rendered image yet"}), 404
     return send_file(candidates[-1], mimetype="image/png")
+
+
+@generateNG_bp.route(
+    "/api/ng/generate/characters/<character_id>/sheet/add-to-ring", methods=["POST"]
+)
+def add_sheet_to_ring_ng(character_id):
+    """NG twin of routes/phosphene.py's add_sheet_to_ring -- feeds a
+    character's avatar (as the reference face) plus every
+    currently-rendered shot into the same analysis pipeline
+    /api/ng/analyze-folder drives (folder_analysisNG.run_folder_analysis_ng),
+    tagged sourceType "folder" so the existing NG ring/export/pose-picker
+    machinery needs zero changes to display the result -- it's just
+    another folder-analysis job whose images happen to have been
+    generated instead of uploaded.
+    """
+    try:
+        cid = character_sheet._safe_id_ng(character_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    avatar = character_sheet.character_avatar_ng(cid)
+    if avatar is None:
+        return jsonify({"error": f"character {cid!r} has no reference image"}), 404
+
+    shot_paths = character_sheet.sheet_shot_image_paths_ng(cid)
+    if not shot_paths:
+        return jsonify({"error": f"character {cid!r} has no rendered shots yet"}), 404
+
+    # Avatar first (ref_index=1 below -> run_folder_analysis_ng's first
+    # entry) so the ring scores every generated shot against the real
+    # source photo, not against another generated shot.
+    image_paths = [str(avatar)] + shot_paths
+
+    sim_threshold = float(request.values.get("simThreshold", 0.1))
+    blur_threshold = float(request.values.get("blurThreshold", 1))
+    cache_format = "png" if request.values.get("cacheFormat") == "png" else "jpg"
+
+    job_id = uuid.uuid4().hex[:12]
+    _analysis_jobs_ng[job_id] = {
+        "status": "running", "results": [], "error": None,
+        "sourceName": f"{cid} (character sheet)", "sourceType": "folder",
+        "simThreshold": sim_threshold,
+        "blurThreshold": blur_threshold,
+        "cacheFormat": cache_format,
+    }
+    t = threading.Thread(
+        target=run_folder_analysis_ng,
+        args=(job_id, image_paths, sim_threshold, blur_threshold, 1, cache_format),
+        # always_cache=True: these shots are expensive HiDream renders
+        # already sitting on disk, and a low sim score here is often the
+        # intended outcome (a genuine side/three-quarter angle), not a
+        # bad candidate -- see run_folder_analysis_ng's always_cache
+        # docstring.
+        kwargs={"always_cache": True},
+        daemon=True,
+    )
+    t.start()
+    return jsonify({"jobId": job_id, "imageCount": len(image_paths)}), 202

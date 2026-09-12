@@ -717,6 +717,11 @@
               main stage, then press &ldquo;Add to queue&rdquo;.
             </p>
             <div id="ng-gen-queue"></div>
+            <!-- Per-character "add finished shots to the active project's
+                 ring" actions -- populated by generateNG.js's
+                 renderRingActions() once at least one queued shot for a
+                 character is done. -->
+            <div id="ng-gen-ring-actions"></div>
           </div>
 
           <!-- Chat view's rail pane -- swapped in for #ng-controls-pane by

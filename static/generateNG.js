@@ -92,6 +92,7 @@
     els.queueEmpty = $("ng-gen-queue-empty");
     els.queueCount = $("ng-gen-queue-count");
     els.queueClear = $("ng-gen-queue-clear");
+    els.ringActions = $("ng-gen-ring-actions");
   }
 
   function escapeHtml(s) {
@@ -784,6 +785,87 @@
     var n = queue.length;
     if (els.queueCount) els.queueCount.textContent = n ? "(" + n + ")" : "";
     if (els.queueEmpty) els.queueEmpty.style.display = n ? "none" : "";
+
+    renderRingActions();
+  }
+
+  // ---- "add finished shots to ring" actions, one row per distinct
+  // character with at least one done queue entry. Always targets
+  // whichever project is currently active (same scoping the ref tray
+  // already uses) -- not necessarily the project that was active when
+  // the shot was queued, matching how the rest of this view treats the
+  // active project as the implicit destination. ----
+  function distinctDoneCharacters() {
+    var seen = {};
+    var list = [];
+    queue.forEach(function (q) {
+      if (q.status !== "done" || seen[q.character]) return;
+      seen[q.character] = true;
+      list.push(q.character);
+    });
+    return list;
+  }
+
+  function addSheetToRing(character, btn, titleEl, baseTitle) {
+    var activeProj = window.ProjectManager && window.ProjectManager.getActive();
+    if (!activeProj) {
+      setStatus("No active project to add the ring into.");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Adding…";
+    activeProj
+      .startSheetAnalysis(character)
+      .then(function () {
+        btn.disabled = false;
+        var job = activeProj.job;
+        if (job && job.status === "error") {
+          btn.textContent = "Retry";
+          titleEl.textContent = baseTitle + " · " + (job.error || "add-to-ring failed");
+        } else {
+          // The job itself may still be "running" at this point (poll()
+          // isn't awaited) -- ProjectManager's own render loop picks up
+          // the rest as it progresses, same as folder/video/Immich
+          // analysis. This just confirms the request was accepted.
+          btn.textContent = "Add to ring again";
+        }
+      })
+      .catch(function (e) {
+        btn.disabled = false;
+        btn.textContent = "Retry";
+        titleEl.textContent = baseTitle + " · request failed: " + e;
+      });
+  }
+
+  function renderRingActions() {
+    if (!els.ringActions) return;
+    els.ringActions.innerHTML = "";
+    distinctDoneCharacters().forEach(function (character) {
+      var doneCount = queue.filter(function (q) {
+        return q.character === character && q.status === "done";
+      }).length;
+
+      var row = document.createElement("div");
+      row.className = "ng-gen-ring-row";
+
+      var title = document.createElement("div");
+      title.className = "title";
+      var baseTitle =
+        character + " — " + doneCount + " shot" + (doneCount === 1 ? "" : "s") + " ready";
+      title.textContent = baseTitle;
+      row.appendChild(title);
+
+      var btn = document.createElement("button");
+      btn.className = "ng-gen-btn ng-gen-btn-quiet";
+      btn.type = "button";
+      btn.textContent = "Add to ring";
+      btn.addEventListener("click", function () {
+        addSheetToRing(character, btn, title, baseTitle);
+      });
+      row.appendChild(btn);
+
+      els.ringActions.appendChild(row);
+    });
   }
 
   function setGenerationDisabled(disabled, health) {

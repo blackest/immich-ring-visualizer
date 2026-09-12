@@ -2033,6 +2033,28 @@ html, body {
 }
 .ng-gen-queue-row.st-failed .prompt-body { border-color: var(--ng-danger); }
 
+/* "Add to ring" per-character actions, below the render queue -- see
+   generateNG.js's renderRingActions(). */
+#ng-gen-ring-actions { margin-top: 10px; }
+.ng-gen-ring-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--ng-border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--ng-panel-raised);
+}
+.ng-gen-ring-row .title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7857rem;
+  color: var(--ng-text);
+  overflow-wrap: anywhere;
+}
+.ng-gen-ring-row .ng-gen-btn { width: auto; margin: 0; padding: 5px 12px; }
+
 /* ============================================================
    Chat view (task === "chat") -- rail pane #ng-chat-pane and main
    region #ng-chat-main. See static/chatNG.js. Reuses .ng-gen-* input

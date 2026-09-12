@@ -35,12 +35,21 @@ def _read_image_ng(item):
     return cv2.imread(item), os.path.basename(item)
 
 
-def run_folder_analysis_ng(job_id, images, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg"):
+def run_folder_analysis_ng(job_id, images, sim_threshold, blur_threshold, ref_index=1, cache_format="jpg", always_cache=False):
     """Same pipeline as run_video_analysis_ng, but the 'frames' are a set
     of still images (a folder/zip upload) instead of decoded video
     frames. images is a pre-sorted list of (orig_name, bytes) tuples.
     Frame numbering follows list order so the rest of NG (ring, chart,
-    export) can treat this exactly like a video analysis job."""
+    export) can treat this exactly like a video analysis job.
+
+    always_cache: mirrors folder_analysis.run_folder_analysis's flag of
+    the same name -- set True by routes/generateNG.py's add-to-ring
+    route so every character-sheet shot gets cached and given a
+    frameId regardless of pass/fail, since a low-similarity side/
+    three-quarter shot there is often the intended result, not a bad
+    candidate. Left False (the historical default) for every other
+    caller, where most images are expected to fail and caching them
+    all would be wasteful."""
     job = _analysis_jobs_ng[job_id]
     try:
         face_app = get_face_app_ng()
@@ -104,7 +113,7 @@ def run_folder_analysis_ng(job_id, images, sim_threshold, blur_threshold, ref_in
 
             passed = (fail_reason is None)
 
-            if passed:
+            if passed or always_cache:
                 frame_id = write_cache_frame_ng(job_id, frame_idx, frame, cache_format)
                 job.setdefault("frame_embeddings", {})[frame_idx] = face.normed_embedding.tolist()
             else:
@@ -113,7 +122,7 @@ def run_folder_analysis_ng(job_id, images, sim_threshold, blur_threshold, ref_in
             results.append({
                 "frame": frame_idx, "sim": sim_score, "blur": blur_score,
                 "passed": passed, "failReason": fail_reason, "hasFace": True,
-                "frameId": frame_id if passed else None,
+                "frameId": frame_id if (passed or always_cache) else None,
                 "yaw": yaw, "pitch": pitch, "roll": roll,
                 "bbox": [x1, y1, x2, y2], "origName": orig_name, "width": fw, "height": fh,
                 "bboxRatio": bbox_frame_ratio_ng([x1, y1, x2, y2], fw, fh),
