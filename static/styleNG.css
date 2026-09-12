@@ -1924,6 +1924,74 @@ html, body {
   line-height: 1.45;
   white-space: normal;
 }
+.ng-gen-pose-row .pose-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.ng-gen-pose-row .pose-scene {
+  background: var(--ng-bg);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text-dim);
+  border-radius: 4px;
+  font-size: 0.6429rem;
+  padding: 2px 4px;
+  max-width: 45%;
+}
+.ng-gen-pose-row .pose-prompt-toggle {
+  margin-top: 6px;
+  font-size: 0.6786rem;
+  color: var(--ng-accent);
+  cursor: pointer;
+  user-select: none;
+}
+.ng-gen-pose-row .pose-prompt-editor { margin-top: 5px; }
+.ng-gen-pose-row .pose-prompt-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--ng-bg);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text);
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-size: 0.7143rem;
+  line-height: 1.4;
+  resize: vertical;
+}
+.ng-gen-pose-row .pose-prompt-actions { margin-top: 4px; }
+.ng-gen-pose-row .pose-prompt-actions .ng-gen-reroll {
+  font-size: 0.6429rem;
+  padding: 2px 8px;
+}
+.ng-gen-pose-row-custom { border-style: dashed; }
+.ng-gen-pose-row .pose-remove {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--ng-text-dim);
+  cursor: pointer;
+  font-size: 0.9286rem;
+  line-height: 1;
+  padding: 0 0 0 4px;
+}
+.ng-gen-pose-row .pose-remove:hover { color: var(--ng-danger); }
+
+.ng-gen-custom-pose-form {
+  padding: 10px;
+  margin-bottom: 10px;
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  border-radius: 7px;
+}
+.ng-gen-custom-pose-form .ng-gen-input:last-of-type { margin-bottom: 0; }
+.ng-gen-custom-pose-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.ng-gen-custom-pose-actions .ng-gen-btn { width: auto; margin: 0; padding: 5px 12px; }
 
 /* rail: the render queue. Compact status rows -- a narrow rail suits a
    status list far better than the settings form ever did (redesign,

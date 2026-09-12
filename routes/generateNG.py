@@ -84,6 +84,8 @@ def list_presets_ng():
             for name, shots in shot_presets.PRESETS.items()
         },
         "styles": list(shot_presets.STYLE_PRESETS),
+        "scenes": [{"key": k, "label": k.replace("_", " ").title(), "phrase": v}
+                   for k, v in shot_presets.SCENES.items()],
         "render": {
             "default_width": character_sheet.DEFAULT_RENDER_W,
             "default_height": character_sheet.DEFAULT_RENDER_H,
@@ -96,6 +98,40 @@ def list_presets_ng():
                                     hidream_engineNG.HIDREAM_TRAINED_RESOLUTIONS],
         },
     })
+
+
+@generateNG_bp.route("/api/ng/generate/preview-prompt", methods=["POST"])
+def preview_prompt_route_ng():
+    """Resolves the exact engine prompt a shot would render with, given
+    the same settings the queue/generate routes accept, WITHOUT
+    starting a job -- powers the pose grid's per-shot "edit prompt"
+    view (see character_sheet.preview_shot_prompt_ng). No character
+    involved -- this is pure string-building, safe to call as often as
+    the user edits a setting.
+
+    Body: {preset, views (JSON array, at most meaningfully 1 for the
+    per-shot overrides below), wardrobe, hair_color, identity_lock,
+    style, custom_prompt, custom_pose, custom_key, prompt_override,
+    scene} -- all optional, same meanings as the generate routes.
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        result = character_sheet.preview_shot_prompt_ng(
+            preset=str(body.get("preset") or "default"),
+            views=body.get("views"),
+            wardrobe=str(body.get("wardrobe") or "").strip(),
+            hair_color=str(body.get("hair_color") or "").strip(),
+            identity_lock=bool(body.get("identity_lock", True)),
+            style=str(body.get("style") or "none"),
+            custom_prompt=str(body.get("custom_prompt") or ""),
+            custom_pose=str(body.get("custom_pose") or ""),
+            custom_key=str(body.get("custom_key") or ""),
+            prompt_override=str(body.get("prompt_override") or ""),
+            scene=str(body.get("scene") or ""),
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(result)
 
 
 @generateNG_bp.route("/api/ng/generate/characters", methods=["POST"])
@@ -131,15 +167,27 @@ def _generation_settings_from_body_ng(body: dict) -> dict:
     body -- used by both the one-click asset/upload routes and the
     explicit .../sheet/generate route.
 
-    `custom_prompt`, if given, becomes a single one-shot ShotSpec (key
-    "custom") instead of a preset, so `preset`/`views` are ignored when
-    it's set."""
-    custom_prompt = str(body.get("custom_prompt") or "").strip()
-    shots = [shot_presets.ShotSpec("custom", prompt_override=custom_prompt)] if custom_prompt else None
+    `custom_prompt`/`custom_pose`/`prompt_override`/`scene`, if given,
+    resolve to a single one-shot ShotSpec via character_sheet.
+    build_custom_shot_ng -- see that function's docstring for
+    precedence -- so `preset`/`views` are ignored when any of them
+    apply."""
+    views = body.get("views")
+    shots = None
+    custom = character_sheet.build_custom_shot_ng(
+        views=views,
+        custom_prompt=str(body.get("custom_prompt") or ""),
+        custom_pose=str(body.get("custom_pose") or ""),
+        custom_key=str(body.get("custom_key") or ""),
+        prompt_override=str(body.get("prompt_override") or ""),
+        scene=str(body.get("scene") or ""),
+    )
+    if custom:
+        shots = [custom]
     return {
         "preset": str(body.get("preset") or "default"),
         "shots": shots,
-        "views": None if shots else body.get("views"),
+        "views": None if shots else views,
         "wardrobe": body.get("wardrobe", ""),
         "hair_color": str(body.get("hair_color") or "").strip(),
         "seed": body.get("seed", -1),
@@ -292,7 +340,8 @@ def generate_sheet_from_upload_ng():
     wardrobe/hair_color/seed/anchor_chain/identity_lock/style. `views`,
     if present, is a JSON array of shot keys (["chest_profile_left",
     ...]) -- the Generate view sends one key at a time so each pose
-    queues as its own job.
+    queues as its own job. custom_prompt/custom_pose/custom_key/
+    prompt_override/scene: see character_sheet.build_custom_shot_ng.
     """
     if "file" not in request.files:
         return jsonify({"error": "no field 'file'"}), 400
@@ -306,8 +355,6 @@ def generate_sheet_from_upload_ng():
         ext = _CONTENT_TYPE_EXT.get((fld.mimetype or "").lower(), ".jpg")
 
     form = request.form
-    custom_prompt = (form.get("custom_prompt") or "").strip()
-    shots = [shot_presets.ShotSpec("custom", prompt_override=custom_prompt)] if custom_prompt else None
 
     views = None
     views_raw = (form.get("views") or "").strip()
@@ -318,6 +365,16 @@ def generate_sheet_from_upload_ng():
             return jsonify({"error": "views must be a JSON array of shot-key strings"}), 400
         if not isinstance(views, list) or not all(isinstance(v, str) for v in views):
             return jsonify({"error": "views must be a JSON array of shot-key strings"}), 400
+
+    custom = character_sheet.build_custom_shot_ng(
+        views=views,
+        custom_prompt=form.get("custom_prompt") or "",
+        custom_pose=form.get("custom_pose") or "",
+        custom_key=form.get("custom_key") or "",
+        prompt_override=form.get("prompt_override") or "",
+        scene=form.get("scene") or "",
+    )
+    shots = [custom] if custom else None
 
     settings = {
         "preset": form.get("preset") or "default",

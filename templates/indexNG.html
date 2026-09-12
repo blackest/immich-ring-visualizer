@@ -1119,8 +1119,39 @@
                   Poses
                   <span class="ng-gen-linkrow">
                     <a href="#" id="ng-gen-pose-all">all</a> ·
-                    <a href="#" id="ng-gen-pose-none">none</a>
+                    <a href="#" id="ng-gen-pose-none">none</a> ·
+                    <a href="#" id="ng-gen-pose-add-custom">+ custom pose</a>
                   </span>
+                </div>
+                <div id="ng-gen-custom-pose-form" class="ng-gen-custom-pose-form" style="display: none">
+                  <input
+                    type="text"
+                    id="ng-gen-custom-pose-name"
+                    class="ng-gen-input"
+                    placeholder="short name (e.g. hands on hips)"
+                  />
+                  <textarea
+                    id="ng-gen-custom-pose-text"
+                    class="ng-gen-input"
+                    rows="2"
+                    placeholder="describe the pose / camera framing..."
+                  ></textarea>
+                  <div class="ng-gen-custom-pose-actions">
+                    <button
+                      type="button"
+                      id="ng-gen-custom-pose-cancel"
+                      class="ng-gen-btn ng-gen-btn-quiet"
+                    >
+                      cancel
+                    </button>
+                    <button
+                      type="button"
+                      id="ng-gen-custom-pose-save"
+                      class="ng-gen-btn ng-gen-btn-quiet"
+                    >
+                      add pose
+                    </button>
+                  </div>
                 </div>
                 <div id="ng-gen-pose-list" class="ng-gen-pose-list"></div>
               </div>

@@ -437,6 +437,106 @@ def resolve_shots_ng(*, preset: str = "default",
     return list(shot_presets.resolve_preset_ng(preset))
 
 
+def _shot_by_key_ng(key: str) -> ShotSpec:
+    for preset_shots in shot_presets.PRESETS.values():
+        for s in preset_shots:
+            if s.key == key:
+                return s
+    raise ValueError(f"unknown view {key!r}")
+
+
+def _safe_shot_key_ng(text: str) -> str:
+    """Slugifies free-text pose names/phrases into a filesystem-safe shot
+    key for a brand-new custom pose -- prefixed so it can never collide
+    with a real preset key even if someone types e.g. "front", truncated
+    so a caller that passes the whole pose phrase (rather than a short
+    name) as custom_key doesn't produce an unwieldy sheet_views/ dir
+    name."""
+    slug = re.sub(r"[^a-z0-9]+", "_", (text or "").strip().lower()).strip("_")[:40].strip("_")
+    return "custom_" + (slug or "pose")
+
+
+def build_custom_shot_ng(*, views: Optional[list] = None, custom_prompt: str = "",
+                          custom_pose: str = "", custom_key: str = "",
+                          prompt_override: str = "", scene: str = "") -> Optional[ShotSpec]:
+    """Builds the single ShotSpec behind the Generate view's per-shot
+    escape hatches, or None if none of them apply (caller should just
+    resolve `views`/`preset` as normal in that case). Shared by the
+    generate/reroll routes AND the prompt-preview route (see
+    preview_shot_prompt_ng) so a previewed prompt always matches what
+    actually renders.
+
+    Precedence, most to least specific:
+      custom_prompt  -- pure free-text prompt, bypasses the identity-lock
+                        template entirely (the original, pre-existing
+                        escape hatch).
+      custom_pose    -- a brand-new pose under a new key ("add custom
+                        pose"), still goes through the normal template
+                        (identity-lock clauses, wardrobe, hair color) so
+                        it behaves like any preset shot, just with
+                        caller-supplied pose text. `prompt_override`, if
+                        also given, replaces the pose text (for fine-
+                        tuning a previewed prompt before queuing it).
+      views[0] + (prompt_override or scene) -- edits one existing preset
+                        shot's pose text and/or scene ("editable prompt" /
+                        "per-shot scene dropdown") before rendering it;
+                        only applies when exactly one view is selected --
+                        multi-view batches use the presets unmodified.
+
+    `scene`, if given, is a key into shot_presets.SCENES (mirrors how
+    `style` is a key into shot_presets.STYLE_PRESETS elsewhere) -- an
+    unknown/empty key just means no scene override.
+    """
+    custom_prompt = (custom_prompt or "").strip()
+    if custom_prompt:
+        return ShotSpec("custom", prompt_override=custom_prompt)
+
+    custom_pose = (custom_pose or "").strip()
+    prompt_override = (prompt_override or "").strip()
+    scene_phrase = shot_presets.SCENES.get((scene or "").strip(), "")
+
+    if custom_pose:
+        key = _safe_shot_key_ng(custom_key or custom_pose)
+        return ShotSpec(key, pose_phrase=prompt_override or custom_pose,
+                         background=scene_phrase)
+
+    if views and len(views) == 1 and (prompt_override or scene_phrase):
+        base = _shot_by_key_ng(views[0])
+        return ShotSpec(base.key, pose_phrase=prompt_override or base.pose_phrase,
+                         expression=base.expression,
+                         background=scene_phrase or base.background,
+                         wardrobe=base.wardrobe, use_anchor=base.use_anchor)
+
+    return None
+
+
+def preview_shot_prompt_ng(*, preset: str = "default", views: Optional[list] = None,
+                            wardrobe: str = "", hair_color: str = "",
+                            identity_lock: bool = True, style: str = "none",
+                            custom_prompt: str = "", custom_pose: str = "",
+                            custom_key: str = "", prompt_override: str = "",
+                            scene: str = "") -> dict:
+    """Resolves the exact prompt a queued shot WOULD render with, given
+    the same inputs generate_character_sheet_ng would see, without
+    touching the engine or disk -- lets the Generate view show/edit a
+    shot's prompt before actually submitting it. Returns {key, prompt}
+    for the first (only, in practice -- the route only ever previews
+    one shot at a time) resolved shot.
+
+    Raises ValueError for the same reasons resolve_shots_ng would (bad
+    preset/views/shot) -- the route maps this to HTTP 400.
+    """
+    custom = build_custom_shot_ng(
+        views=views, custom_prompt=custom_prompt, custom_pose=custom_pose,
+        custom_key=custom_key, prompt_override=prompt_override, scene=scene)
+    shot_list = resolve_shots_ng(preset=preset, shots=[custom] if custom else None,
+                                  views=None if custom else views)
+    spec = shot_list[0]
+    prompt = _shot_prompt_ng(spec, wardrobe, identity_lock=identity_lock,
+                              style=style, hair_color=hair_color)
+    return {"key": spec.key, "prompt": prompt}
+
+
 def generate_character_sheet_ng(name: str, *,
                                  preset: str = "default",
                                  shots: Optional[list] = None,

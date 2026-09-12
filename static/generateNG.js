@@ -34,6 +34,7 @@
   var POLL_MS = 2000;
   var API = "/api/ng/generate";
   var POSE_STORAGE_KEY = "ringviz-ng-generate-poses";
+  var CUSTOM_POSE_STORAGE_KEY = "ringviz-ng-generate-custom-poses";
 
   // ---- module state ----
   var inited = false;
@@ -41,6 +42,13 @@
   var poseListSeeded = false; // seed ticks from localStorage on first render only
   var poseCatalogue = []; // [{key, pose, preset}]
   var styleNames = ["none"];
+  var sceneChoices = []; // [{key, label, phrase}] -- per-shot "scene" dropdown options
+  var customPoses = loadCustomPoses(); // [{key, pose}] user-added poses, persisted
+  // Per-shot state for the pose grid's "edit prompt" / scene override --
+  // key -> {scene, promptOverride, open}. In-memory only (unlike ticked
+  // poses/custom poses, not persisted -- these are meant as one-off
+  // tweaks before queuing, not standing preferences).
+  var shotOverrides = {};
   var refs = []; // [{id, label, kind: "proj"|"disk", url, file?}]
   var activeRefId = null;
   var queue = []; // [{localId, character, key, refId, refUrl, settings, jobId, status, thumbUrl, error}]
@@ -85,6 +93,12 @@
     els.identityLock = $("ng-gen-identity-lock");
     els.poseAll = $("ng-gen-pose-all");
     els.poseNone = $("ng-gen-pose-none");
+    els.poseAddCustom = $("ng-gen-pose-add-custom");
+    els.customPoseForm = $("ng-gen-custom-pose-form");
+    els.customPoseName = $("ng-gen-custom-pose-name");
+    els.customPoseText = $("ng-gen-custom-pose-text");
+    els.customPoseCancel = $("ng-gen-custom-pose-cancel");
+    els.customPoseSave = $("ng-gen-custom-pose-save");
     els.poseList = $("ng-gen-pose-list");
     els.addBtn = $("ng-gen-add-btn");
     els.status = $("ng-gen-status");
@@ -156,6 +170,42 @@
       if (e.target && e.target.type === "checkbox") savePoseKeys();
     });
 
+    els.poseAddCustom.addEventListener("click", function (e) {
+      e.preventDefault();
+      els.customPoseForm.style.display = "";
+      els.customPoseName.value = "";
+      els.customPoseText.value = "";
+      els.customPoseName.focus();
+    });
+    els.customPoseCancel.addEventListener("click", function () {
+      els.customPoseForm.style.display = "none";
+    });
+    els.customPoseSave.addEventListener("click", function () {
+      var pose = (els.customPoseText.value || "").trim();
+      if (!pose) {
+        els.customPoseText.focus();
+        return;
+      }
+      var name = (els.customPoseName.value || "").trim();
+      var base = "custom_" + slugName(name || pose).toLowerCase().replace(/\s+/g, "_");
+      var key = base;
+      var n = 2;
+      while (customPoses.some(function (c) { return c.key === key; })) {
+        key = base + "_" + n++;
+      }
+      customPoses.push({ key: key, pose: pose, name: name || pose });
+      saveCustomPoses();
+      els.customPoseForm.style.display = "none";
+      renderPoseList();
+      // Auto-tick the pose that was just added -- otherwise it's easy to
+      // add one and forget to actually select it before "Add to queue".
+      var cb = els.poseList.querySelector('input[value="' + key.replace(/"/g, "") + '"]');
+      if (cb) {
+        cb.checked = true;
+        savePoseKeys();
+      }
+    });
+
     els.addBtn.addEventListener("click", addToQueue);
     els.queueClear.addEventListener("click", function () {
       queue = queue.filter(function (q) {
@@ -197,6 +247,7 @@
       .then(function (data) {
         styleNames =
           data && data.styles && data.styles.length ? data.styles : ["none"];
+        sceneChoices = (data && data.scenes) || [];
         var seen = {};
         poseCatalogue = [];
         var presets = (data && data.presets) || {};
@@ -268,6 +319,62 @@
     }
   }
 
+  function loadCustomPoses() {
+    try {
+      var raw = localStorage.getItem(CUSTOM_POSE_STORAGE_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveCustomPoses() {
+    try {
+      localStorage.setItem(CUSTOM_POSE_STORAGE_KEY, JSON.stringify(customPoses));
+    } catch (e) {
+      /* storage unavailable -- custom poses just won't survive a refresh */
+    }
+  }
+
+  // Fetches the prompt this shot would currently render with (given the
+  // job-level settings + this shot's own scene override, if any) and
+  // fills the textarea with it -- called when a pose card's "edit
+  // prompt" is first opened, and by its "reset" action.
+  function fetchPromptPreview(pose, ta) {
+    ta.value = "";
+    ta.placeholder = "loading preview…";
+    var s = readSettings();
+    var body = {
+      wardrobe: s.wardrobe,
+      hair_color: s.hair_color,
+      identity_lock: s.identity_lock,
+      style: s.style,
+      scene: (shotOverrides[pose.key] && shotOverrides[pose.key].scene) || "",
+    };
+    if (pose.isCustom) {
+      body.custom_pose = pose.pose;
+      body.custom_key = pose.key;
+    } else {
+      body.views = [pose.key];
+    }
+    fetch(API + "/preview-prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        ta.placeholder = "";
+        if (data && data.prompt) ta.value = data.prompt;
+      })
+      .catch(function () {
+        ta.placeholder = "preview failed -- type a prompt manually";
+      });
+  }
+
   function renderPoseList() {
     if (!els.poseList) return;
     var checked = {};
@@ -286,22 +393,138 @@
     }
     poseListSeeded = true;
     els.poseList.innerHTML = "";
-    poseCatalogue.forEach(function (p) {
+
+    var all = poseCatalogue.concat(
+      customPoses.map(function (c) {
+        return { key: c.key, pose: c.pose, isCustom: true };
+      })
+    );
+
+    all.forEach(function (p) {
       var row = document.createElement("label");
-      row.className = "ng-gen-pose-row";
-      row.innerHTML =
-        '<input type="checkbox" value="' +
-        escapeHtml(p.key) +
-        '">' +
-        '<div class="pose-body">' +
-        '<span class="k">' +
-        escapeHtml(p.key) +
-        "</span>" +
-        '<span class="p">' +
-        escapeHtml(p.pose) +
-        "</span>" +
-        "</div>";
-      if (checked[p.key]) row.querySelector("input").checked = true;
+      row.className = "ng-gen-pose-row" + (p.isCustom ? " ng-gen-pose-row-custom" : "");
+
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = p.key;
+      if (checked[p.key]) cb.checked = true;
+      row.appendChild(cb);
+
+      var body = document.createElement("div");
+      body.className = "pose-body";
+
+      var head = document.createElement("div");
+      head.className = "pose-head";
+      var kSpan = document.createElement("span");
+      kSpan.className = "k";
+      kSpan.textContent = p.key;
+      head.appendChild(kSpan);
+
+      var sceneSel = document.createElement("select");
+      sceneSel.className = "pose-scene";
+      var defOpt = document.createElement("option");
+      defOpt.value = "";
+      defOpt.textContent = "Default scene";
+      sceneSel.appendChild(defOpt);
+      sceneChoices.forEach(function (s) {
+        var o = document.createElement("option");
+        o.value = s.key;
+        o.textContent = s.label;
+        sceneSel.appendChild(o);
+      });
+      var st0 = shotOverrides[p.key];
+      sceneSel.value = (st0 && st0.scene) || "";
+      // Selects/textareas/buttons inside a <label> don't forward clicks
+      // to the checkbox in any modern browser, but stop propagation
+      // anyway -- cheap insurance against ticking/unticking the pose by
+      // accident while just picking a scene.
+      sceneSel.addEventListener("click", function (e) {
+        e.stopPropagation();
+      });
+      sceneSel.addEventListener("change", function () {
+        var s = (shotOverrides[p.key] = shotOverrides[p.key] || {});
+        s.scene = sceneSel.value;
+      });
+      head.appendChild(sceneSel);
+      body.appendChild(head);
+
+      var pSpan = document.createElement("span");
+      pSpan.className = "p";
+      pSpan.textContent = p.pose;
+      body.appendChild(pSpan);
+
+      // ---- editable prompt (pre-submission preview + override) ----
+      var promptToggle = document.createElement("div");
+      promptToggle.className = "pose-prompt-toggle";
+      var isOpen = !!(st0 && st0.open);
+      promptToggle.textContent = (isOpen ? "▾ " : "▸ ") + "edit prompt";
+      body.appendChild(promptToggle);
+
+      var editorWrap = document.createElement("div");
+      editorWrap.className = "pose-prompt-editor";
+      editorWrap.style.display = isOpen ? "" : "none";
+      var ta = document.createElement("textarea");
+      ta.rows = 4;
+      if (st0 && typeof st0.promptOverride === "string") ta.value = st0.promptOverride;
+      editorWrap.appendChild(ta);
+
+      var actions = document.createElement("div");
+      actions.className = "pose-prompt-actions";
+      var resetBtn = document.createElement("button");
+      resetBtn.type = "button";
+      resetBtn.className = "ng-gen-reroll";
+      resetBtn.textContent = "reset to default";
+      actions.appendChild(resetBtn);
+      editorWrap.appendChild(actions);
+      body.appendChild(editorWrap);
+
+      ta.addEventListener("click", function (e) {
+        e.stopPropagation();
+      });
+      ta.addEventListener("input", function () {
+        var s = (shotOverrides[p.key] = shotOverrides[p.key] || {});
+        s.promptOverride = ta.value;
+      });
+      resetBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var s = (shotOverrides[p.key] = shotOverrides[p.key] || {});
+        s.promptOverride = null;
+        fetchPromptPreview(p, ta);
+      });
+      promptToggle.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var s = (shotOverrides[p.key] = shotOverrides[p.key] || {});
+        s.open = !s.open;
+        promptToggle.textContent = (s.open ? "▾ " : "▸ ") + "edit prompt";
+        editorWrap.style.display = s.open ? "" : "none";
+        if (s.open && typeof s.promptOverride !== "string") {
+          fetchPromptPreview(p, ta);
+        }
+      });
+
+      row.appendChild(body);
+
+      if (p.isCustom) {
+        var rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "pose-remove";
+        rm.title = "remove this custom pose";
+        rm.textContent = "×";
+        rm.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          customPoses = customPoses.filter(function (c) {
+            return c.key !== p.key;
+          });
+          delete shotOverrides[p.key];
+          saveCustomPoses();
+          renderPoseList();
+        });
+        row.appendChild(rm);
+      }
+
       els.poseList.appendChild(row);
     });
   }
@@ -448,11 +671,21 @@
     var settings = readSettings();
 
     keys.forEach(function (key) {
+      var custom = customPoses.find(function (c) {
+        return c.key === key;
+      });
+      var ov = shotOverrides[key] || {};
       queue.push({
         localId: ++localSeq,
         character: character,
         base: base, // for correcting refTriggers below if the server suffixes
         key: key,
+        // Snapshotted at queue time (like `settings` above) so editing a
+        // pose card's scene/prompt afterward doesn't retroactively change
+        // an already-queued item.
+        customPose: custom ? custom.pose : null,
+        scene: ov.scene || "",
+        promptOverride: typeof ov.promptOverride === "string" ? ov.promptOverride : "",
         refId: ref.id,
         refUrl: ref.url,
         settings: settings,
@@ -514,7 +747,14 @@
           var ext = blob.type === "image/png" ? ".png" : ".jpg";
           form.append("file", blob, "reference" + ext);
           form.append("trigger", item.character);
-          form.append("views", JSON.stringify([item.key]));
+          if (item.customPose) {
+            form.append("custom_pose", item.customPose);
+            form.append("custom_key", item.key);
+          } else {
+            form.append("views", JSON.stringify([item.key]));
+          }
+          if (item.scene) form.append("scene", item.scene);
+          if (item.promptOverride) form.append("prompt_override", item.promptOverride);
           form.append("style", item.settings.style);
           form.append("wardrobe", item.settings.wardrobe);
           form.append("hair_color", item.settings.hair_color);

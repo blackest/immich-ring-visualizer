@@ -63,15 +63,24 @@ DEFAULT_PRESET: list[ShotSpec] = [
 ]
 
 # A handful of simple background/lighting variants, rotated across the
-# extended preset instead of repeating one background 15 times.
-_BACKGROUNDS = [
-    "Neutral seamless studio background, soft even lighting that matches "
-    "the reference image's skin tone",
-    "A plain, softly lit interior wall, natural window light",
-    "An outdoor setting with soft overcast daylight, a gently blurred "
-    "natural background",
-    "A minimalist indoor space, warm ambient lighting",
-]
+# extended preset instead of repeating one background 15 times. Also
+# exposed to the Generate view as a per-shot "scene" dropdown (see
+# character_sheetNG.build_custom_shot_ng) -- SCENES is the named,
+# selectable form; _BACKGROUNDS keeps the original positional list so
+# EXTENDED_PRESET's indexing below doesn't need to change.
+SCENES: dict[str, str] = {
+    "studio": (
+        "Neutral seamless studio background, soft even lighting that "
+        "matches the reference image's skin tone"
+    ),
+    "interior": "A plain, softly lit interior wall, natural window light",
+    "outdoor": (
+        "An outdoor setting with soft overcast daylight, a gently blurred "
+        "natural background"
+    ),
+    "minimal": "A minimalist indoor space, warm ambient lighting",
+}
+_BACKGROUNDS = list(SCENES.values())
 
 # ---------------------------------------------------------------------
 # "extended" -- 15-shot dataset preset: framing x angle variety (close /
