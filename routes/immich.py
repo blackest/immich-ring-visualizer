@@ -1,6 +1,7 @@
 import os
 import uuid
 import threading
+import collections
 import requests
 import numpy as np
 import cv2
@@ -392,23 +393,50 @@ def person_assets(person_id):
 
     return jsonify([{"assetId": r[0], "filename": r[1]} for r in rows])
 
-@immich_bp.route("/api/thumb/<asset_id>")
-def thumb(asset_id):
+# In-memory-only cache of Immich thumbnails/previews, keyed by (asset_id,
+# size). Nothing here ever touches disk -- a given asset's thumbnail never
+# changes, so re-serving it from RAM on a cold browser cache (first visit,
+# different device, Safari having evicted its own decoded copy) is instant
+# instead of round-tripping to Immich. Bounded LRU so this can't grow
+# unbounded across a long-running process.
+_THUMB_CACHE_MAX = 2000
+_thumb_cache = collections.OrderedDict()  # (asset_id, size) -> (content_type, bytes)
+_thumb_cache_lock = threading.Lock()
+
+def _fetch_immich_image(asset_id, size):
+    key = (asset_id, size)
+    with _thumb_cache_lock:
+        hit = _thumb_cache.get(key)
+        if hit is not None:
+            _thumb_cache.move_to_end(key)
+            content_type, data = hit
+            resp = Response(data, mimetype=content_type)
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return resp
+
     r = requests.get(
         f"{IMMICH_BASE_URL}/api/assets/{asset_id}/thumbnail",
         headers={"x-api-key": IMMICH_API_KEY},
-        params={"size": "thumbnail"},
-        stream=True,
+        params={"size": size},
+        timeout=15,
     )
-    return Response(r.content, mimetype=r.headers.get("Content-Type", "image/jpeg"))
+    content_type = r.headers.get("Content-Type", "image/jpeg")
+
+    with _thumb_cache_lock:
+        _thumb_cache[key] = (content_type, r.content)
+        _thumb_cache.move_to_end(key)
+        while len(_thumb_cache) > _THUMB_CACHE_MAX:
+            _thumb_cache.popitem(last=False)
+
+    resp = Response(r.content, mimetype=content_type)
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+@immich_bp.route("/api/thumb/<asset_id>")
+def thumb(asset_id):
+    return _fetch_immich_image(asset_id, "thumbnail")
 
 @immich_bp.route("/api/preview/<asset_id>")
 def preview_size(asset_id):
-    r = requests.get(
-        f"{IMMICH_BASE_URL}/api/assets/{asset_id}/thumbnail",
-        headers={"x-api-key": IMMICH_API_KEY},
-        params={"size": "preview"},
-        stream=True,
-    )
-    return Response(r.content, mimetype=r.headers.get("Content-Type", "image/jpeg"))
+    return _fetch_immich_image(asset_id, "preview")
 

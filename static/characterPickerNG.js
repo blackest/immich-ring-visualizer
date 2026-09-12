@@ -75,8 +75,54 @@
         }
       });
 
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "ng-char-tile-remove";
+      rm.title = "remove character";
+      rm.textContent = "✕";
+      rm.addEventListener("click", function (e) {
+        e.stopPropagation();
+        deleteCharacter(c);
+      });
+      tile.appendChild(rm);
+
       els.grid.appendChild(tile);
     });
+  }
+
+  // Full-res avatar route (same one the grid tiles thumbnail from) -- good
+  // enough to render from directly, not just recognise the character by.
+  function avatarUrl(c) {
+    return "/api/ng/generate/characters/" + encodeURIComponent(c.id) + "/avatar";
+  }
+
+  // Drop the character's avatar into the Generate ref tray, already
+  // selected, so there's nothing left to do before hitting Add to queue.
+  // Non-fatal if GenerateNG isn't loaded/ready -- just a convenience.
+  function bringInReference(c) {
+    if (!c.hasAvatar) return;
+    if (window.GenerateNG && window.GenerateNG.addReferenceFromUrl) {
+      window.GenerateNG.addReferenceFromUrl(avatarUrl(c), "avatar");
+    }
+  }
+
+  function deleteCharacter(c) {
+    if (!window.confirm('Remove "' + (c.name || c.id) + '"? This deletes it permanently.')) {
+      return;
+    }
+    fetch("/api/ng/characters/" + encodeURIComponent(c.id), { method: "DELETE" })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res && res.ok) {
+          characters = characters.filter(function (x) { return x.id !== c.id; });
+          render();
+        } else {
+          console.warn("[characterPicker] nothing to delete for", c.id);
+        }
+      })
+      .catch(function (e) {
+        console.warn("[characterPicker] failed to delete:", e);
+      });
   }
 
   function openCharacter(c) {
@@ -92,6 +138,7 @@
         p.task = "generate";
         pm.saveState();
         pm.render();
+        bringInReference(c);
       }
       return;
     }
@@ -102,6 +149,7 @@
       .then(function (doc) {
         if (doc && doc.identity && doc.identity.name && window.CharacterIO) {
           window.CharacterIO.loadDoc(doc);
+          bringInReference(c);
         }
       })
       .catch(function (e) {

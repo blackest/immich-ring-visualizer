@@ -57,3 +57,16 @@ def save_character_doc_route_ng(character_id):
         return jsonify({"error": "body must be a JSON object"}), 400
     character_sheet.save_character_project_doc_ng(cid, doc)
     return jsonify({"ok": True}), 200
+
+
+@charactersNG_bp.route("/api/ng/characters/<character_id>", methods=["DELETE"])
+def delete_character_route_ng(character_id):
+    """Removes a character (its whole exportsNG/<id>/ dir -- generation
+    bundle and any Saved project doc) so it drops off the picker grid.
+    Used to clear out test/junk characters."""
+    try:
+        cid = character_sheet._safe_id_ng(character_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    deleted = character_sheet.delete_character_ng(cid)
+    return jsonify({"ok": deleted})

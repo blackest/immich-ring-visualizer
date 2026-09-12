@@ -898,6 +898,20 @@
       });
   }
 
+  function removeItem(localId) {
+    var item = queue.find(function (q) { return q.localId === localId; });
+    if (!item) return;
+    queue = queue.filter(function (q) { return q.localId !== localId; });
+    renderQueue();
+    // Best-effort: tell the backend to drop/kill the job too. Fire and
+    // forget -- the row is already gone from view either way, and a
+    // job that's pending/submitting/done/failed has no backend job (or
+    // nothing left) to cancel.
+    if (item.jobId && (item.status === "queued" || item.status === "rendering")) {
+      fetch(API + "/sheet-jobs/" + item.jobId, { method: "DELETE" }).catch(function () {});
+    }
+  }
+
   // ---- queue view ----
   function renderQueue() {
     if (!els.queue) return;
@@ -943,6 +957,8 @@
       st.textContent = ST_LABEL[item.status] || item.status;
       right.appendChild(st);
 
+      var actions = document.createElement("div");
+      actions.className = "actions";
       if (item.status === "failed") {
         var retry = document.createElement("button");
         retry.className = "ng-gen-reroll";
@@ -954,7 +970,7 @@
           renderQueue();
           pump();
         });
-        right.appendChild(retry);
+        actions.appendChild(retry);
       } else if (item.status === "done") {
         var rb = document.createElement("button");
         rb.className = "ng-gen-reroll";
@@ -962,8 +978,19 @@
         rb.addEventListener("click", function () {
           reroll(item);
         });
-        right.appendChild(rb);
+        actions.appendChild(rb);
       }
+
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "pose-remove";
+      rm.title = "remove from queue";
+      rm.textContent = "✕";
+      rm.addEventListener("click", function () {
+        removeItem(item.localId);
+      });
+      actions.appendChild(rm);
+      right.appendChild(actions);
 
       row.appendChild(thumbs);
       row.appendChild(meta);
@@ -1173,9 +1200,24 @@
     renderRefTray();
   }
 
+  // Drops an already-hosted image (e.g. a character's avatar route) into
+  // the tray as a disk-kind ref and makes it active -- no fetch/decode
+  // needed up front, fetchRefBlob() pulls the bytes lazily at submit time.
+  // Used by characterPickerNG.js so opening a character from the picker
+  // grid lands with its reference photo ready to render immediately.
+  function addReferenceFromUrl(url, label) {
+    if (!url) return;
+    var id = "ext" + ++localSeq;
+    refs.push({ id: id, label: label || "reference", kind: "disk", url: url });
+    activeRefId = id;
+    refreshEls();
+    renderRefTray();
+  }
+
   window.GenerateNG = {
     sync: sync,
     getActiveReference: getActiveReference,
     addExternalReference: addExternalReference,
+    addReferenceFromUrl: addReferenceFromUrl,
   };
 })();

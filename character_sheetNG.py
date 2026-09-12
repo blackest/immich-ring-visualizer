@@ -230,6 +230,19 @@ def list_characters_ng() -> list:
     return out
 
 
+def delete_character_ng(name: str) -> bool:
+    """Removes exportsNG/<id>/ entirely -- both the generation bundle and
+    any Saved project doc -- so the id drops out of list_characters_ng()
+    and the picker grid. Used to clear test/junk characters out of the
+    landing-state grid. Returns False if there was nothing to delete."""
+    cid = _safe_id_ng(name)
+    d = Path(EXPORT_DIR) / cid
+    if not d.is_dir():
+        return False
+    shutil.rmtree(d)
+    return True
+
+
 def character_sheet_meta_ng(name: str) -> dict:
     p = _character_dir_ng(_safe_id_ng(name)) / "sheet.json"
     if not p.is_file():
@@ -451,8 +464,15 @@ def _safe_shot_key_ng(text: str) -> str:
     with a real preset key even if someone types e.g. "front", truncated
     so a caller that passes the whole pose phrase (rather than a short
     name) as custom_key doesn't produce an unwieldy sheet_views/ dir
-    name."""
-    slug = re.sub(r"[^a-z0-9]+", "_", (text or "").strip().lower()).strip("_")[:40].strip("_")
+    name. Strips a pre-existing "custom_" prefix first so it's idempotent
+    when the caller (the JS frontend) already sends an already-prefixed
+    key -- otherwise this would double-prefix it (custom_custom_foo),
+    silently diverging from the key the frontend keeps using to poll for
+    the shot's thumbnail / trigger reroll."""
+    text = (text or "").strip().lower()
+    if text.startswith("custom_"):
+        text = text[len("custom_"):]
+    slug = re.sub(r"[^a-z0-9]+", "_", text).strip("_")[:40].strip("_")
     return "custom_" + (slug or "pose")
 
 
@@ -550,7 +570,7 @@ def generate_character_sheet_ng(name: str, *,
                                  width: int = DEFAULT_RENDER_W,
                                  height: int = DEFAULT_RENDER_H,
                                  steps: int = DEFAULT_RENDER_STEPS,
-                                 on_log=None) -> dict:
+                                 on_log=None, on_proc_start=None) -> dict:
     """Render a shot-list character sheet from one reference photo.
 
     Same seed handling as the original (one resolved seed shared across
@@ -625,6 +645,7 @@ def generate_character_sheet_ng(name: str, *,
                 config=cfg,
                 allow_offspec_res=True,
                 on_log=on_log,
+                on_proc_start=on_proc_start,
             )
             if not candidates or not candidates[0].get("png_path"):
                 raise RuntimeError(f"engine returned no image for shot {spec.key!r}")
@@ -702,7 +723,7 @@ def regenerate_shot_ng(name: str, shot_key: str, *,
                         width: Optional[int] = None,
                         height: Optional[int] = None,
                         steps: Optional[int] = None,
-                        on_log=None) -> dict:
+                        on_log=None, on_proc_start=None) -> dict:
     """Re-render a single shot from an already-generated sheet and
     recomposite (when the shot count is small enough to composite at
     all -- see MAX_SHOTS_FOR_COMPOSITE).
@@ -753,7 +774,8 @@ def regenerate_shot_ng(name: str, shot_key: str, *,
         candidates = hidream_engineNG.generate_hidream_ng(
             prompt=use_prompt, n=1, width=use_w, height=use_h,
             output_dir=view_dir, base_seed=use_seed, refs=refs,
-            config=cfg, allow_offspec_res=True, on_log=on_log)
+            config=cfg, allow_offspec_res=True, on_log=on_log,
+            on_proc_start=on_proc_start)
         if not candidates or not candidates[0].get("png_path"):
             raise RuntimeError(f"engine returned no image for shot {shot_key!r}")
         c = candidates[0]

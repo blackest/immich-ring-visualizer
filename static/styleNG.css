@@ -468,6 +468,7 @@ html, body {
   gap: 14px;
 }
 .ng-char-tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -482,6 +483,21 @@ html, body {
   border-color: var(--ng-accent);
   outline: none;
 }
+.ng-char-tile-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--ng-border);
+  border-radius: 50%;
+  background: var(--ng-panel-raised);
+  color: var(--ng-text-dim);
+  font-size: 0.8571rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.ng-char-tile-remove:hover { color: var(--ng-danger); border-color: var(--ng-danger); }
 .ng-char-tile-thumb {
   width: 100%;
   aspect-ratio: 1;
@@ -2053,6 +2069,21 @@ html, body {
 .ng-gen-queue-row.st-rendering .st { color: var(--ng-accent); }
 .ng-gen-queue-row.st-queued .st,
 .ng-gen-queue-row.st-pending .st { color: var(--ng-text-dim); }
+.ng-gen-queue-row .status-row .actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ng-gen-queue-row .status-row .pose-remove {
+  background: none;
+  border: none;
+  color: var(--ng-text-dim);
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0 0 0 8px;
+}
+.ng-gen-queue-row .status-row .pose-remove:hover { color: var(--ng-danger); }
 .ng-gen-reroll {
   font-size: 0.6429rem;
   padding: 3px 7px;
@@ -2118,6 +2149,29 @@ html, body {
   .ng-gen-settings-row {
     grid-template-columns: 1fr;
   }
+}
+.ng-gen-queue-row .ng-vg-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  text-decoration: none;
+  font-size: 0.7857rem;
+}
+.ng-vg-mainlog {
+  width: 100%;
+  max-width: 1180px;
+  max-height: 360px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7857rem;
+  line-height: 1.5;
+  color: var(--ng-text-dim);
+  background: var(--ng-panel);
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  white-space: pre-wrap;
 }
 .ng-gen-queue-row .log {
   grid-column: 1 / -1;
@@ -2415,4 +2469,40 @@ html, body {
   margin-top: 0;
   padding: 8px 16px;
   flex: 0 0 auto;
+}
+
+/* ============================================================
+   Animate view (task === "videogen") -- LTX image-to-video. Rail
+   (#ng-videogen-pane) = render queue, main (#ng-videogen-main) =
+   reference/prompt/duration form -- same rail=queue/main=settings
+   split as Generate's canvas redesign. Reuses .ng-gen-* input/button/
+   canvas/queue-row styling from the Generate block above.
+   ============================================================ */
+#ng-videogen-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  display: flex;
+  flex-direction: column;
+}
+#ng-vg-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8571rem;
+  color: var(--ng-text);
+  margin-bottom: 10px;
+}
+#ng-vg-queue-count { color: var(--ng-text-dim); }
+
+#ng-videogen-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 16px 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }

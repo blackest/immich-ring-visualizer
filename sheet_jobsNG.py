@@ -35,7 +35,10 @@ in-memory dict + queue for the life of the Flask process.
 
 from __future__ import annotations
 
+import os
 import queue
+import signal
+import subprocess
 import threading
 import time
 import uuid
@@ -61,16 +64,17 @@ class SheetJobNG:
     error: Optional[str] = None
     error_type: Optional[str] = None
     log_lines: list = field(default_factory=list)
+    cancelled: bool = False
     _log_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _proc: Optional[subprocess.Popen] = field(default=None, repr=False)
     # Resolved prompt text per shot key -- computed up front at
     # enqueue time, same as the original (prompts don't depend on
     # render output).
     shot_prompts: dict = field(default_factory=dict)
     # Set by start_job_ng/start_reroll_ng -- what the worker thread
-    # actually calls once this job is dispatched. Not part of the
-    # public job_status_ng() shape.
-    _target: Optional[Callable[[Callable[[str], None]], None]] = field(
-        default=None, repr=False)
+    # actually calls once this job is dispatched. Takes (on_log,
+    # on_proc_start); not part of the public job_status_ng() shape.
+    _target: Optional[Callable[..., None]] = field(default=None, repr=False)
 
     def append_log(self, line: str) -> None:
         with self._log_lock:
@@ -107,9 +111,14 @@ def _worker_loop() -> None:
         job = _JOBS.get(job_id)
         if job is None or job._target is None:
             continue
+        if job.cancelled:
+            job.finished_at = time.time()
+            job.error = "cancelled before it started rendering"
+            job.error_type = "SheetJobCancelled"
+            continue
         job.dispatched_at = time.time()
         try:
-            job._target(job.append_log)
+            job._target(job.append_log, lambda p: setattr(job, "_proc", p))
         except Exception as e:  # noqa: BLE001 -- job.error is the report
             job.error = str(e)
             job.error_type = type(e).__name__
@@ -185,12 +194,13 @@ def start_job_ng(character_id: str, *,
         for spec in shot_list
     }
 
-    def target(on_log):
+    def target(on_log, on_proc_start):
         character_sheet.generate_character_sheet_ng(
             cid, preset=preset, shots=shots, views=views, wardrobe=wardrobe,
             hair_color=hair_color,
             seed=seed, anchor_chain=anchor_chain, identity_lock=identity_lock,
-            style=style, width=width, height=height, steps=steps, on_log=on_log)
+            style=style, width=width, height=height, steps=steps, on_log=on_log,
+            on_proc_start=on_proc_start)
 
     job = _enqueue(cid, [s.key for s in shot_list], params, target)
     job.shot_prompts = shot_prompts
@@ -214,10 +224,10 @@ def start_reroll_ng(character_id: str, shot_key: str, *,
     if existing is None:
         raise LookupError(f"no shot {shot_key!r} in character {cid!r}'s current sheet")
 
-    def target(on_log):
+    def target(on_log, on_proc_start):
         character_sheet.regenerate_shot_ng(cid, shot_key, seed=seed, prompt=prompt,
                                            width=width, height=height, steps=steps,
-                                           on_log=on_log)
+                                           on_log=on_log, on_proc_start=on_proc_start)
 
     job = _enqueue(cid, [shot_key],
                    {"reroll": True, "shot_key": shot_key, "seed": seed,
@@ -229,6 +239,30 @@ def start_reroll_ng(character_id: str, shot_key: str, *,
 def get_job_ng(job_id: str) -> Optional[SheetJobNG]:
     with _JOBS_LOCK:
         return _JOBS.get(job_id)
+
+
+def cancel_job_ng(job_id: str) -> bool:
+    """Removes a job from the render queue. A job still waiting its turn
+    is simply flagged and the worker skips it when it comes up. A job
+    already rendering gets its current HiDream subprocess killed (same
+    signal path as the engine's own timeout watchdog, so it surfaces as
+    the usual ImageJobCancelled) -- for a multi-shot sheet job that only
+    stops the shot in flight, but the exception then unwinds the whole
+    job the same as any other engine failure. Returns False if the job
+    doesn't exist or has already finished -- nothing left to cancel."""
+    job = get_job_ng(job_id)
+    if job is None or job.finished_at is not None:
+        return False
+    job.cancelled = True
+    if job.dispatched_at is not None and job._proc is not None:
+        try:
+            os.killpg(os.getpgid(job._proc.pid), signal.SIGKILL)
+        except Exception:
+            try:
+                job._proc.kill()
+            except Exception:
+                pass
+    return True
 
 
 def job_status_ng(job_id: str) -> dict:

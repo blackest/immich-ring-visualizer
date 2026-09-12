@@ -20,6 +20,8 @@
   const closeBtn = document.getElementById("ng-settings-modal-close");
   const updateBtn = document.getElementById("ng-settings-update-ytdlp");
   const outputEl = document.getElementById("ng-settings-ytdlp-output");
+  const launchSunoBtn = document.getElementById("ng-settings-launch-suno");
+  const sunoOutputEl = document.getElementById("ng-settings-suno-output");
 
   function openModal() {
     overlay.style.display = "flex";
@@ -56,6 +58,32 @@
     } finally {
       updateBtn.disabled = false;
       updateBtn.textContent = "Update";
+    }
+  });
+
+  launchSunoBtn.addEventListener("click", async () => {
+    launchSunoBtn.disabled = true;
+    launchSunoBtn.textContent = "Launching...";
+    sunoOutputEl.style.display = "block";
+    sunoOutputEl.textContent = "Starting Suno Vault server...";
+
+    try {
+      const res = await fetch("/api/ng/settings/launch-suno", { method: "POST" });
+      const data = await res.json();
+
+      if (data.ok) {
+        sunoOutputEl.textContent =
+          (data.already_running ? "Already running at " : "Started at ") +
+          data.url;
+        window.open(data.url, "_blank");
+      } else {
+        sunoOutputEl.textContent = "Failed: " + (data.error || "unknown error");
+      }
+    } catch (e) {
+      sunoOutputEl.textContent = "Failed: " + e.message;
+    } finally {
+      launchSunoBtn.disabled = false;
+      launchSunoBtn.textContent = "Launch";
     }
   });
 })();

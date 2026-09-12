@@ -148,7 +148,8 @@ def generate_hidream_ng(prompt: str, n: int, width: int, height: int,
                          config: HiDreamConfig,
                          refs: Optional[list] = None,
                          allow_offspec_res: bool = False,
-                         on_log: Optional[Callable[[str], None]] = None) -> list:
+                         on_log: Optional[Callable[[str], None]] = None,
+                         on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> list:
     """One subprocess call, n candidates in one call (the generator
     script accepts multiple --output/--seed values so the model loads
     once per batch).
@@ -241,6 +242,8 @@ def generate_hidream_ng(prompt: str, n: int, width: int, height: int,
         env=_clean_subprocess_env_ng(),
         start_new_session=True,
     )
+    if on_proc_start:
+        on_proc_start(proc)
 
     timeout_s = float(os.environ.get("RINGVIZ_HIDREAM_TIMEOUT_S", config.timeout_s))
     timed_out = {"v": False}

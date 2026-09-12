@@ -13,7 +13,7 @@ IMMICH_BASE_URL = "http://localhost:2283"
 # OLLAMA_HOST -- that's Ollama's *server bind* address and is often just
 # "0.0.0.0", useless as a client URL.)
 OLLAMA_BASE_URL = os.environ.get(
-    "RINGVIZ_OLLAMA_URL", "http://localhost:11434"
+    "RINGVIZ_OLLAMA_URL", "http://macstudio-2.tail74ab30.ts.net:11434"
 ).rstrip("/")
 
 # Hermes agent gateway (NousResearch hermes-agent) -- powers the Rachel
@@ -21,7 +21,7 @@ OLLAMA_BASE_URL = os.environ.get(
 # LAN box, Bearer-authed, single agent/model. Same local-dev style as the
 # values above: hardcoded defaults with env overrides.
 HERMES_BASE_URL = os.environ.get(
-    "RINGVIZ_HERMES_URL", "http://192.168.3.248:8642"
+    "RINGVIZ_HERMES_URL", "http://m1mini-4.tail74ab30.ts.net:8642"
 ).rstrip("/")
 HERMES_API_KEY = os.environ.get(
     "RINGVIZ_HERMES_KEY", "6tCD2B8MuMEFmIgxmgpXrPNu_sOGdaz5iEdIhwvcQTw"
@@ -42,8 +42,25 @@ HERMES_SESSION_KEY = os.environ.get(
 
 IMMICH_API_KEY = "L4mP37A5kNWHPME0024ms2SGep7KR8xP4oAB9UNGqOM"
 
+# Suno Vault -- john's own local music-library server, lives outside this
+# repo at ~/Music/mysunodb (its own git repo, its own venv). The settings
+# cog can start it as a subprocess; it's reachable over Tailscale with no
+# router/gateway config since it's just this machine's own tailnet name.
+SUNO_DIR = os.path.expanduser("~/Music/mysunodb")
+SUNO_PORT = 8001
+TAILSCALE_HOSTNAME = os.environ.get(
+    "RINGVIZ_TAILSCALE_HOST", "macstudio-2.tail74ab30.ts.net"
+)
+
 FRAME_STORE = tempfile.mkdtemp(prefix="ringvizng_frames_")
 
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exportsNG")
+
+# Animate view (routes/videogenNG.py, video_jobsNG.py) -- LTX image-to-
+# video renders. Flat, persistent (not a tempdir): these are real
+# outputs the user reviews/downloads, not scratch, but they're keyed by
+# job id rather than character id since a render's source reference
+# isn't necessarily a saved character's avatar.
+VIDEOGEN_DIR = os.path.join(EXPORT_DIR, "_videogen")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}

@@ -460,6 +460,17 @@ def sheet_job_status_route_ng(job_id):
     return jsonify(status)
 
 
+@generateNG_bp.route("/api/ng/generate/sheet-jobs/<job_id>", methods=["DELETE"])
+def sheet_job_cancel_route_ng(job_id):
+    """Removes a job from the render queue -- if it hasn't started yet
+    it's simply skipped, if it's already rendering its subprocess gets
+    killed. `ok: false` just means there was nothing left to cancel
+    (already finished, or no such job); the frontend row disappears
+    from the visible queue either way."""
+    cancelled = sheet_jobs.cancel_job_ng(job_id)
+    return jsonify({"ok": cancelled})
+
+
 @generateNG_bp.route("/api/ng/generate/characters/<character_id>/sheet", methods=["GET"])
 def serve_character_sheet_ng(character_id):
     """Serves the composited sheet.png (small shot counts only -- see

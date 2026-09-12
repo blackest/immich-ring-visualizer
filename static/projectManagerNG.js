@@ -302,9 +302,14 @@
       // needs to be told when to show/hide itself.
       if (window.ChatNG) window.ChatNG.sync(active);
       // Rachel view (task === "rachel") -- same deal, Hermes agent chat.
-      // Must run last: it force-hides the shared #ng-controls-pane when
-      // active and relies on running after Generate/Chat's syncs.
       if (window.RachelNG) window.RachelNG.sync(active);
+      // Animate view (task === "videogen") -- image-to-video via LTX.
+      // Must run last: it force-hides the shared #ng-controls-pane when
+      // active and relies on running after Generate/Chat/Rachel's syncs
+      // (none of which know about the "videogen" task, so each leaves
+      // #ng-controls-pane shown when it's active -- this one's own
+      // unconditional hide-when-on is what actually wins).
+      if (window.VideoGenNG) window.VideoGenNG.sync(active);
       applyResolutionSummaryNG(active && active.job ? active.job.resolutionSummary : null);
       this.saveState();
     },
@@ -394,7 +399,7 @@
       // switches over to showing the ring (see placeVideoPreview() in
       // videoNG.js). The Generate view takes over the whole main stage
       // and rail, so the preview is fully hidden there regardless.
-      if (!active || !active.video || active.task === "generate" || active.task === "chat" || active.task === "rachel") {
+      if (!active || !active.video || active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen") {
         placeVideoPreview("hidden");
       } else if (active.ring) {
         placeVideoPreview("rail");
@@ -418,10 +423,10 @@
       }
       if (window.CharacterPickerNG) window.CharacterPickerNG.hide();
       if (!active.task) {
-        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Chat, or Rachel below to get started with “" + active.name + "”.");
+        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Animate, Chat, or Rachel below to get started with “" + active.name + "”.");
         return;
       }
-      if (active.task === "generate" || active.task === "chat" || active.task === "rachel") {
+      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen") {
         // The Generate/Chat/Rachel view's main region (#ng-generate-main /
         // #ng-chat-main / #ng-rachel-main) is shown by that view's sync();
         // everything else in the main stage stays hidden.
@@ -473,7 +478,7 @@
           }
         }
       } else {
-        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Chat, or Rachel below to get started with “" + active.name + "”.");
+        showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Animate, Chat, or Rachel below to get started with “" + active.name + "”.");
         return;
       }
 
@@ -853,7 +858,7 @@
       }
       leftRailEmptyEl.style.display = "none";
 
-      if (active.task === "generate" || active.task === "chat" || active.task === "rachel") {
+      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen") {
         // Generate/Chat/Rachel views swap the whole rail body for their own
         // pane (#ng-generate-pane / #ng-chat-pane / #ng-rachel-pane, siblings
         // of #ng-leftrail-body under #ng-leftrail, shown by that view's sync).

@@ -30,6 +30,7 @@ from routes.settingsNG import settingsNG_bp  # NG: new blueprint, no changes to 
 from routes.chatNG import chatNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.rachelNG import rachelNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.charactersNG import charactersNG_bp  # NG: new blueprint, no changes to existing ones
+from routes.videogenNG import videogenNG_bp  # NG: new blueprint, no changes to existing ones
 
 app = Flask(__name__)
 app.register_blueprint(video_bp)
@@ -48,6 +49,7 @@ app.register_blueprint(settingsNG_bp)  # NG: /api/ng/settings/* (venv maintenanc
 app.register_blueprint(chatNG_bp)  # NG: /api/ng/chat/* (Ollama chat proxy), additive only
 app.register_blueprint(rachelNG_bp)  # NG: /api/ng/rachel/* (Hermes agent chat proxy), additive only
 app.register_blueprint(charactersNG_bp)  # NG: /api/ng/characters (picker grid), additive only
+app.register_blueprint(videogenNG_bp)  # NG: /api/ng/videogen/* (LTX image-to-video job queue), additive only
 if __name__ == "__main__":
     # use_reloader on its own (without debug=True) restarts the process
     # when a .py file changes -- picks up backend fixes without a manual
@@ -57,4 +59,4 @@ if __name__ == "__main__":
     # localhost. Note: a reload triggered mid-job (HiDream render, video
     # analysis) still kills it silently -- job state is in-memory only,
     # nothing here makes that safe.
-    app.run(host="0.0.0.0", port=5050, debug=False, use_reloader=True)
+    app.run(host="0.0.0.0", port=5050, debug=False, use_reloader=True, threaded=True)
