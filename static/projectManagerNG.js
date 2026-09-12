@@ -410,9 +410,13 @@
       };
 
       if (!active) {
-        showPlaceholder("No project open. Press + to start one.");
+        mainPlaceholderEl.style.display = "none";
+        stageWrapEl.style.display = "none";
+        sidebarEl.style.display = "none";
+        if (window.CharacterPickerNG) window.CharacterPickerNG.show();
         return;
       }
+      if (window.CharacterPickerNG) window.CharacterPickerNG.hide();
       if (!active.task) {
         showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Chat, or Rachel below to get started with “" + active.name + "”.");
         return;

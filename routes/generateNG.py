@@ -416,6 +416,21 @@ def serve_character_sheet_ng(character_id):
     return send_file(p, mimetype="image/png")
 
 
+@generateNG_bp.route("/api/ng/generate/characters/<character_id>/avatar", methods=["GET"])
+def serve_character_avatar_ng(character_id):
+    """Serves the reference photo (avatar.<ext>) a character was
+    registered with -- the character-picker grid's thumbnail source
+    (see routes/charactersNG.py's /api/ng/characters)."""
+    try:
+        cid = character_sheet._safe_id_ng(character_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    avatar = character_sheet.character_avatar_ng(cid)
+    if avatar is None:
+        return jsonify({"error": f"character {cid!r} has no reference image"}), 404
+    return send_file(avatar)
+
+
 @generateNG_bp.route("/api/ng/generate/characters/<character_id>/sheet-meta", methods=["GET"])
 def serve_character_sheet_meta_ng(character_id):
     """Full sheet.json (every shot's prompt/seed/path/refs) -- lets the

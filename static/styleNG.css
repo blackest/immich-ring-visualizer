@@ -449,6 +449,66 @@ html, body {
   padding: 20px;
 }
 
+/* Character-picker landing grid (Generate view's void state) -- see
+   static/characterPickerNG.js. */
+#ng-character-picker {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 20px;
+}
+#ng-char-picker-heading {
+  margin: 0 0 14px 0;
+  font-size: 1.1429rem;
+  color: var(--ng-text);
+  font-weight: 600;
+}
+#ng-char-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 14px;
+}
+.ng-char-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  background: var(--ng-panel-raised);
+  cursor: pointer;
+}
+.ng-char-tile:hover,
+.ng-char-tile:focus-visible {
+  border-color: var(--ng-accent);
+  outline: none;
+}
+.ng-char-tile-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--ng-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ng-text-dim);
+  font-size: 1.7143rem;
+}
+.ng-char-tile-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ng-char-tile-name {
+  font-size: 0.8571rem;
+  color: var(--ng-text);
+  overflow-wrap: anywhere;
+}
+.ng-char-tile-sub {
+  font-size: 0.7143rem;
+  color: var(--ng-text-dim);
+}
+
 .ng-video-hint {
   color: var(--ng-text-dim);
   font-size: 0.8571rem;

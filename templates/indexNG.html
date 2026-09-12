@@ -800,6 +800,18 @@
           <p id="ng-main-placeholder" class="ng-placeholder">
             No project open. Press + to start one.
           </p>
+          <!-- Character-picker landing grid, shown instead of the plain
+               placeholder above when no project is open and at least one
+               known character exists (exportsNG/<n>/ with a generation
+               bundle and/or a Saved project doc) -- see
+               static/characterPickerNG.js and routes/charactersNG.py. -->
+          <div id="ng-character-picker" style="display: none">
+            <h2 id="ng-char-picker-heading">Characters</h2>
+            <p id="ng-char-picker-empty" class="ng-placeholder" style="display: none">
+              No saved characters yet. Press + to start one.
+            </p>
+            <div id="ng-char-picker-grid"></div>
+          </div>
           <div id="ng-main-video-preview" style="display: none">
             <div id="ng-preview-container">
               <p id="ng-preview-hint" class="ng-video-hint">
@@ -1391,6 +1403,7 @@
     <script src="{{ url_for('static', filename='videoNG.js') }}"></script>
     <script src="{{ url_for('static', filename='generateNG.js') }}"></script>
     <script src="{{ url_for('static', filename='characterIONG.js') }}"></script>
+    <script src="{{ url_for('static', filename='characterPickerNG.js') }}"></script>
     <script src="{{ url_for('static', filename='chatNG.js') }}"></script>
     <script src="{{ url_for('static', filename='rachelNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>

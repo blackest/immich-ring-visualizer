@@ -296,6 +296,21 @@
     resolveReferenceThumb(project).then(function (ref) {
       if (ref) doc.reference = ref; // { thumb: <data URI>, origin }
       downloadJson(fileSafe(project.name) + ".character.json", doc);
+      // Also mirror the doc server-side at exportsNG/<id>/character.json
+      // so the Generate view's character-picker grid (characterPickerNG.js)
+      // has something to list/load without a file round-trip. Best-effort:
+      // the download above is still the authoritative Save action, so a
+      // failed/offline server write shouldn't be treated as Save failing.
+      fetch(
+        "/api/ng/characters/" + encodeURIComponent(doc.generation.characterId) + "/doc",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(doc),
+        },
+      ).catch(function (e) {
+        console.warn("[characterIO] server-side save failed:", e);
+      });
     });
   }
 
@@ -384,7 +399,10 @@
     }
   }
 
-  window.CharacterIO = { save: save, load: load };
+  // loadDoc exposed separately from load() (which reads a File) so
+  // characterPickerNG.js can feed it a doc object fetched straight from
+  // GET /api/ng/characters/<id>/doc, no File/FileReader round-trip.
+  window.CharacterIO = { save: save, load: load, loadDoc: applyDoc };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", wire);

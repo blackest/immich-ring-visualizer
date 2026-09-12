@@ -29,6 +29,7 @@ from routes.generateNG import generateNG_bp  # NG: new blueprint, no changes to 
 from routes.settingsNG import settingsNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.chatNG import chatNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.rachelNG import rachelNG_bp  # NG: new blueprint, no changes to existing ones
+from routes.charactersNG import charactersNG_bp  # NG: new blueprint, no changes to existing ones
 
 app = Flask(__name__)
 app.register_blueprint(video_bp)
@@ -46,6 +47,7 @@ app.register_blueprint(generateNG_bp)  # NG: /api/ng/generate/* (character-sheet
 app.register_blueprint(settingsNG_bp)  # NG: /api/ng/settings/* (venv maintenance actions), additive only
 app.register_blueprint(chatNG_bp)  # NG: /api/ng/chat/* (Ollama chat proxy), additive only
 app.register_blueprint(rachelNG_bp)  # NG: /api/ng/rachel/* (Hermes agent chat proxy), additive only
+app.register_blueprint(charactersNG_bp)  # NG: /api/ng/characters (picker grid), additive only
 if __name__ == "__main__":
     # use_reloader on its own (without debug=True) restarts the process
     # when a .py file changes -- picks up backend fixes without a manual

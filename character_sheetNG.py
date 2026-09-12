@@ -164,6 +164,72 @@ def sheet_shot_image_paths_ng(name: str) -> list:
     return paths
 
 
+# ---- character-picker grid: the saved "project" doc (characterIONG.js's
+# .character.json -- video/task/settings/source pointers, NOT the
+# generation bundle above) mirrored server-side at exportsNG/<n>/
+# character.json, one level up from character/ -- sibling to it, not
+# nested inside, since a project doc can exist for a character that's
+# never been through Generate at all (video/folder/Immich analysis only).
+def _project_doc_path_ng(name: str) -> Path:
+    return Path(EXPORT_DIR) / _safe_id_ng(name) / "character.json"
+
+
+def save_character_project_doc_ng(name: str, doc: dict) -> None:
+    p = _project_doc_path_ng(name)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def load_character_project_doc_ng(name: str) -> Optional[dict]:
+    p = _project_doc_path_ng(name)
+    if not p.is_file():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def list_characters_ng() -> list:
+    """Every exportsNG/<n>/ dir that's "known" -- either it's been
+    registered as a generation character (character/bundle.json) or a
+    project was explicitly Saved onto it (character.json) -- for the
+    Generate view's landing-state picker grid. Merges both sources per
+    id since a character can have either, both, or (having only ever
+    been used for video/folder/Immich analysis, then Saved) just the
+    latter."""
+    root = Path(EXPORT_DIR)
+    if not root.is_dir():
+        return []
+    out = []
+    for d in sorted(root.iterdir()):
+        if not d.is_dir():
+            continue
+        try:
+            cid = _safe_id_ng(d.name)
+        except ValueError:
+            continue  # skip anything that couldn't have been created by this app
+        bundle = character_bundle_ng(cid) if character_exists_ng(cid) else {}
+        doc = load_character_project_doc_ng(cid)
+        if not bundle and not doc:
+            continue
+        avatar = character_avatar_ng(cid)
+        shot_count = len(sheet_shot_image_paths_ng(cid)) if bundle else 0
+        out.append({
+            "id": cid,
+            # Prefer the project doc's user-facing name (e.g. "Mary") over
+            # the bundle's, which is usually just the id/trigger itself.
+            "name": (doc and doc.get("identity", {}).get("name")) or bundle.get("name") or cid,
+            "hasAvatar": avatar is not None,
+            "hasProjectDoc": doc is not None,
+            "task": (doc or {}).get("task"),
+            "shotCount": shot_count,
+            "savedAt": (doc or {}).get("savedAt"),
+        })
+    out.sort(key=lambda c: (c.get("savedAt") or ""), reverse=True)
+    return out
+
+
 def character_sheet_meta_ng(name: str) -> dict:
     p = _character_dir_ng(_safe_id_ng(name)) / "sheet.json"
     if not p.is_file():
