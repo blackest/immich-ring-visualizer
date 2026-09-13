@@ -913,10 +913,25 @@
   }
 
   // ---- queue view ----
-  function renderQueue() {
-    if (!els.queue) return;
-    els.queue.innerHTML = "";
-    queue.forEach(function (item) {
+  // Keyed by localId -> {sig, el}. `renderQueue()` fires on every poll tick
+  // (and various other events) for the WHOLE queue, but most items in it
+  // haven't changed -- rebuilding their DOM from scratch every time would
+  // recreate their <img> thumbnail nodes on every tick, which forces the
+  // browser to re-fetch/redraw them (a finished shot's thumbnail visibly
+  // flashes while a later job renders -- same bug class fixed in Animate's
+  // queue, see [[videogen-ng-view]]). Reuse the existing row node when an
+  // item's rendered state hasn't changed since the last render instead.
+  var queueRowCache = {};
+
+  function queueRowSignature(item) {
+    return JSON.stringify([
+      item.status, item.character, item.key, item.settings.style,
+      item.error, item.refUrl, item.thumbUrl, item.prompt,
+      item._promptOpen, (item.logTail || []).join("\n"),
+    ]);
+  }
+
+  function buildQueueRow(item) {
       var row = document.createElement("div");
       row.className = "ng-gen-queue-row st-" + item.status;
 
@@ -1045,9 +1060,22 @@
         row.appendChild(pWrap);
       }
 
-      els.queue.appendChild(row);
       if (logEl) logEl.scrollTop = logEl.scrollHeight;
+      return row;
+  }
+
+  function renderQueue() {
+    if (!els.queue) return;
+    els.queue.innerHTML = "";
+    var newCache = {};
+    queue.forEach(function (item) {
+      var sig = queueRowSignature(item);
+      var cached = queueRowCache[item.localId];
+      var row = (cached && cached.sig === sig) ? cached.el : buildQueueRow(item);
+      newCache[item.localId] = { sig: sig, el: row };
+      els.queue.appendChild(row);
     });
+    queueRowCache = newCache;
 
     var n = queue.length;
     if (els.queueCount) els.queueCount.textContent = n ? "(" + n + ")" : "";

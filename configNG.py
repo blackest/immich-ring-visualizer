@@ -63,4 +63,10 @@ EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exportsNG
 # isn't necessarily a saved character's avatar.
 VIDEOGEN_DIR = os.path.join(EXPORT_DIR, "_videogen")
 
+# Durable Animate job history (job_logsNG.py) -- separate from VIDEOGEN_DIR
+# above, which is a ring buffer that deletes a job's files once evicted.
+# This is the permanent, never-pruned record: day folders, rolled up into
+# <year>/<month>/ once a month ends. See job_logsNG.py for the layout.
+JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_job_logsNG")
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}

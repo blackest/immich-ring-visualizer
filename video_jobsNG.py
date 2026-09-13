@@ -1,9 +1,11 @@
-"""NG job queue for LTX-2.5 image-to-video renders (see ltx_engineNG.py).
+"""NG job queue for LTX-2.5 image-to-video AND text-to-video renders
+(see ltx_engineNG.py).
 
 Twin of sheet_jobsNG.py's queue design, trimmed to what a single
-image+prompt+duration job needs: no per-shot list, no preset
+[image]+prompt+duration job needs: no per-shot list, no preset
 resolution, no character registration. A route hands this module raw
-upload bytes; start_video_job_ng() copies them into a private per-job
+upload bytes (or None, for a text-to-video job with no reference
+photo); start_video_job_ng() copies them into a private per-job
 directory under VIDEOGEN_DIR before returning, so the route's own
 tempfile can be deleted the instant this call returns -- the job owns
 its reference image for its whole lifetime, not just at enqueue time.
@@ -34,6 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import job_logsNG
 import ltx_engineNG as ltx
 from configNG import VIDEOGEN_DIR
 
@@ -47,6 +50,10 @@ class VideoJobNG:
     duration_s: float
     seed: Optional[int]
     job_dir: Path
+    has_image: bool = True  # False = text-to-video, no reference photo
+    width: int = ltx.LTX_WIDTH
+    height: int = ltx.LTX_HEIGHT
+    frame_rate: float = ltx.LTX_FRAME_RATE
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
     finished_at: Optional[float] = None
@@ -101,13 +108,15 @@ def _worker_loop() -> None:
             continue
         job.dispatched_at = time.time()
         image_path = next(job.job_dir.glob("ref.*"), None)
+        result = None
         try:
-            if image_path is None:
+            if job.has_image and image_path is None:
                 raise FileNotFoundError("reference image went missing before render")
             result = ltx.generate_ltx_video_ng(
-                prompt=job.prompt, image_path=str(image_path),
+                prompt=job.prompt, image_path=str(image_path) if image_path else None,
                 duration_s=job.duration_s, output_dir=job.job_dir,
                 seed=job.seed, config=ltx.LtxConfig(),
+                width=job.width, height=job.height, frame_rate=job.frame_rate,
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.mp4_path = result["mp4_path"]
@@ -116,6 +125,10 @@ def _worker_loop() -> None:
             job.error_type = type(e).__name__
         finally:
             job.finished_at = time.time()
+            try:
+                job_logsNG.record_job_ng(job, result)
+            except Exception:
+                pass  # the durable log must never take the render pipeline down
 
 
 def _ensure_worker_started() -> None:
@@ -128,31 +141,47 @@ def _ensure_worker_started() -> None:
         _WORKER_STARTED = True
 
 
-def start_video_job_ng(src_image_path: str, prompt: str, duration_s: float,
-                        seed: Optional[int] = None) -> VideoJobNG:
+def start_video_job_ng(src_image_path: Optional[str], prompt: str, duration_s: float,
+                        seed: Optional[int] = None,
+                        width: Optional[int] = None, height: Optional[int] = None,
+                        frame_rate: Optional[float] = None) -> VideoJobNG:
     """Copies src_image_path into a fresh per-job directory (the caller's
     own copy, e.g. a route's upload tempfile, is safe to delete right
     after this returns) and enqueues the render. Raises synchronously
     for bad input; engine/subprocess failure surfaces later through
-    job_status_ng()."""
+    job_status_ng(). src_image_path may be None for a text-to-video job
+    -- no reference photo, LTX generates from the prompt alone.
+    width/height/frame_rate default to ltx_engineNG's fixed-tier values
+    when omitted (see ltx_engineNG.LTX_WIDTH/HEIGHT/FRAME_RATE); when
+    given, they're validated the same way generate_ltx_video_ng does."""
     prompt = (prompt or "").strip()
     if not prompt:
         raise ValueError("prompt is required")
-    if not (0.5 <= duration_s <= 8.0):
-        raise ValueError("duration_s must be between 0.5 and 8.0 seconds")
-    src = Path(src_image_path)
-    if not src.is_file():
+    if not (0.5 <= duration_s <= 30.0):
+        raise ValueError("duration_s must be between 0.5 and 30.0 seconds")
+
+    width = ltx.LTX_WIDTH if width is None else int(width)
+    height = ltx.LTX_HEIGHT if height is None else int(height)
+    frame_rate = ltx.LTX_FRAME_RATE if frame_rate is None else float(frame_rate)
+    ltx._validate_ltx_dims_ng(width, height)
+    ltx._validate_ltx_fps_ng(frame_rate)
+
+    has_image = src_image_path is not None
+    src = Path(src_image_path) if has_image else None
+    if has_image and not src.is_file():
         raise FileNotFoundError(f"reference image not found at {src_image_path}")
 
     _ensure_worker_started()
     job_id = uuid.uuid4().hex[:12]
     job_dir = Path(VIDEOGEN_DIR) / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
-    ext = src.suffix.lower() if src.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") else ".jpg"
-    shutil.copyfile(src, job_dir / f"ref{ext}")
+    if has_image:
+        ext = src.suffix.lower() if src.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") else ".jpg"
+        shutil.copyfile(src, job_dir / f"ref{ext}")
 
     job = VideoJobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
-                      seed=seed, job_dir=job_dir)
+                      seed=seed, job_dir=job_dir, has_image=has_image,
+                      width=width, height=height, frame_rate=frame_rate)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()
@@ -206,6 +235,9 @@ def job_status_ng(job_id: str) -> dict:
         "status": status,
         "prompt": job.prompt,
         "duration_s": job.duration_s,
+        "width": job.width,
+        "height": job.height,
+        "frame_rate": job.frame_rate,
         "error": job.error,
         "error_type": job.error_type,
         "queued_at": job.queued_at,

@@ -16,8 +16,10 @@ cost per call instead).
 
 from __future__ import annotations
 
+import json
 import os
 import random
+import re
 import subprocess
 import threading
 import time
@@ -62,6 +64,10 @@ def _resolve_ltx_weights_root_ng() -> Path:
 LTX_REPO_DIR = _resolve_ltx_repo_dir_ng()
 LTX_WEIGHTS_ROOT = _resolve_ltx_weights_root_ng()
 LTX_DEFAULT_BIN = LTX_REPO_DIR / "env" / "bin" / "ltx-2-mlx"
+LTX_DEFAULT_PYTHON = LTX_REPO_DIR / "env" / "bin" / "python"
+LTX_SCENE_TIMING_HELPER = Path(__file__).resolve().parent / "ltx_scene_timing_helperNG.py"
+LTX_SCENE_DISCUSS_HELPER = Path(__file__).resolve().parent / "ltx_scene_discuss_helperNG.py"
+LTX_SCENE_CHAT_HELPER = Path(__file__).resolve().parent / "ltx_scene_chat_helperNG.py"
 LTX_DEFAULT_MODEL = LTX_WEIGHTS_ROOT / "ltx-2.5-mlx-q8"
 # Paired with the DiT tower it was fine-tuned alongside for LTX-2.5 --
 # LTX-2.3's Gemma-3 encoder is NOT interchangeable with this (loads, runs,
@@ -77,20 +83,56 @@ LTX_DEFAULT_ENHANCE_GEMMA = LTX_WEIGHTS_ROOT / "gemma-3-12b-it-4bit"
 LTX_FRAME_RATE = 24.0
 
 # "high" tier (2nd of phosphene's 4: draft/balanced/high/high_720p) --
-# two-stages-hq pipeline at 1024x576, 10+3 steps. Fixed; no tier plumbing.
+# two-stages-hq pipeline, 10+3 steps. Fixed; no tier plumbing. Width/height/
+# frame-rate are the caller's choice (validated below); these are just the
+# defaults when none is given.
 LTX_WIDTH = 1024
 LTX_HEIGHT = 576
 LTX_STAGE1_STEPS = 10
 LTX_STAGE2_STEPS = 3
+
+# LTX's video VAE downsamples space by 32x, so the model itself only needs
+# dims divisible by 32 (confirmed against the vendored ltx-2-mlx's own
+# orchestration code: "Encoder spatial height (must be divisible by 32)").
+# BUT this engine always renders with --two-stages-hq, which halves both
+# dims for stage 1 (`half_h, half_w = height // 2, width // 2` in
+# ti2vid_two_stages.py) then upscales x2 back for stage 2 -- so the real
+# constraint here is divisible by 64, not 32. Learned this the hard way:
+# a 32-only-validated non-64 size crashed the LTX subprocess (confirmed via
+# ~/Library/Logs/DiagnosticReports -- python3.11 SIGABRT, stack rooted in
+# mlx::core::gpu::check_error(MTL::CommandBuffer*) -> std::terminate ->
+# abort(), always right after LoRA fusion / before stage-2 denoising,
+# i.e. exactly at the half-res -> full-res handoff). Bounds are a guess at
+# what's sane on this machine, not a hard model limit -- widen if that
+# turns out to be wrong in practice.
+LTX_DIM_STEP = 64
+LTX_MIN_DIM = 256
+LTX_MAX_DIM = 1536
+LTX_MIN_FPS = 8.0
+LTX_MAX_FPS = 30.0
+
+
+def _validate_ltx_dims_ng(width: int, height: int) -> None:
+    for name, v in (("width", width), ("height", height)):
+        if v % LTX_DIM_STEP != 0:
+            raise ValueError(f"{name} must be a multiple of {LTX_DIM_STEP} (got {v})")
+        if not (LTX_MIN_DIM <= v <= LTX_MAX_DIM):
+            raise ValueError(f"{name} must be between {LTX_MIN_DIM} and {LTX_MAX_DIM} (got {v})")
+
+
+def _validate_ltx_fps_ng(frame_rate: float) -> None:
+    if not (LTX_MIN_FPS <= frame_rate <= LTX_MAX_FPS):
+        raise ValueError(f"frame_rate must be between {LTX_MIN_FPS} and {LTX_MAX_FPS} (got {frame_rate})")
 # --two-stages-hq's stage-2 refine step fuses a distilled LoRA that lives
 # inside the model dir; the CLI's own default filename is LTX-2.3's, not
 # 2.5's -- passing the wrong one raises FileNotFoundError (confirmed live).
 LTX_DISTILLED_LORA = "ltx-2.5-22b-distilled-lora-450.safetensors"
 
 
-def _duration_to_frames_ng(seconds: float) -> int:
-    """LTX's temporal compression requires frames % 8 == 1 at 24fps."""
-    blocks = max(1, round(seconds * LTX_FRAME_RATE / 8))
+def _duration_to_frames_ng(seconds: float, frame_rate: float = LTX_FRAME_RATE) -> int:
+    """LTX's temporal compression requires frames % 8 == 1, at whatever
+    frame rate the render targets."""
+    blocks = max(1, round(seconds * frame_rate / 8))
     return blocks * 8 + 1
 
 
@@ -117,6 +159,13 @@ class LtxConfig:
 def _resolve_ltx_binary_ng(config: LtxConfig) -> Optional[str]:
     p = Path(config.binary_path) if config.binary_path else LTX_DEFAULT_BIN
     return str(p) if p.is_file() and os.access(p, os.X_OK) else None
+
+
+def _resolve_ltx_python_ng() -> Optional[str]:
+    """The same venv's own interpreter -- used to run
+    LTX_SCENE_TIMING_HELPER directly against ltx_core_mlx, since the
+    `ltx-2-mlx enhance` CLI subcommand has no raw-question mode."""
+    return str(LTX_DEFAULT_PYTHON) if LTX_DEFAULT_PYTHON.is_file() else None
 
 
 def _resolve_ltx_model_ng(config: LtxConfig) -> Optional[str]:
@@ -167,13 +216,28 @@ def ltx_health_ng() -> dict:
     }
 
 
-def generate_ltx_video_ng(prompt: str, image_path: str, duration_s: float,
+def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: float,
                            output_dir: Path, seed: Optional[int],
                            config: LtxConfig,
+                           width: Optional[int] = None, height: Optional[int] = None,
+                           frame_rate: Optional[float] = None,
                            on_log: Optional[Callable[[str], None]] = None,
                            on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
-    """One subprocess call: reference image + prompt + duration in, one
-    mp4 out."""
+    """One subprocess call: prompt + duration in, one mp4 out. image_path
+    is optional -- when given, it's an image-to-video render (LTX
+    animates that photo); when None, it's a plain text-to-video render.
+    Same CLI/model/quality settings either way -- `ltx-2-mlx generate`
+    already treats --image as optional, so this is just whether the
+    flag is present, not a different pipeline. width/height/frame_rate
+    default to LTX_WIDTH/LTX_HEIGHT/LTX_FRAME_RATE when omitted; when
+    given, they're validated (dims must be multiples of LTX_DIM_STEP,
+    see its docstring)."""
+    width = LTX_WIDTH if width is None else int(width)
+    height = LTX_HEIGHT if height is None else int(height)
+    frame_rate = LTX_FRAME_RATE if frame_rate is None else float(frame_rate)
+    _validate_ltx_dims_ng(width, height)
+    _validate_ltx_fps_ng(frame_rate)
+
     binary = _resolve_ltx_binary_ng(config)
     if not binary:
         raise FileNotFoundError(
@@ -189,10 +253,10 @@ def generate_ltx_video_ng(prompt: str, image_path: str, duration_s: float,
         raise FileNotFoundError(
             f"LTX-2.5's paired Gemma text encoder not found at "
             f"{config.gemma_path or LTX_DEFAULT_GEMMA}")
-    if not Path(image_path).is_file():
+    if image_path is not None and not Path(image_path).is_file():
         raise FileNotFoundError(f"LTX reference image not found at {image_path}")
 
-    frames = _duration_to_frames_ng(duration_s)
+    frames = _duration_to_frames_ng(duration_s, frame_rate)
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
 
     output_dir = Path(output_dir)
@@ -203,24 +267,25 @@ def generate_ltx_video_ng(prompt: str, image_path: str, duration_s: float,
     cmd = [
         binary, "generate",
         "--prompt", prompt,
-        "--image", image_path,
         "--output", str(out_mp4),
         "--model", model,
         "--gemma", gemma,
         "--seed", str(seed),
-        "--height", str(LTX_HEIGHT),
-        "--width", str(LTX_WIDTH),
+        "--height", str(height),
+        "--width", str(width),
         "--frames", str(frames),
-        "--frame-rate", str(LTX_FRAME_RATE),
+        "--frame-rate", str(frame_rate),
         "--two-stages-hq",
         "--stage1-steps", str(LTX_STAGE1_STEPS),
         "--stage2-steps", str(LTX_STAGE2_STEPS),
         "--distilled-lora", LTX_DISTILLED_LORA,
     ]
+    if image_path is not None:
+        cmd += ["--image", image_path]
 
     if on_log:
-        on_log(f"[ltx] launching {frames} frames (~{(frames - 1) / LTX_FRAME_RATE:.1f}s) "
-               f"at {LTX_WIDTH}x{LTX_HEIGHT}, seed={seed}")
+        on_log(f"[ltx] launching {frames} frames (~{(frames - 1) / frame_rate:.1f}s) "
+               f"at {width}x{height}, {frame_rate}fps, seed={seed}")
 
     with _LTX_SUBPROCESS_LOCK:
         proc = subprocess.Popen(
@@ -280,10 +345,11 @@ def generate_ltx_video_ng(prompt: str, image_path: str, duration_s: float,
         "mp4_path": str(out_mp4),
         "seed": seed,
         "engine": "ltx-2.5-mlx-q8",
-        "width": LTX_WIDTH,
-        "height": LTX_HEIGHT,
+        "width": width,
+        "height": height,
+        "frame_rate": frame_rate,
         "frames": frames,
-        "duration_s": (frames - 1) / LTX_FRAME_RATE,
+        "duration_s": (frames - 1) / frame_rate,
     }
 
 
@@ -341,3 +407,206 @@ def enhance_ltx_prompt_ng(prompt: str, config: LtxConfig,
     if not enhanced:
         raise RuntimeError("prompt enhancement returned empty text")
     return enhanced
+
+
+def estimate_scene_seconds_ng(prompt: str, config: LtxConfig,
+                               seed: Optional[int] = None) -> float:
+    """Asks the enhance Gemma checkpoint how long this shot needs, in
+    seconds -- runs LTX_SCENE_TIMING_HELPER via the venv's own python
+    (not the `ltx-2-mlx` binary: its `enhance` subcommand only exposes
+    Gemma's fixed prompt-rewrite templates, with no way to ask a
+    different question). Shares _LTX_SUBPROCESS_LOCK so this never
+    contends with a queued render or an enhance call for the same GPU."""
+    python = _resolve_ltx_python_ng()
+    if not python:
+        raise FileNotFoundError(
+            f"ltx-2-mlx venv python not found at {LTX_DEFAULT_PYTHON}")
+    if not LTX_SCENE_TIMING_HELPER.is_file():
+        raise FileNotFoundError(
+            f"scene-timing helper script not found at {LTX_SCENE_TIMING_HELPER}")
+    gemma = _resolve_ltx_enhance_gemma_ng(config)
+    if not gemma:
+        raise FileNotFoundError(
+            f"Chat Gemma-3 checkpoint for scene timing not found at "
+            f"{config.enhance_gemma_path or LTX_DEFAULT_ENHANCE_GEMMA}")
+
+    seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+    cmd = [
+        python, str(LTX_SCENE_TIMING_HELPER),
+        "--gemma", gemma,
+        "--prompt", prompt,
+        "--seed", str(seed),
+    ]
+
+    with _LTX_SUBPROCESS_LOCK:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=_clean_subprocess_env_ng(),
+            cwd=str(LTX_REPO_DIR),
+            timeout=LTX_ENHANCE_TIMEOUT_S,
+        )
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"scene timing failed (rc={proc.returncode}): "
+            f"{proc.stdout[-500:]}")
+
+    marker = "\nSeconds: "
+    idx = proc.stdout.rfind(marker)
+    if idx == -1:
+        raise RuntimeError(
+            f"scene timing produced no 'Seconds:' output: "
+            f"{proc.stdout[-500:]}")
+    tail = proc.stdout[idx + len(marker):].strip()
+    m = re.search(r"[\d.]+", tail)
+    if not m:
+        raise RuntimeError(f"scene timing returned no parseable number: {tail!r}")
+    seconds = float(m.group(0))
+    return max(0.5, min(30.0, seconds))
+
+
+def discuss_next_scene_ng(turns: list, config: LtxConfig,
+                           seed: Optional[int] = None) -> dict:
+    """Multi-turn "storyboard the next shot" chat against the enhance
+    Gemma checkpoint via LTX_SCENE_DISCUSS_HELPER (same venv-python
+    subprocess pattern as estimate_scene_seconds_ng, for the same reason:
+    no public multi-turn chat method exists on this library, only
+    single-shot prompt-rewrite templates). `turns` is the caller's full
+    conversation so far -- a list of {"role": "user"|"assistant",
+    "content": str} dicts, excluding the system prompt (the helper script
+    always prepends its own). Returns {"raw": <the exact text Gemma
+    produced -- feed this back as the next "assistant" turn>,
+    "discussion": str, "options": [{"label", "prompt", "seconds"}, ...]}."""
+    python = _resolve_ltx_python_ng()
+    if not python:
+        raise FileNotFoundError(
+            f"ltx-2-mlx venv python not found at {LTX_DEFAULT_PYTHON}")
+    if not LTX_SCENE_DISCUSS_HELPER.is_file():
+        raise FileNotFoundError(
+            f"scene-discuss helper script not found at {LTX_SCENE_DISCUSS_HELPER}")
+    gemma = _resolve_ltx_enhance_gemma_ng(config)
+    if not gemma:
+        raise FileNotFoundError(
+            f"Chat Gemma-3 checkpoint for scene discussion not found at "
+            f"{config.enhance_gemma_path or LTX_DEFAULT_ENHANCE_GEMMA}")
+
+    seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+    cmd = [python, str(LTX_SCENE_DISCUSS_HELPER), "--gemma", gemma, "--seed", str(seed)]
+
+    with _LTX_SUBPROCESS_LOCK:
+        proc = subprocess.run(
+            cmd,
+            input=json.dumps(turns),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=_clean_subprocess_env_ng(),
+            cwd=str(LTX_REPO_DIR),
+            timeout=LTX_ENHANCE_TIMEOUT_S,
+        )
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"scene discussion failed (rc={proc.returncode}): "
+            f"{proc.stdout[-500:]}")
+
+    marker = "\nReply: "
+    idx = proc.stdout.rfind(marker)
+    if idx == -1:
+        raise RuntimeError(
+            f"scene discussion produced no 'Reply:' output: "
+            f"{proc.stdout[-500:]}")
+    raw = proc.stdout[idx + len(marker):].strip()
+
+    parsed = _parse_scene_discuss_json_ng(raw)
+    return {"raw": raw, **parsed}
+
+
+def _parse_scene_discuss_json_ng(raw: str) -> dict:
+    """Small chat models sometimes wrap JSON in a markdown fence or add
+    stray text despite being told not to -- this tolerates the fence and
+    otherwise requires the response to parse as the documented shape."""
+    text = raw.strip()
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"scene discussion returned unparseable JSON: {raw[:500]!r}") from e
+
+    if not isinstance(data, dict) or not isinstance(data.get("options"), list) or not data["options"]:
+        raise RuntimeError(f"scene discussion JSON had no usable 'options': {raw[:500]!r}")
+
+    cleaned = []
+    for i, opt in enumerate(data["options"][:3]):
+        if not isinstance(opt, dict):
+            continue
+        prompt = str(opt.get("prompt") or "").strip()
+        if not prompt:
+            continue
+        label = str(opt.get("label") or "").strip() or chr(65 + i)
+        try:
+            seconds = float(opt.get("seconds"))
+        except (TypeError, ValueError):
+            seconds = 3.0
+        cleaned.append({
+            "label": label,
+            "prompt": prompt,
+            "seconds": max(0.5, min(30.0, seconds)),
+        })
+    if not cleaned:
+        raise RuntimeError(f"scene discussion options had no usable prompt text: {raw[:500]!r}")
+
+    return {"discussion": str(data.get("discussion") or "").strip(), "options": cleaned}
+
+
+def chat_with_gemma_ng(turns: list, config: LtxConfig,
+                        seed: Optional[int] = None) -> dict:
+    """Free-form, unconstrained chat against the enhance Gemma checkpoint
+    via LTX_SCENE_CHAT_HELPER (same venv-python subprocess pattern as
+    discuss_next_scene_ng) -- for when the user just wants to talk, not
+    be steered into 3 labeled shot options every reply. `turns` is the
+    caller's full conversation so far -- a list of {"role": "user"|
+    "assistant", "content": str} dicts, excluding the system prompt (the
+    helper script always prepends its own). Returns {"reply": str}."""
+    python = _resolve_ltx_python_ng()
+    if not python:
+        raise FileNotFoundError(
+            f"ltx-2-mlx venv python not found at {LTX_DEFAULT_PYTHON}")
+    if not LTX_SCENE_CHAT_HELPER.is_file():
+        raise FileNotFoundError(
+            f"scene-chat helper script not found at {LTX_SCENE_CHAT_HELPER}")
+    gemma = _resolve_ltx_enhance_gemma_ng(config)
+    if not gemma:
+        raise FileNotFoundError(
+            f"Chat Gemma-3 checkpoint for free chat not found at "
+            f"{config.enhance_gemma_path or LTX_DEFAULT_ENHANCE_GEMMA}")
+
+    seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+    cmd = [python, str(LTX_SCENE_CHAT_HELPER), "--gemma", gemma, "--seed", str(seed)]
+
+    with _LTX_SUBPROCESS_LOCK:
+        proc = subprocess.run(
+            cmd,
+            input=json.dumps(turns),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=_clean_subprocess_env_ng(),
+            cwd=str(LTX_REPO_DIR),
+            timeout=LTX_ENHANCE_TIMEOUT_S,
+        )
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"chat failed (rc={proc.returncode}): {proc.stdout[-500:]}")
+
+    marker = "\nReply: "
+    idx = proc.stdout.rfind(marker)
+    if idx == -1:
+        raise RuntimeError(f"chat produced no 'Reply:' output: {proc.stdout[-500:]}")
+    return {"reply": proc.stdout[idx + len(marker):].strip()}

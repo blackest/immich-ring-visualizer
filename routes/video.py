@@ -1,4 +1,5 @@
 import os
+import io
 import uuid
 import threading
 import numpy as np
@@ -136,6 +137,11 @@ def frame_file(frame_id):
 
 @video_bp.route("/api/build-playback/<job_id>", methods=["POST"])
 def build_playback(job_id):
+    """Reassemble the analyzed clip (rejected frames blanked out) for in-
+    browser scrubbing. OpenCV/ffmpeg need real file paths to write to, so
+    this still bounces through FRAME_STORE, but only as a transient bridge:
+    the result is read back into memory and the files are deleted before
+    the response goes out, so nothing accumulates on disk across jobs."""
     import cv2
 
     job = _analysis_jobs.get(job_id)
@@ -161,50 +167,60 @@ def build_playback(job_id):
 
     blank = np.zeros((height, width, 3), dtype=np.uint8)
 
-    for frame_idx, frame in mv.iter_frames():
-        r = by_frame.get(frame_idx)
+    try:
+        for frame_idx, frame in mv.iter_frames():
+            r = by_frame.get(frame_idx)
 
-        if r and r.get("passed"):
-            writer.write(frame)
-        else:
-            canvas = blank.copy()
-            reason = "NO FACE"
-            if r:
-                reason = "BLURRY" if r.get("failReason") == "blur" else "LOW MATCH" if r.get("failReason") == "sim" else "NO FACE"
-            label = f"{reason}  (frame {frame_idx})"
-            cv2.putText(canvas, label, (24, height - 24), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, (60, 60, 200), 2, cv2.LINE_AA)
-            writer.write(canvas)
+            if r and r.get("passed"):
+                writer.write(frame)
+            else:
+                canvas = blank.copy()
+                reason = "NO FACE"
+                if r:
+                    reason = "BLURRY" if r.get("failReason") == "blur" else "LOW MATCH" if r.get("failReason") == "sim" else "NO FACE"
+                label = f"{reason}  (frame {frame_idx})"
+                cv2.putText(canvas, label, (24, height - 24), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7, (60, 60, 200), 2, cv2.LINE_AA)
+                writer.write(canvas)
 
-    writer.release()
+        writer.release()
 
-    import subprocess
-    import shutil as _shutil
-    ffmpeg_bin = _shutil.which("ffmpeg")
-    if ffmpeg_bin:
-        try:
-            subprocess.run(
-                [ffmpeg_bin, "-y", "-i", raw_path,
-                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                 "-movflags", "+faststart", out_path],
-                check=True, capture_output=True
-            )
-            os.remove(raw_path)
-        except subprocess.CalledProcessError as e:
-            job["playbackPath"] = raw_path
-            return jsonify({
-                "error": f"ffmpeg transcode failed: {e.stderr.decode(errors='ignore')[-400:]}"
-            }), 500
-    else:
-        out_path = raw_path
+        import subprocess
+        import shutil as _shutil
+        ffmpeg_bin = _shutil.which("ffmpeg")
+        final_path = raw_path
+        if ffmpeg_bin:
+            try:
+                subprocess.run(
+                    [ffmpeg_bin, "-y", "-i", raw_path,
+                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                     "-movflags", "+faststart", out_path],
+                    check=True, capture_output=True
+                )
+                final_path = out_path
+            except subprocess.CalledProcessError as e:
+                return jsonify({
+                    "error": f"ffmpeg transcode failed: {e.stderr.decode(errors='ignore')[-400:]}"
+                }), 500
 
-    job["playbackPath"] = out_path
+        with open(final_path, "rb") as f:
+            job["playbackBytes"] = f.read()
+    finally:
+        for p in (raw_path, out_path):
+            if os.path.exists(p):
+                os.remove(p)
+
     return jsonify({"ready": True, "url": f"/api/playback-file/{job_id}", "fps": fps})
 
 @video_bp.route("/api/playback-file/<job_id>")
 def playback_file(job_id):
     job = _analysis_jobs.get(job_id)
-    if not job or not job.get("playbackPath") or not os.path.exists(job["playbackPath"]):
+    if not job or not job.get("playbackBytes"):
         return "", 404
-    return send_file(job["playbackPath"], mimetype="video/mp4")
+    return send_file(
+        io.BytesIO(job["playbackBytes"]),
+        mimetype="video/mp4",
+        conditional=True,
+        etag=False,
+    )
 

@@ -1054,6 +1054,20 @@ html, body {
   cursor: pointer;
 }
 
+/* The mode toggle sits above Animate's whole form with no border --
+   easy to miss next to a bordered reference-image tray/textarea. A
+   little visual weight makes it read as a real switch, not a footnote. */
+#ng-vg-mode-row {
+  font-size: 0.8571rem;
+  color: var(--ng-text);
+  font-weight: 600;
+  border: 1px solid var(--ng-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  background: var(--ng-panel);
+}
+
 #ng-analysis-status {
   font-size: 0.7143rem;
   color: var(--ng-text-dim);
@@ -1811,6 +1825,247 @@ html, body {
 .ng-gen-label:first-child { margin-top: 0; }
 .ng-gen-linkrow { float: right; }
 .ng-gen-linkrow a { color: var(--ng-accent); text-decoration: none; }
+
+/* Animate's duration slider (0.5-30s) -- track gradient goes blue at the
+   fast/short end and red past 20s where MLX renders get slow, ramping
+   between the 10s/20s marks (33.3%/66.7% of the 0-30 range). */
+#ng-vg-duration {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 14px;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+#ng-vg-duration::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right,
+    var(--ng-accent) 0%, var(--ng-accent) 33.33%,
+    var(--ng-danger) 66.67%, var(--ng-danger) 100%);
+}
+#ng-vg-duration::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--ng-text);
+  border: 2px solid var(--ng-panel-raised);
+  cursor: pointer;
+}
+#ng-vg-duration::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right,
+    var(--ng-accent) 0%, var(--ng-accent) 33.33%,
+    var(--ng-danger) 66.67%, var(--ng-danger) 100%);
+}
+#ng-vg-duration::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ng-text);
+  border: 2px solid var(--ng-panel-raised);
+  cursor: pointer;
+}
+#ng-vg-duration::-moz-range-progress { background: transparent; }
+
+/* Animate's "Discuss next scene" panel -- a small chat scoped to
+   storyboarding the next shot, reusing Chat NG's .ng-chat-* bubble
+   classes for the transcript so it looks like the same app. */
+#ng-vg-discuss-panel {
+  margin: 8px 0 14px;
+  padding: 10px;
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  background: var(--ng-panel);
+}
+#ng-vg-discuss-transcript {
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#ng-vg-discuss-transcript:empty { display: none; }
+#ng-vg-discuss-panel .ng-placeholder { margin: 2px 0; }
+/* "Chat with Gemma" panel -- same container/transcript treatment as
+   #ng-vg-discuss-panel above, just never got mirrored when it was added. */
+#ng-vg-chat-panel {
+  margin: 8px 0 14px;
+  padding: 10px;
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  background: var(--ng-panel);
+}
+#ng-vg-chat-transcript {
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#ng-vg-chat-transcript:empty { display: none; }
+#ng-vg-chat-panel .ng-placeholder { margin: 2px 0; }
+.ng-vg-discuss-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.ng-vg-discuss-option {
+  flex: 1 1 180px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  background: var(--ng-panel-raised);
+}
+.ng-vg-discuss-option-head {
+  font-size: 0.7857rem;
+  font-weight: 600;
+  color: var(--ng-accent-active);
+}
+.ng-vg-discuss-option-body {
+  font-size: 0.8571rem;
+  line-height: 1.4;
+  color: var(--ng-text);
+  white-space: pre-wrap;
+}
+.ng-vg-discuss-option .ng-gen-btn { align-self: flex-start; }
+#ng-vg-discuss-panel .ng-gen-input {
+  min-width: 0;
+  margin-bottom: 0;
+}
+#ng-vg-discuss-panel #ng-vg-discuss-send {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 16px;
+  flex: 0 0 auto;
+}
+/* Same flex-row fix as #ng-vg-discuss-panel above, mirrored for the
+   "Chat with Gemma" panel -- identical textarea+button markup, same
+   .ng-gen-input/.ng-gen-btn defaults (width: 100%, margin-top: 8px)
+   that need overriding to sit side-by-side instead of stacking. */
+#ng-vg-chat-panel .ng-gen-input {
+  min-width: 0;
+  margin-bottom: 0;
+}
+#ng-vg-chat-panel #ng-vg-chat-send {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 16px;
+  flex: 0 0 auto;
+}
+
+/* Animate's "Job Log" view -- durable history from job_logsNG.py,
+   replaces #ng-vg-compose while open. See static/videogenNG.js. */
+#ng-vg-log-toggle { margin-bottom: 10px; }
+#ng-vg-log-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 0.9286rem;
+  color: var(--ng-text);
+}
+#ng-vg-log-head #ng-vg-log-back { width: auto; margin: 0; }
+#ng-vg-log-tabs { margin-left: auto; display: flex; gap: 6px; }
+#ng-vg-log-tabs .ng-gen-btn { width: auto; margin: 0; padding: 5px 12px; }
+.ng-vg-log-tab-active {
+  background: var(--ng-accent) !important;
+  color: #0b0b0e !important;
+}
+#ng-vg-log-breadcrumb {
+  font-size: 0.7857rem;
+  color: var(--ng-text-dim);
+  margin-bottom: 10px;
+}
+#ng-vg-log-breadcrumb a { color: var(--ng-accent); text-decoration: none; }
+.ng-vg-log-day-heading {
+  font-size: 0.7857rem;
+  color: var(--ng-text-dim);
+  margin: 14px 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ng-vg-log-day-heading:first-child { margin-top: 0; }
+.ng-vg-log-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.ng-vg-log-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  background: var(--ng-panel-raised);
+}
+.ng-vg-log-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--ng-bg);
+  border: 1px solid var(--ng-border);
+}
+.ng-vg-log-status {
+  align-self: flex-start;
+  font-size: 0.6786rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ng-vg-log-status-completed { color: #4ad46a; }
+.ng-vg-log-status-failed { color: var(--ng-danger); }
+.ng-vg-log-status-cancelled { color: var(--ng-text-dim); }
+.ng-vg-log-prompt {
+  font-size: 0.7857rem;
+  color: var(--ng-text);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.ng-vg-log-meta {
+  font-size: 0.7143rem;
+  color: var(--ng-text-dim);
+  overflow-wrap: anywhere;
+}
+.ng-vg-log-error {
+  font-size: 0.7143rem;
+  color: var(--ng-danger);
+  overflow-wrap: anywhere;
+}
+.ng-vg-log-card video {
+  width: 100%;
+  border-radius: 4px;
+}
+.ng-vg-log-actions { display: flex; }
+.ng-vg-log-actions .ng-gen-btn {
+  width: auto;
+  margin: 0;
+  padding: 5px 10px;
+  font-size: 0.7143rem;
+}
+.ng-vg-log-notes {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--ng-bg);
+  border: 1px solid var(--ng-border);
+  color: var(--ng-text);
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-size: 0.7143rem;
+  line-height: 1.4;
+  resize: vertical;
+  margin-bottom: 0;
+}
 
 .ng-gen-input {
   width: 100%;

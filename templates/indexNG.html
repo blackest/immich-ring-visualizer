@@ -818,6 +818,13 @@
                settings form, same flip as Generate's canvas redesign. -->
           <div id="ng-videogen-pane" style="display: none">
             <div id="ng-vg-unavailable" class="ng-chat-banner" style="display: none"></div>
+            <button
+              type="button"
+              id="ng-vg-log-toggle"
+              class="ng-gen-btn ng-gen-btn-quiet"
+            >
+              📜 Job Log
+            </button>
             <div id="ng-vg-queue-head">
               <span>Render queue <span id="ng-vg-queue-count"></span></span>
               <button
@@ -1262,9 +1269,13 @@
           <!-- Animate view's main region -- reference + prompt + duration
                form. See static/videogenNG.js. -->
           <div id="ng-videogen-main" style="display: none">
-            <div class="ng-gen-canvas">
+            <div id="ng-vg-compose" class="ng-gen-canvas">
+              <label class="ng-checkbox-row" id="ng-vg-mode-row"
+                ><input type="checkbox" id="ng-vg-mode-t2v" /> Text &rarr; video
+                (no reference image)</label
+              >
               <div class="ng-gen-identity-row">
-                <div>
+                <div id="ng-vg-ref-col">
                   <div class="ng-gen-label">Reference image</div>
                   <div id="ng-vg-ref-preview-wrap">
                     <img
@@ -1317,13 +1328,69 @@
                       style="margin-top: 0"
                       >Motion prompt</label
                     >
-                    <button
-                      type="button"
-                      id="ng-vg-enhance-btn"
-                      class="ng-gen-btn ng-gen-btn-quiet"
-                    >
-                      ✨ Enhance with Gemma
-                    </button>
+                    <div style="display: flex; gap: 6px">
+                      <button
+                        type="button"
+                        id="ng-vg-chat-toggle"
+                        class="ng-gen-btn ng-gen-btn-quiet"
+                      >
+                        💬 Chat with Gemma
+                      </button>
+                      <button
+                        type="button"
+                        id="ng-vg-discuss-toggle"
+                        class="ng-gen-btn ng-gen-btn-quiet"
+                      >
+                        🎬 Discuss next scene
+                      </button>
+                      <button
+                        type="button"
+                        id="ng-vg-enhance-btn"
+                        class="ng-gen-btn ng-gen-btn-quiet"
+                      >
+                        ✨ Enhance with Gemma
+                      </button>
+                    </div>
+                  </div>
+                  <div id="ng-vg-chat-panel" style="display: none">
+                    <div id="ng-vg-chat-transcript"></div>
+                    <p id="ng-vg-chat-empty" class="ng-placeholder">
+                      Nothing scene-related required here -- just talk to
+                      Gemma about whatever's on your mind.
+                    </p>
+                    <div style="display: flex; gap: 8px; align-items: flex-end; margin-top: 8px">
+                      <textarea
+                        id="ng-vg-chat-input"
+                        class="ng-gen-input"
+                        rows="2"
+                        style="flex: 1; margin-bottom: 0"
+                        placeholder="Say anything..."
+                      ></textarea>
+                      <button type="button" id="ng-vg-chat-send" class="ng-gen-btn">
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                  <div id="ng-vg-discuss-panel" style="display: none">
+                    <div id="ng-vg-discuss-transcript"></div>
+                    <p id="ng-vg-discuss-empty" class="ng-placeholder">
+                      Describe the last shot and what's next -- e.g.
+                      &ldquo;Clint stares, &lsquo;a man's got to know his
+                      limitations,&rsquo; slow drawl, then a gunfire
+                      cut&rdquo; -- and Gemma will propose 3 options.
+                    </p>
+                    <div style="display: flex; gap: 8px; align-items: flex-end; margin-top: 8px">
+                      <textarea
+                        id="ng-vg-discuss-input"
+                        class="ng-gen-input"
+                        rows="2"
+                        style="flex: 1; margin-bottom: 0"
+                        placeholder="What's the next shot?"
+                      ></textarea>
+                      <button type="button" id="ng-vg-discuss-send" class="ng-gen-btn">
+                        Send
+                      </button>
+                    </div>
                   </div>
                   <textarea
                     id="ng-vg-prompt"
@@ -1333,14 +1400,31 @@
                   ></textarea>
                   <div style="display: flex; gap: 10px; align-items: flex-end">
                     <div style="flex: 1">
-                      <label class="ng-gen-label" for="ng-vg-duration"
-                        >Duration <span id="ng-vg-duration-val">3.0s</span></label
+                      <div
+                        style="
+                          display: flex;
+                          align-items: center;
+                          justify-content: space-between;
+                          gap: 8px;
+                        "
                       >
+                        <label class="ng-gen-label" for="ng-vg-duration" style="margin-top: 0"
+                          >Duration <span id="ng-vg-duration-val">3.0s</span></label
+                        >
+                        <button
+                          type="button"
+                          id="ng-vg-duration-auto"
+                          class="ng-gen-btn ng-gen-btn-quiet"
+                          title="Estimate from the prompt: dialogue pace + word count, plus lead-in/trailing action beats"
+                        >
+                          ⏱ Time it
+                        </button>
+                      </div>
                       <input
                         id="ng-vg-duration"
                         type="range"
                         min="0.5"
-                        max="8"
+                        max="30"
                         step="0.5"
                         value="3"
                         style="width: 100%"
@@ -1354,13 +1438,57 @@
                       placeholder="Seed (random)"
                     />
                   </div>
+                  <div style="display: flex; gap: 10px; align-items: flex-end; margin-top: 8px">
+                    <div style="flex: 1">
+                      <label class="ng-gen-label" for="ng-vg-width" style="margin-top: 0">Width</label>
+                      <input
+                        id="ng-vg-width"
+                        type="number"
+                        class="ng-gen-input"
+                        step="64"
+                        min="256"
+                        max="1536"
+                        value="1024"
+                        style="margin-bottom: 0"
+                      />
+                    </div>
+                    <div style="flex: 1">
+                      <label class="ng-gen-label" for="ng-vg-height" style="margin-top: 0">Height</label>
+                      <input
+                        id="ng-vg-height"
+                        type="number"
+                        class="ng-gen-input"
+                        step="64"
+                        min="256"
+                        max="1536"
+                        value="576"
+                        style="margin-bottom: 0"
+                      />
+                    </div>
+                    <div style="flex: 1">
+                      <label class="ng-gen-label" for="ng-vg-fps" style="margin-top: 0">FPS</label>
+                      <input
+                        id="ng-vg-fps"
+                        type="number"
+                        class="ng-gen-input"
+                        step="1"
+                        min="8"
+                        max="30"
+                        value="24"
+                        style="margin-bottom: 0"
+                      />
+                    </div>
+                  </div>
                   <div
                     class="ng-gen-label"
                     style="margin-top: 8px; text-transform: none; letter-spacing: 0"
                   >
-                    LTX-2.5, fixed high-quality two-stage pipeline, 1024×576.
-                    Roughly 2 minutes of render per second of video on this
-                    machine.
+                    LTX-2.5, fixed high-quality two-stage pipeline. Width/height
+                    must be multiples of 64 (the two-stage pipeline halves
+                    then upscales resolution internally; anything else
+                    crashes the render). Roughly 2 minutes of render per
+                    second of video at 1024×576 on this machine -- larger
+                    sizes take longer.
                   </div>
                 </div>
               </div>
@@ -1377,6 +1505,32 @@
                    rail queue row since there's room to read it while
                    it processes. See static/videogenNG.js. -->
               <div id="ng-vg-log" class="ng-vg-mainlog" style="display: none"></div>
+            </div>
+
+            <!-- Durable job-log history -- separate from the ephemeral
+                 render queue in the rail. Toggled by #ng-vg-log-toggle,
+                 replaces #ng-vg-compose while open. See job_logsNG.py /
+                 the /api/ng/videogen/logs* routes. -->
+            <div id="ng-vg-log-view" style="display: none">
+              <div id="ng-vg-log-head">
+                <button type="button" id="ng-vg-log-back" class="ng-gen-btn ng-gen-btn-quiet">
+                  &larr; Back
+                </button>
+                <span>Job Log</span>
+                <div id="ng-vg-log-tabs">
+                  <button type="button" id="ng-vg-log-tab-recent" class="ng-gen-btn ng-gen-btn-quiet ng-vg-log-tab-active">
+                    Recent
+                  </button>
+                  <button type="button" id="ng-vg-log-tab-archive" class="ng-gen-btn ng-gen-btn-quiet">
+                    Archive
+                  </button>
+                </div>
+              </div>
+              <div id="ng-vg-log-breadcrumb" style="display: none"></div>
+              <p id="ng-vg-log-empty" class="ng-placeholder" style="display: none">
+                Nothing logged here yet.
+              </p>
+              <div id="ng-vg-log-list"></div>
             </div>
           </div>
           <aside id="ng-sidebar" style="display: none">
