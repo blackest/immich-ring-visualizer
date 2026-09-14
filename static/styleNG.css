@@ -127,6 +127,18 @@ html, body {
   flex: 0 0 auto;
 }
 
+/* .ng-btn on an <a> (e.g. #ng-switch-to-single) -- height/padding alone
+   don't box an inline <a> the way they do a <button>, and it needs its
+   underline stripped, so give anchor buttons the missing display/text
+   properties instead of leaving them looking like a plain link. */
+a.ng-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
 .ng-btn:hover:not(:disabled) {
   border-color: var(--ng-accent);
 }
@@ -1052,6 +1064,26 @@ html, body {
   font-size: 0.7857rem;
   color: var(--ng-text-dim);
   cursor: pointer;
+}
+
+/* Focusable paste target for Animate's reference image -- lets a frame
+   copied from a video player (e.g. Chrome's right-click "Copy Video
+   Frame") become the next render's start frame without a save/re-upload
+   round trip. See static/videogenNG.js's paste handler. */
+.ng-vg-ref-paste {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--ng-border);
+  border-radius: 4px;
+  font-size: 0.7857rem;
+  color: var(--ng-text-dim);
+  text-align: center;
+  cursor: text;
+}
+.ng-vg-ref-paste:focus {
+  outline: none;
+  border-color: var(--ng-accent);
+  color: var(--ng-text);
 }
 
 /* The mode toggle sits above Animate's whole form with no border --
@@ -1981,7 +2013,9 @@ html, body {
   min-width: 0;
   margin-bottom: 0;
 }
-#ng-vg-discuss-panel #ng-vg-discuss-send {
+#ng-vg-discuss-panel #ng-vg-discuss-send,
+#ng-vg-discuss-panel #ng-vg-discuss-attach,
+#ng-vg-discuss-panel #ng-vg-discuss-use-ref {
   width: auto;
   margin-top: 0;
   padding: 8px 16px;
@@ -1995,7 +2029,8 @@ html, body {
   min-width: 0;
   margin-bottom: 0;
 }
-#ng-vg-chat-panel #ng-vg-chat-send {
+#ng-vg-chat-panel #ng-vg-chat-send,
+#ng-vg-chat-panel #ng-vg-chat-attach {
   width: auto;
   margin-top: 0;
   padding: 8px 16px;
@@ -2444,7 +2479,8 @@ html, body {
     grid-template-columns: 1fr;
   }
 }
-.ng-gen-queue-row .ng-vg-download {
+.ng-gen-queue-row .ng-vg-download,
+.ng-gen-queue-row .ng-vg-to-video {
   display: inline-flex;
   align-items: center;
   justify-content: center;

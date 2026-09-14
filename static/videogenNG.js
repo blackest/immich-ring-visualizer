@@ -8,12 +8,24 @@
  * no draft-character bookkeeping like Generate has; a video render isn't
  * part of a character's sheet.
  *
- * The ONLY external input read from the rest of the app is a convenience
- * button that pulls whatever image is currently the active reference in
+ * External input read from the rest of the app is a convenience button
+ * that pulls whatever image is currently the active reference in
  * GenerateNG's ref tray (window.GenerateNG.getActiveReference()) -- handy
  * since opening a character from the picker grid already lands its
  * avatar there (see characterPickerNG.js). Otherwise this view is fully
- * self-contained: pick a photo from disk, type a prompt, go.
+ * self-contained: pick a photo from disk, type a prompt, go -- plus a
+ * paste target (#ng-vg-ref-paste, onRefPaste) that takes a frame image
+ * straight off the OS clipboard, for chaining a video player's own
+ * "copy frame" output (e.g. a browser's right-click "Copy Video Frame")
+ * into the next render's start frame without saving it to disk first.
+ *
+ * The one thing it reaches OUT to touch elsewhere: a finished queue row's
+ * "Send to Video page" button hands the render to the active character
+ * tab's CharacterProject.loadVideo() (window.ProjectManager.getActive(),
+ * window.ProjectManager.setTask("video")) -- see sendJobToVideoNG below.
+ * Lets you scrub/extract a frame (e.g. the last one) from your own render
+ * to use as the next shot's reference -- copy it there, paste it into
+ * #ng-vg-ref-paste above, without a manual download/re-upload round trip.
  *
  * Model: a flat FIFO render queue, same shape as Generate's -- each entry
  * is one (reference, prompt, duration) job. The backend's single LTX
@@ -53,6 +65,9 @@
   // conversation history; discussion/options/error are render-only.
   var discussTurns = [];
   var discussBusy = false;
+  // Images attached to the NEXT discuss message -- same shape/rules as
+  // pendingChatImages below, just for the discuss panel's own composer.
+  var pendingDiscussImages = [];
   // "Chat with Gemma" panel: same shape as discussTurns, resent to /chat
   // instead of /discuss -- plain conversation, no options/discussion
   // fields since Gemma isn't steered toward any fixed reply shape here.
@@ -103,6 +118,7 @@
     els.refFile = document.getElementById("ng-vg-ref-file");
     els.refFileBtn = document.getElementById("ng-vg-ref-file-btn");
     els.refUseGen = document.getElementById("ng-vg-ref-use-gen");
+    els.refPaste = document.getElementById("ng-vg-ref-paste");
 
     els.prompt = document.getElementById("ng-vg-prompt");
     els.enhanceBtn = document.getElementById("ng-vg-enhance-btn");
@@ -112,6 +128,10 @@
     els.discussEmpty = document.getElementById("ng-vg-discuss-empty");
     els.discussInput = document.getElementById("ng-vg-discuss-input");
     els.discussSend = document.getElementById("ng-vg-discuss-send");
+    els.discussAttach = document.getElementById("ng-vg-discuss-attach");
+    els.discussFile = document.getElementById("ng-vg-discuss-file");
+    els.discussAttachments = document.getElementById("ng-vg-discuss-attachments");
+    els.discussUseRef = document.getElementById("ng-vg-discuss-use-ref");
     els.chatToggle = document.getElementById("ng-vg-chat-toggle");
     els.chatPanel = document.getElementById("ng-vg-chat-panel");
     els.chatTranscript = document.getElementById("ng-vg-chat-transcript");
@@ -183,6 +203,30 @@
   function onDiskFile() {
     var f = els.refFile.files && els.refFile.files[0];
     if (f) setReference(f);
+  }
+
+  // Lets a frame copied out of any video player (e.g. Chrome's right-click
+  // "Copy Video Frame" on a queue row's own <video> preview, grabbing the
+  // last frame to chain into the next shot) become the reference for the
+  // next render -- click the paste target, Ctrl+V, done. The clipboard
+  // only ever hands over raw image bytes here, never a curation-session
+  // frame id, so this always uploads (unlike useGenerateReference above).
+  function onRefPaste(e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    var file = null;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === "file" && /^image\//.test(items[i].type)) {
+        file = items[i].getAsFile();
+        break;
+      }
+    }
+    if (!file) {
+      setStatus("Clipboard has no image -- copy a frame first, then paste here.");
+      return;
+    }
+    e.preventDefault();
+    setReference(file);
+    setStatus("Reference set from pasted frame.");
   }
 
   function useGenerateReference() {
@@ -455,6 +499,17 @@
     who.textContent = turn.role === "user" ? "You" : "Gemma";
     msg.appendChild(who);
 
+    if (turn.images && turn.images.length) {
+      var thumbs = document.createElement("div");
+      thumbs.className = "ng-chat-msg-thumbs";
+      turn.images.forEach(function (im) {
+        var img = document.createElement("img");
+        img.src = im.dataUrl;
+        thumbs.appendChild(img);
+      });
+      msg.appendChild(thumbs);
+    }
+
     var body = document.createElement("div");
     body.className = "ng-chat-body" + (turn.error ? " ng-chat-error" : "");
     body.textContent = turn.role === "user" ? turn.content : (turn.discussion || turn.content || "");
@@ -526,10 +581,70 @@
     }
   }
 
+  // ---- "Discuss next scene" panel image attachments ----
+  // Same shape/behavior as the "Chat with Gemma" panel's pendingChatImages
+  // below (and downscaleChatImage, reused as-is -- it's not chat-specific
+  // despite the name).
+  function addDiscussImageFiles(fileList) {
+    Array.prototype.forEach.call(fileList || [], function (f) {
+      if (!/^image\//.test(f.type)) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        downscaleChatImage(reader.result, function (dataUrl) {
+          pendingDiscussImages.push({ dataUrl: dataUrl, base64: dataUrl.split(",")[1] });
+          renderDiscussAttachments();
+        });
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+
+  function renderDiscussAttachments() {
+    if (!els.discussAttachments) return;
+    els.discussAttachments.innerHTML = "";
+    els.discussAttachments.hidden = !pendingDiscussImages.length;
+    pendingDiscussImages.forEach(function (im, idx) {
+      var thumb = document.createElement("div");
+      thumb.className = "ng-chat-attach-thumb";
+      var img = document.createElement("img");
+      img.src = im.dataUrl;
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.title = "Remove";
+      rm.addEventListener("click", function () {
+        pendingDiscussImages.splice(idx, 1);
+        renderDiscussAttachments();
+      });
+      thumb.appendChild(img);
+      thumb.appendChild(rm);
+      els.discussAttachments.appendChild(thumb);
+    });
+  }
+
+  // Pulls in the reference image currently loaded in this view's own
+  // form (currentRefBlob) -- the most common case: you just picked/used
+  // a photo as the render's reference and want Gemma looking at the
+  // same frame while storyboarding the next shot.
+  function useCurrentRefForDiscuss() {
+    if (!currentRefBlob) {
+      setStatus("No reference image loaded on this form yet -- pick or pull one first.");
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      downscaleChatImage(reader.result, function (dataUrl) {
+        pendingDiscussImages.push({ dataUrl: dataUrl, base64: dataUrl.split(",")[1] });
+        renderDiscussAttachments();
+      });
+    };
+    reader.readAsDataURL(currentRefBlob);
+  }
+
   function sendDiscussMessage() {
     if (discussBusy) return;
     var raw = (els.discussInput.value || "").trim();
-    if (!raw) return;
+    if (!raw && !pendingDiscussImages.length) return;
 
     // First turn only: fold in the current prompt box as "the last
     // scene" -- matches how you'd naturally describe it ("last scene
@@ -542,14 +657,27 @@
         : "This is the first shot. My rough idea: " + raw;
     }
 
-    discussTurns.push({ role: "user", content: content });
+    var userTurn = { role: "user", content: content };
+    if (pendingDiscussImages.length) userTurn.images = pendingDiscussImages.slice();
+    discussTurns.push(userTurn);
     els.discussInput.value = "";
+    pendingDiscussImages = [];
+    renderDiscussAttachments();
     renderDiscussTranscript();
     setDiscussBusy(true);
 
     var wireTurns = discussTurns
       .filter(function (t) { return !t.error; })
       .map(function (t) { return { role: t.role, content: t.content }; });
+    if (userTurn.images && userTurn.images.length) {
+      // Only the LAST wire turn's images can ever matter -- same mlx_vlm
+      // chat-template limit as the Chat panel (see
+      // ltx_engineNG.chat_with_gemma_ng's docstring) -- and it's always
+      // the one we just pushed.
+      wireTurns[wireTurns.length - 1].images = userTurn.images.map(function (im) {
+        return im.base64;
+      });
+    }
 
     fetch(API + "/discuss", {
       method: "POST",
@@ -1220,6 +1348,46 @@
     }
   }
 
+  // Pulls a finished render's mp4 down and hands it to the current
+  // character tab's CharacterProject.loadVideo() (see videoNG.js) --
+  // same File-object handoff videoUrlLoader() already uses for "Load
+  // from URL" -- then flips that tab to the Video task so its Video
+  // Analysis panel (frame-exact scrubbing, full analysis, "use as
+  // reference") is what's on screen. Lets a render's last frame become
+  // the next shot's reference without a manual download/re-upload
+  // round trip. The ONLY place this file reaches into ProjectManager
+  // (see this file's header docstring) -- everything else here is
+  // self-contained.
+  function sendJobToVideoNG(item, btn) {
+    var active = window.ProjectManager && window.ProjectManager.getActive
+      ? window.ProjectManager.getActive()
+      : null;
+    if (!active) {
+      setStatus("No active character tab to send this video to.");
+      return;
+    }
+    var origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Sending...";
+    fetch(API + "/jobs/" + item.jobId + "/video")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.blob();
+      })
+      .then(function (blob) {
+        var file = new File([blob], "animate-" + item.jobId + ".mp4", { type: "video/mp4" });
+        window.ProjectManager.setTask("video");
+        return active.loadVideo(file);
+      })
+      .catch(function (e) {
+        setStatus("Could not send video: " + e.message);
+      })
+      .then(function () {
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  }
+
   // Keyed by localId -> {sig, el}. Polling re-renders the WHOLE queue every
   // few seconds while a job is in flight, but most items in it haven't
   // changed -- rebuilding their DOM from scratch would recreate their
@@ -1313,6 +1481,20 @@
       dl.style.gridColumn = "1 / -1";
       dl.style.marginTop = "4px";
       row.appendChild(dl);
+
+      // Hands this render to the current character's Video page (loadVideo)
+      // for full analysis / frame-exact scrubbing -- e.g. to grab the last
+      // frame as the reference for the next shot. See sendJobToVideoNG.
+      var toVideo = document.createElement("button");
+      toVideo.type = "button";
+      toVideo.className = "ng-btn ng-vg-to-video";
+      toVideo.textContent = "Send to Video page";
+      toVideo.style.gridColumn = "1 / -1";
+      toVideo.style.marginTop = "4px";
+      toVideo.addEventListener("click", function () {
+        sendJobToVideoNG(item, toVideo);
+      });
+      row.appendChild(toVideo);
     }
 
     return row;
@@ -1363,6 +1545,7 @@
     els.refFileBtn.addEventListener("click", function () { els.refFile.click(); });
     els.refFile.addEventListener("change", onDiskFile);
     els.refUseGen.addEventListener("click", useGenerateReference);
+    if (els.refPaste) els.refPaste.addEventListener("paste", onRefPaste);
     if (els.modeT2v) els.modeT2v.addEventListener("change", onModeChange);
 
     els.duration.addEventListener("input", function () {
@@ -1380,7 +1563,32 @@
           sendDiscussMessage();
         }
       });
+      // Paste an image straight from the clipboard; let plain text paste
+      // through untouched.
+      els.discussInput.addEventListener("paste", function (e) {
+        var items = (e.clipboardData && e.clipboardData.items) || [];
+        var files = [];
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].kind === "file" && /^image\//.test(items[i].type)) {
+            files.push(items[i].getAsFile());
+          }
+        }
+        if (files.length) {
+          e.preventDefault();
+          addDiscussImageFiles(files);
+        }
+      });
     }
+    if (els.discussAttach && els.discussFile) {
+      els.discussAttach.addEventListener("click", function () {
+        els.discussFile.click();
+      });
+      els.discussFile.addEventListener("change", function () {
+        addDiscussImageFiles(els.discussFile.files);
+        els.discussFile.value = "";
+      });
+    }
+    if (els.discussUseRef) els.discussUseRef.addEventListener("click", useCurrentRefForDiscuss);
     if (els.chatToggle) els.chatToggle.addEventListener("click", toggleChatPanel);
     if (els.chatSend) els.chatSend.addEventListener("click", sendChatMessage);
     if (els.chatInput) {

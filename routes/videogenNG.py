@@ -156,7 +156,11 @@ def videogen_discuss_scene_ng():
     enhance Gemma checkpoint. The client owns the running conversation
     and sends the full turn history each call (this is stateless,
     synchronous, no job queue); every reply proposes exactly 3 labeled
-    shot options (prompt + duration) plus a short discussion note."""
+    shot options (prompt + duration) plus a short discussion note.
+
+    The LAST message, if role "user", may carry an optional "images"
+    list (base64-encoded strings, no "data:" prefix) -- same vision path
+    and "only the last turn's images matter" caveat as /chat above."""
     body = request.get_json(silent=True) or {}
     turns = body.get("messages")
     if not isinstance(turns, list) or not turns:
@@ -168,9 +172,16 @@ def videogen_discuss_scene_ng():
     seed = body.get("seed")
     seed = int(seed) if isinstance(seed, (int, float)) else None
 
+    clean_turns = [{"role": t["role"], "content": t["content"]} for t in turns]
+    images = None
+    last = turns[-1]
+    if last.get("role") == "user" and isinstance(last.get("images"), list):
+        images = [im for im in last["images"] if isinstance(im, str) and im]
+        images = images or None
+
     try:
         result = ltx_engineNG.discuss_next_scene_ng(
-            turns, config=ltx_engineNG.LtxConfig(), seed=seed)
+            clean_turns, config=ltx_engineNG.LtxConfig(), seed=seed, images=images)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except subprocess.TimeoutExpired:

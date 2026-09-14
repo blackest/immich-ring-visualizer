@@ -70,6 +70,7 @@ LTX_SCENE_DISCUSS_HELPER = Path(__file__).resolve().parent / "ltx_scene_discuss_
 LTX_SCENE_CHAT_HELPER = Path(__file__).resolve().parent / "ltx_scene_chat_helperNG.py"
 LTX_VISION_ENHANCE_HELPER = Path(__file__).resolve().parent / "ltx_vision_enhance_helperNG.py"
 LTX_VISION_CHAT_HELPER = Path(__file__).resolve().parent / "ltx_vision_chat_helperNG.py"
+LTX_VISION_SCENE_DISCUSS_HELPER = Path(__file__).resolve().parent / "ltx_vision_scene_discuss_helperNG.py"
 LTX_DEFAULT_MODEL = LTX_WEIGHTS_ROOT / "ltx-2.5-mlx-q8"
 # Paired with the DiT tower it was fine-tuned alongside for LTX-2.5 --
 # LTX-2.3's Gemma-3 encoder is NOT interchangeable with this (loads, runs,
@@ -547,7 +548,8 @@ def estimate_scene_seconds_ng(prompt: str, config: LtxConfig,
 
 
 def discuss_next_scene_ng(turns: list, config: LtxConfig,
-                           seed: Optional[int] = None) -> dict:
+                           seed: Optional[int] = None,
+                           images: Optional[list] = None) -> dict:
     """Multi-turn "storyboard the next shot" chat against the enhance
     Gemma checkpoint via LTX_SCENE_DISCUSS_HELPER (same venv-python
     subprocess pattern as estimate_scene_seconds_ng, for the same reason:
@@ -557,7 +559,15 @@ def discuss_next_scene_ng(turns: list, config: LtxConfig,
     "content": str} dicts, excluding the system prompt (the helper script
     always prepends its own). Returns {"raw": <the exact text Gemma
     produced -- feed this back as the next "assistant" turn>,
-    "discussion": str, "options": [{"label", "prompt", "seconds"}, ...]}."""
+    "discussion": str, "options": [{"label", "prompt", "seconds"}, ...]}.
+
+    images, when given, is a list of base64-encoded image strings (no
+    "data:" prefix) belonging to the CURRENT turn only -- routes through
+    _discuss_next_scene_vision_ng instead, same "only the last turn's
+    images are ever visible" caveat as chat_with_gemma_ng."""
+    if images:
+        return _discuss_next_scene_vision_ng(turns, images, config, seed=seed)
+
     python = _resolve_ltx_python_ng()
     if not python:
         raise FileNotFoundError(
@@ -640,6 +650,56 @@ def _parse_scene_discuss_json_ng(raw: str) -> dict:
         raise RuntimeError(f"scene discussion options had no usable prompt text: {raw[:500]!r}")
 
     return {"discussion": str(data.get("discussion") or "").strip(), "options": cleaned}
+
+
+def _discuss_next_scene_vision_ng(turns: list, images: list, config: LtxConfig,
+                                   seed: Optional[int] = None) -> dict:
+    """Vision-aware sibling of discuss_next_scene_ng's text-only path --
+    runs LTX_VISION_SCENE_DISCUSS_HELPER via the venv's own python, same
+    in-memory base64 image handoff as _chat_with_gemma_vision_ng."""
+    python = _resolve_ltx_python_ng()
+    if not python:
+        raise FileNotFoundError(
+            f"ltx-2-mlx venv python not found at {LTX_DEFAULT_PYTHON}")
+    if not LTX_VISION_SCENE_DISCUSS_HELPER.is_file():
+        raise FileNotFoundError(
+            f"vision scene-discuss helper script not found at {LTX_VISION_SCENE_DISCUSS_HELPER}")
+    gemma = _resolve_ltx_enhance_gemma_ng(config)
+    if not gemma:
+        raise FileNotFoundError(
+            f"Chat Gemma-3 checkpoint for scene discussion not found at "
+            f"{config.enhance_gemma_path or LTX_DEFAULT_ENHANCE_GEMMA}")
+
+    seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+    cmd = [python, str(LTX_VISION_SCENE_DISCUSS_HELPER), "--gemma", gemma, "--seed", str(seed)]
+
+    with _LTX_SUBPROCESS_LOCK:
+        proc = subprocess.run(
+            cmd,
+            input=json.dumps({"turns": turns, "images": images}),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=_clean_subprocess_env_ng(),
+            cwd=str(LTX_REPO_DIR),
+            timeout=LTX_ENHANCE_TIMEOUT_S,
+        )
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"vision scene discussion failed (rc={proc.returncode}): "
+            f"{proc.stdout[-500:]}")
+
+    marker = "\nReply: "
+    idx = proc.stdout.rfind(marker)
+    if idx == -1:
+        raise RuntimeError(
+            f"vision scene discussion produced no 'Reply:' output: "
+            f"{proc.stdout[-500:]}")
+    raw = proc.stdout[idx + len(marker):].strip()
+
+    parsed = _parse_scene_discuss_json_ng(raw)
+    return {"raw": raw, **parsed}
 
 
 def chat_with_gemma_ng(turns: list, config: LtxConfig,
