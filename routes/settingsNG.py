@@ -11,11 +11,40 @@ import subprocess
 import sys
 import time
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
-from configNG import SUNO_DIR, SUNO_PORT, TAILSCALE_HOSTNAME
+from configNG import (
+    SUNO_DIR,
+    SUNO_PORT,
+    get_ng_address_settings,
+    get_tailscale_hostname,
+    save_ng_address_settings,
+)
 
 settingsNG_bp = Blueprint("settingsNG", __name__)
+
+
+@settingsNG_bp.route("/api/ng/settings/addresses", methods=["GET"])
+def get_addresses_ng():
+    """List every machine-specific address setting (Ollama/Hermes/Tailscale)
+    with its current effective value and where that value came from --
+    drives the "Addresses" section of the settings modal. Secret values
+    (Hermes API key) are still sent as plain text here since this is a
+    same-origin, single-user local app; the UI masks them on display."""
+    return jsonify({"settings": get_ng_address_settings()})
+
+
+@settingsNG_bp.route("/api/ng/settings/addresses", methods=["POST"])
+def save_addresses_ng():
+    """Persist edited address settings to configNG.NG_SETTINGS_FILE. Body:
+    {key: value, ...} -- a blank value clears that key's override, falling
+    back to its env var / hardcoded default. Takes effect immediately, no
+    restart needed (configNG reads the file fresh on every call)."""
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+    save_ng_address_settings(body)
+    return jsonify({"ok": True, "settings": get_ng_address_settings()})
 
 
 @settingsNG_bp.route("/api/ng/settings/update-ytdlp", methods=["POST"])
@@ -65,7 +94,7 @@ def launch_suno_ng():
     venv) if it isn't already running, and hand back its Tailscale URL.
     Started detached (start_new_session) so it keeps running after this
     request -- and after this Flask process -- exits."""
-    url = f"http://{TAILSCALE_HOSTNAME}:{SUNO_PORT}/"
+    url = f"http://{get_tailscale_hostname()}:{SUNO_PORT}/"
 
     if _port_open("127.0.0.1", SUNO_PORT):
         return jsonify({"ok": True, "already_running": True, "url": url})

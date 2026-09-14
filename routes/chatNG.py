@@ -17,7 +17,7 @@ import json
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
-from configNG import OLLAMA_BASE_URL
+from configNG import get_ollama_base_url
 
 chatNG_bp = Blueprint("chatNG", __name__)
 
@@ -30,31 +30,32 @@ _READ_TIMEOUT = 300
 def _ollama_get(path, timeout=_CONNECT_TIMEOUT):
     import requests
 
-    return requests.get(f"{OLLAMA_BASE_URL}{path}", timeout=timeout)
+    return requests.get(f"{get_ollama_base_url()}{path}", timeout=timeout)
 
 
 @chatNG_bp.route("/api/ng/chat/status", methods=["GET"])
 def chat_status_ng():
     """Is the local Ollama daemon reachable? Drives the Chat view's
     "Ollama isn't running" banner."""
+    base_url = get_ollama_base_url()
     try:
         r = _ollama_get("/api/version")
     except Exception as e:  # noqa: BLE001
         return jsonify({
             "reachable": False,
-            "base_url": OLLAMA_BASE_URL,
+            "base_url": base_url,
             "error": str(e),
         })
     if r.status_code != 200:
         return jsonify({
             "reachable": False,
-            "base_url": OLLAMA_BASE_URL,
+            "base_url": base_url,
             "error": f"HTTP {r.status_code}",
         })
     body = r.json() if r.content else {}
     return jsonify({
         "reachable": True,
-        "base_url": OLLAMA_BASE_URL,
+        "base_url": base_url,
         "version": body.get("version"),
     })
 
@@ -124,7 +125,7 @@ def chat_send_ng():
 
     try:
         upstream = requests.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
+            f"{get_ollama_base_url()}/api/chat",
             json=payload,
             stream=True,
             timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),

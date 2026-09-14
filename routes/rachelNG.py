@@ -25,11 +25,11 @@ import json
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
 from configNG import (
-    HERMES_API_KEY,
-    HERMES_BASE_URL,
-    HERMES_MODEL,
-    HERMES_SESSION_ID,
-    HERMES_SESSION_KEY,
+    get_hermes_api_key,
+    get_hermes_base_url,
+    get_hermes_model,
+    get_hermes_session_id,
+    get_hermes_session_key,
 )
 
 rachelNG_bp = Blueprint("rachelNG", __name__)
@@ -43,9 +43,9 @@ _READ_TIMEOUT = 600
 
 def _auth_headers(extra=None):
     h = {
-        "Authorization": f"Bearer {HERMES_API_KEY}",
-        "X-Hermes-Session-Id": HERMES_SESSION_ID,
-        "X-Hermes-Session-Key": HERMES_SESSION_KEY,
+        "Authorization": f"Bearer {get_hermes_api_key()}",
+        "X-Hermes-Session-Id": get_hermes_session_id(),
+        "X-Hermes-Session-Key": get_hermes_session_key(),
     }
     if extra:
         h.update(extra)
@@ -58,25 +58,26 @@ def rachel_status_ng():
     "can't reach Rachel" banner. Uses the unauthenticated /health probe."""
     import requests
 
+    base_url = get_hermes_base_url()
     try:
-        r = requests.get(f"{HERMES_BASE_URL}/health", timeout=_CONNECT_TIMEOUT)
+        r = requests.get(f"{base_url}/health", timeout=_CONNECT_TIMEOUT)
     except Exception as e:  # noqa: BLE001
         return jsonify({
             "reachable": False,
-            "base_url": HERMES_BASE_URL,
+            "base_url": base_url,
             "error": str(e),
         })
     if r.status_code != 200:
         return jsonify({
             "reachable": False,
-            "base_url": HERMES_BASE_URL,
+            "base_url": base_url,
             "error": f"HTTP {r.status_code}",
         })
     body = r.json() if r.content else {}
     return jsonify({
         "reachable": True,
-        "base_url": HERMES_BASE_URL,
-        "model": HERMES_MODEL,
+        "base_url": base_url,
+        "model": get_hermes_model(),
         "platform": body.get("platform"),
         "version": body.get("version"),
         "status": body.get("status"),
@@ -102,7 +103,7 @@ def rachel_send_ng():
     if not isinstance(messages, list) or not messages:
         return jsonify({"error": "messages must be a non-empty list"}), 400
 
-    payload = {"model": HERMES_MODEL, "messages": messages, "stream": True}
+    payload = {"model": get_hermes_model(), "messages": messages, "stream": True}
     options = body.get("options")
     if isinstance(options, dict):
         temp = options.get("temperature")
@@ -111,7 +112,7 @@ def rachel_send_ng():
 
     try:
         upstream = requests.post(
-            f"{HERMES_BASE_URL}/v1/chat/completions",
+            f"{get_hermes_base_url()}/v1/chat/completions",
             json=payload,
             headers=_auth_headers({"Accept": "text/event-stream"}),
             stream=True,

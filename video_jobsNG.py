@@ -4,11 +4,11 @@
 Twin of sheet_jobsNG.py's queue design, trimmed to what a single
 [image]+prompt+duration job needs: no per-shot list, no preset
 resolution, no character registration. A route hands this module raw
-upload bytes (or None, for a text-to-video job with no reference
-photo); start_video_job_ng() copies them into a private per-job
-directory under VIDEOGEN_DIR before returning, so the route's own
-tempfile can be deleted the instant this call returns -- the job owns
-its reference image for its whole lifetime, not just at enqueue time.
+image bytes (or None, for a text-to-video job with no reference photo);
+start_video_job_ng() writes them straight into a private per-job
+directory under VIDEOGEN_DIR before returning -- this write IS the job's
+reference image for its whole lifetime, not a copy of some separate
+scratch file the route has to manage or clean up.
 
 Same reasoning as sheet_jobsNG for why this is a FIFO queue and not a
 busy-error lock: LTX and HiDream are both one-subprocess-at-a-time
@@ -141,19 +141,27 @@ def _ensure_worker_started() -> None:
         _WORKER_STARTED = True
 
 
-def start_video_job_ng(src_image_path: Optional[str], prompt: str, duration_s: float,
-                        seed: Optional[int] = None,
+def start_video_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
+                        duration_s: float, seed: Optional[int] = None,
                         width: Optional[int] = None, height: Optional[int] = None,
                         frame_rate: Optional[float] = None) -> VideoJobNG:
-    """Copies src_image_path into a fresh per-job directory (the caller's
-    own copy, e.g. a route's upload tempfile, is safe to delete right
-    after this returns) and enqueues the render. Raises synchronously
-    for bad input; engine/subprocess failure surfaces later through
-    job_status_ng(). src_image_path may be None for a text-to-video job
-    -- no reference photo, LTX generates from the prompt alone.
-    width/height/frame_rate default to ltx_engineNG's fixed-tier values
-    when omitted (see ltx_engineNG.LTX_WIDTH/HEIGHT/FRAME_RATE); when
-    given, they're validated the same way generate_ltx_video_ng does."""
+    """Writes image_bytes directly into a fresh per-job directory under
+    VIDEOGEN_DIR -- this write IS the job's own copy, owned for its whole
+    lifetime (read straight off disk by the worker below for the CLI's
+    --image arg, and later archived by job_logsNG once the job finishes).
+    The caller (a route) hands over bytes it already has in memory -- an
+    upload's raw bytes, or a curation-session frame resolved from the
+    in-memory cache -- so this is the ONLY place a reference image
+    touches disk before render time; there is no separate scratch temp
+    file to write-then-delete upstream of this call.
+
+    Raises synchronously for bad input; engine/subprocess failure
+    surfaces later through job_status_ng(). image_bytes may be None for a
+    text-to-video job -- no reference photo, LTX generates from the
+    prompt alone (image_ext is ignored in that case). width/height/
+    frame_rate default to ltx_engineNG's fixed-tier values when omitted
+    (see ltx_engineNG.LTX_WIDTH/HEIGHT/FRAME_RATE); when given, they're
+    validated the same way generate_ltx_video_ng does."""
     prompt = (prompt or "").strip()
     if not prompt:
         raise ValueError("prompt is required")
@@ -166,18 +174,15 @@ def start_video_job_ng(src_image_path: Optional[str], prompt: str, duration_s: f
     ltx._validate_ltx_dims_ng(width, height)
     ltx._validate_ltx_fps_ng(frame_rate)
 
-    has_image = src_image_path is not None
-    src = Path(src_image_path) if has_image else None
-    if has_image and not src.is_file():
-        raise FileNotFoundError(f"reference image not found at {src_image_path}")
+    has_image = image_bytes is not None
 
     _ensure_worker_started()
     job_id = uuid.uuid4().hex[:12]
     job_dir = Path(VIDEOGEN_DIR) / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     if has_image:
-        ext = src.suffix.lower() if src.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") else ".jpg"
-        shutil.copyfile(src, job_dir / f"ref{ext}")
+        ext = image_ext.lower() if image_ext and image_ext.lower() in (".png", ".jpg", ".jpeg", ".webp") else ".jpg"
+        (job_dir / f"ref{ext}").write_bytes(image_bytes)
 
     job = VideoJobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                       seed=seed, job_dir=job_dir, has_image=has_image,

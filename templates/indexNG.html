@@ -101,6 +101,25 @@
             class="ng-settings-output"
             style="display: none"
           ></pre>
+
+          <div class="ng-settings-section-title">Addresses</div>
+          <span class="ng-settings-row-desc ng-settings-section-desc"
+            >Machine-specific endpoints (Ollama, Hermes, Tailscale). Saved
+            here on this machine only -- a blank field falls back to this
+            app's built-in default.</span
+          >
+          <div id="ng-settings-addresses"></div>
+          <div class="ng-settings-row">
+            <span class="ng-settings-row-desc"></span>
+            <button id="ng-settings-save-addresses" class="ng-btn">
+              Save
+            </button>
+          </div>
+          <pre
+            id="ng-settings-addresses-output"
+            class="ng-settings-output"
+            style="display: none"
+          ></pre>
         </div>
       </div>
     </div>
@@ -1356,15 +1375,26 @@
                     <div id="ng-vg-chat-transcript"></div>
                     <p id="ng-vg-chat-empty" class="ng-placeholder">
                       Nothing scene-related required here -- just talk to
-                      Gemma about whatever's on your mind.
+                      Gemma about whatever's on your mind. Attach an image
+                      and Gemma can see it too.
                     </p>
+                    <div id="ng-vg-chat-attachments" class="ng-chat-attachments" hidden></div>
                     <div style="display: flex; gap: 8px; align-items: flex-end; margin-top: 8px">
+                      <input type="file" id="ng-vg-chat-file" accept="image/*" multiple hidden />
+                      <button
+                        type="button"
+                        id="ng-vg-chat-attach"
+                        class="ng-gen-btn ng-gen-btn-quiet"
+                        title="Attach image"
+                      >
+                        📎
+                      </button>
                       <textarea
                         id="ng-vg-chat-input"
                         class="ng-gen-input"
                         rows="2"
                         style="flex: 1; margin-bottom: 0"
-                        placeholder="Say anything..."
+                        placeholder="Say anything... paste or attach an image."
                       ></textarea>
                       <button type="button" id="ng-vg-chat-send" class="ng-gen-btn">
                         Send

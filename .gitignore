@@ -9,9 +9,16 @@ venv/
 # Local database / secrets configuration overrides
 .env
 config.local.py
+ng_settings.json
 
 # Visualizer runtime output & temp stores
 exports/
+exportsNG/
+
+# Local-only archive of retired code -- git history already preserves the
+# originals permanently, so this zip is a browsing convenience, not a
+# backup; no need to duplicate that content into the repo again.
+legacy/
 *.mp4
 *.jpg
 *.png

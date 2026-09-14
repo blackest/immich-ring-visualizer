@@ -8,15 +8,16 @@ no draft-character bookkeeping like Generate has, since a video render
 isn't part of a character's sheet.
 """
 
+import base64
 import os
 import subprocess
-import tempfile
 
 from flask import Blueprint, jsonify, request, send_file
 
 import job_logsNG
 import ltx_engineNG
 import video_jobsNG as video_jobs
+from video_analysisNG import find_cache_frame_ng
 
 videogenNG_bp = Blueprint("videogenNG", __name__)
 
@@ -24,6 +25,41 @@ _CONTENT_TYPE_EXT = {
     "image/jpeg": ".jpg", "image/jpg": ".jpg",
     "image/png": ".png", "image/webp": ".webp",
 }
+
+
+def _resolve_ref_image_bytes():
+    """Resolve the pending reference image's raw bytes (and a normalized
+    extension) without ever re-fetching data this same process already
+    has in memory.
+
+    `ref_frame_id` (e.g. "<job_id>_anchor" or "<job_id>_<frame>", exactly
+    what /api/ng/framefile/<frame_id> serves) is how the frontend refers
+    to a live curation-session frame it pulled into the Animate view's
+    ref tray -- rather than have the browser download those bytes just to
+    immediately re-upload them, this resolves the SAME in-memory cache
+    (find_cache_frame_ng) directly, in-process. Falls back to the
+    uploaded `file` field for anything the server never had in the first
+    place (a local disk pick has no frame_id).
+
+    Returns (bytes, ext) -- ext is one of .png/.jpg/.jpeg/.webp (default
+    .jpg) -- or (None, None) if neither field was sent. Raises
+    LookupError if ref_frame_id was given but has since been evicted from
+    the cache (e.g. the curation session was cleared)."""
+    ref_frame_id = request.form.get("ref_frame_id")
+    if ref_frame_id:
+        img_bytes, mimetype = find_cache_frame_ng(ref_frame_id)
+        if img_bytes is None:
+            raise LookupError(
+                f"reference frame {ref_frame_id!r} is no longer cached -- "
+                f"pick the reference again")
+        return img_bytes, _CONTENT_TYPE_EXT.get((mimetype or "").lower(), ".jpg")
+    fld = request.files.get("file")
+    if fld is not None:
+        ext = os.path.splitext(fld.filename or "")[1].lower()
+        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            ext = _CONTENT_TYPE_EXT.get((fld.mimetype or "").lower(), ".jpg")
+        return fld.read(), ext
+    return None, None
 
 
 @videogenNG_bp.route("/api/ng/videogen/status", methods=["GET"])
@@ -50,19 +86,36 @@ def videogen_status_ng():
 @videogenNG_bp.route("/api/ng/videogen/enhance", methods=["POST"])
 def videogen_enhance_prompt_ng():
     """Gemma rewrites the given prompt into LTX's preferred verbose
-    motion-description style. Synchronous (a few seconds, text only --
-    no video render, no job queue) and returns the enhanced text for
-    the frontend to drop into the prompt box in place of the original."""
-    body = request.get_json(silent=True) or {}
-    prompt = str(body.get("prompt") or "").strip()
+    motion-description style. Synchronous (a few seconds -- no video
+    render, no job queue) and returns the enhanced text for the frontend
+    to drop into the prompt box in place of the original.
+
+    Form fields (multipart, matching /generate): prompt (required),
+    seed (optional int), file (optional -- the reference image) OR
+    ref_frame_id (optional -- a live curation-session frame already
+    cached server-side, see _resolve_ref_image_bytes). When a reference
+    is given, Gemma actually sees it (mlx_vlm's vision path) rather than
+    guessing blind from the prompt alone -- see
+    ltx_engineNG.enhance_ltx_prompt_ng's docstring. Omit both for a
+    text-to-video job with no reference photo, same as /generate. Bytes
+    stay in memory (base64) end to end, never written to disk -- per the
+    no-disk-cache principle, a temp file here would just be a detour for
+    data that starts and ends as an in-memory blob."""
+    prompt = str(request.form.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"error": "prompt is required"}), 400
-    seed = body.get("seed")
-    seed = int(seed) if isinstance(seed, (int, float)) else None
+    seed = request.form.get("seed", type=int)
+
+    try:
+        img_bytes, _ext = _resolve_ref_image_bytes()
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+    image_b64 = base64.b64encode(img_bytes).decode() if img_bytes is not None else None
 
     try:
         enhanced = ltx_engineNG.enhance_ltx_prompt_ng(
-            prompt, config=ltx_engineNG.LtxConfig(), seed=seed)
+            prompt, config=ltx_engineNG.LtxConfig(), seed=seed,
+            image_b64=image_b64)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except subprocess.TimeoutExpired:
@@ -133,7 +186,15 @@ def videogen_chat_ng():
     unlike /discuss, replies aren't steered toward 3 labeled shot
     options; Gemma can talk about anything. Same stateless shape as
     /discuss: the client owns the running conversation and sends the
-    full turn history each call."""
+    full turn history each call.
+
+    The LAST message, if role "user", may carry an optional "images"
+    list (base64-encoded strings, no "data:" prefix) -- Gemma then sees
+    them via mlx_vlm's vision path instead of just being told about them
+    in text (see ltx_engineNG.chat_with_gemma_ng's docstring for why only
+    the last turn's images can ever matter). Images on any earlier
+    message are ignored, not an error -- mlx_vlm's own chat template
+    would silently drop them too."""
     body = request.get_json(silent=True) or {}
     turns = body.get("messages")
     if not isinstance(turns, list) or not turns:
@@ -145,9 +206,16 @@ def videogen_chat_ng():
     seed = body.get("seed")
     seed = int(seed) if isinstance(seed, (int, float)) else None
 
+    clean_turns = [{"role": t["role"], "content": t["content"]} for t in turns]
+    images = None
+    last = turns[-1]
+    if last.get("role") == "user" and isinstance(last.get("images"), list):
+        images = [im for im in last["images"] if isinstance(im, str) and im]
+        images = images or None
+
     try:
         result = ltx_engineNG.chat_with_gemma_ng(
-            turns, config=ltx_engineNG.LtxConfig(), seed=seed)
+            clean_turns, config=ltx_engineNG.LtxConfig(), seed=seed, images=images)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except subprocess.TimeoutExpired:
@@ -159,14 +227,23 @@ def videogen_chat_ng():
 
 @videogenNG_bp.route("/api/ng/videogen/generate", methods=["POST"])
 def videogen_generate_ng():
-    """Form fields: file (multipart -- the reference image; omit it for a
-    text-to-video job with no reference photo), prompt (required),
+    """Form fields: file (multipart -- the reference image) OR
+    ref_frame_id (a live curation-session frame already cached
+    server-side, see _resolve_ref_image_bytes) -- omit both for a
+    text-to-video job with no reference photo. Also: prompt (required),
     duration_s (optional float, default 3.0), seed (optional int,
     random if omitted), width/height (optional ints, multiples of 64 --
     the two-stages-hq pipeline halves then upscales resolution
     internally, so it needs a multiple of 64, not just the VAE's own
     32 -- default the fixed-tier size), frame_rate (optional float,
-    default the fixed-tier fps)."""
+    default the fixed-tier fps).
+
+    No scratch temp file: video_jobs.start_video_job_ng() writes these
+    bytes directly into the job's own permanent-for-its-lifetime
+    directory in one step -- that's the one real disk write a video job
+    needs (the `ltx-2-mlx generate` CLI is an external binary and needs
+    a real --image path, unlike the enhance/chat vision helpers), so
+    there's nothing left to stage in a temp file first."""
     prompt = str(request.form.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"error": "prompt is required"}), 400
@@ -177,38 +254,26 @@ def videogen_generate_ng():
     height = request.form.get("height", type=int)
     frame_rate = request.form.get("frame_rate", type=float)
 
-    fld = request.files.get("file")
-    tmp_path = None
     try:
-        if fld is not None:
-            ext = os.path.splitext(fld.filename or "")[1].lower()
-            if ext not in (".png", ".jpg", ".jpeg", ".webp"):
-                ext = _CONTENT_TYPE_EXT.get((fld.mimetype or "").lower(), ".jpg")
-            with tempfile.NamedTemporaryFile(
-                    prefix="ringvizng_videogen_ref_", suffix=ext, delete=False) as fh:
-                fld.save(fh)
-                tmp_path = fh.name
-        try:
-            job = video_jobs.start_video_job_ng(
-                tmp_path, prompt, duration_s, seed,
-                width=width, height=height, frame_rate=frame_rate)
-        except LookupError as e:
-            return jsonify({"error": str(e)}), 404
-        except FileNotFoundError as e:
-            return jsonify({"error": str(e)}), 404
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
-        return jsonify({
-            "ok": True,
-            "job_id": job.job_id,
-            "poll_url": f"/api/ng/videogen/jobs/{job.job_id}",
-        }), 202
-    finally:
-        if tmp_path:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+        img_bytes, ext = _resolve_ref_image_bytes()
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+
+    try:
+        job = video_jobs.start_video_job_ng(
+            img_bytes, ext or ".jpg", prompt, duration_s, seed,
+            width=width, height=height, frame_rate=frame_rate)
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({
+        "ok": True,
+        "job_id": job.job_id,
+        "poll_url": f"/api/ng/videogen/jobs/{job.job_id}",
+    }), 202
 
 
 @videogenNG_bp.route("/api/ng/videogen/jobs/<job_id>", methods=["GET"])

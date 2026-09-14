@@ -68,6 +68,8 @@ LTX_DEFAULT_PYTHON = LTX_REPO_DIR / "env" / "bin" / "python"
 LTX_SCENE_TIMING_HELPER = Path(__file__).resolve().parent / "ltx_scene_timing_helperNG.py"
 LTX_SCENE_DISCUSS_HELPER = Path(__file__).resolve().parent / "ltx_scene_discuss_helperNG.py"
 LTX_SCENE_CHAT_HELPER = Path(__file__).resolve().parent / "ltx_scene_chat_helperNG.py"
+LTX_VISION_ENHANCE_HELPER = Path(__file__).resolve().parent / "ltx_vision_enhance_helperNG.py"
+LTX_VISION_CHAT_HELPER = Path(__file__).resolve().parent / "ltx_vision_chat_helperNG.py"
 LTX_DEFAULT_MODEL = LTX_WEIGHTS_ROOT / "ltx-2.5-mlx-q8"
 # Paired with the DiT tower it was fine-tuned alongside for LTX-2.5 --
 # LTX-2.3's Gemma-3 encoder is NOT interchangeable with this (loads, runs,
@@ -354,13 +356,28 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
 
 
 def enhance_ltx_prompt_ng(prompt: str, config: LtxConfig,
-                           seed: Optional[int] = None) -> str:
+                           seed: Optional[int] = None,
+                           image_b64: Optional[str] = None) -> str:
     """Runs `ltx-2-mlx enhance` -- Gemma rewrites a short prompt into
     LTX's preferred verbose motion-description style. Text only, no
     video render; always --mode i2v since the Animate view is always
     image-conditioned. Shares _LTX_SUBPROCESS_LOCK with
     generate_ltx_video_ng so this never contends with a queued render
-    for the same GPU."""
+    for the same GPU.
+
+    image_b64, when given (base64, no "data:" prefix), routes through
+    _enhance_ltx_prompt_vision_ng instead of the CLI below. The
+    `ltx-2-mlx enhance` CLI's underlying GemmaLanguageModel loads Gemma
+    through mlx_lm, which is text-only -- its own enhance_i2v docstring
+    admits it "does not pass the image to Gemma" despite the i2v system
+    prompt telling it to analyze one. The vision path loads the exact
+    same Gemma checkpoint through mlx_vlm, which does have a vision
+    tower, and gives it the real pixels -- kept as base64 the whole way
+    through rather than written to a temp file, per the no-disk-cache
+    principle (only real exports belong on disk)."""
+    if image_b64 is not None:
+        return _enhance_ltx_prompt_vision_ng(prompt, image_b64, config, seed=seed)
+
     binary = _resolve_ltx_binary_ng(config)
     if not binary:
         raise FileNotFoundError(
@@ -406,6 +423,67 @@ def enhance_ltx_prompt_ng(prompt: str, config: LtxConfig,
     enhanced = proc.stdout[idx + len(marker):].strip()
     if not enhanced:
         raise RuntimeError("prompt enhancement returned empty text")
+    return enhanced
+
+
+def _enhance_ltx_prompt_vision_ng(prompt: str, image_b64: str, config: LtxConfig,
+                                   seed: Optional[int] = None) -> str:
+    """Vision-aware sibling of enhance_ltx_prompt_ng's CLI path -- runs
+    LTX_VISION_ENHANCE_HELPER via the venv's own python (same subprocess
+    boundary as the scene-timing/discuss/chat helpers) so Gemma can
+    actually see the reference image instead of only being told it's an
+    i2v render. image_b64 travels over the subprocess's stdin and is
+    never written to disk -- mlx_vlm's own image loader accepts a base64
+    data URI directly, so a temp file would buy nothing here. Same
+    _LTX_SUBPROCESS_LOCK, same 'Enhanced:' marker protocol as the
+    text-only path above."""
+    python = _resolve_ltx_python_ng()
+    if not python:
+        raise FileNotFoundError(
+            f"ltx-2-mlx venv python not found at {LTX_DEFAULT_PYTHON}")
+    if not LTX_VISION_ENHANCE_HELPER.is_file():
+        raise FileNotFoundError(
+            f"vision-enhance helper script not found at {LTX_VISION_ENHANCE_HELPER}")
+    gemma = _resolve_ltx_enhance_gemma_ng(config)
+    if not gemma:
+        raise FileNotFoundError(
+            f"Chat Gemma-3 checkpoint for prompt enhancement not found at "
+            f"{config.enhance_gemma_path or LTX_DEFAULT_ENHANCE_GEMMA}")
+
+    seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+    cmd = [
+        python, str(LTX_VISION_ENHANCE_HELPER),
+        "--gemma", gemma,
+        "--prompt", prompt,
+        "--seed", str(seed),
+    ]
+
+    with _LTX_SUBPROCESS_LOCK:
+        proc = subprocess.run(
+            cmd,
+            input=image_b64,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=_clean_subprocess_env_ng(),
+            cwd=str(LTX_REPO_DIR),
+            timeout=LTX_ENHANCE_TIMEOUT_S,
+        )
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"vision prompt enhancement failed (rc={proc.returncode}): "
+            f"{proc.stdout[-500:]}")
+
+    marker = "\nEnhanced: "
+    idx = proc.stdout.rfind(marker)
+    if idx == -1:
+        raise RuntimeError(
+            f"vision prompt enhancement produced no 'Enhanced:' output: "
+            f"{proc.stdout[-500:]}")
+    enhanced = proc.stdout[idx + len(marker):].strip()
+    if not enhanced:
+        raise RuntimeError("vision prompt enhancement returned empty text")
     return enhanced
 
 
@@ -565,14 +643,27 @@ def _parse_scene_discuss_json_ng(raw: str) -> dict:
 
 
 def chat_with_gemma_ng(turns: list, config: LtxConfig,
-                        seed: Optional[int] = None) -> dict:
+                        seed: Optional[int] = None,
+                        images: Optional[list] = None) -> dict:
     """Free-form, unconstrained chat against the enhance Gemma checkpoint
     via LTX_SCENE_CHAT_HELPER (same venv-python subprocess pattern as
     discuss_next_scene_ng) -- for when the user just wants to talk, not
     be steered into 3 labeled shot options every reply. `turns` is the
     caller's full conversation so far -- a list of {"role": "user"|
     "assistant", "content": str} dicts, excluding the system prompt (the
-    helper script always prepends its own). Returns {"reply": str}."""
+    helper script always prepends its own). Returns {"reply": str}.
+
+    images, when given, is a list of base64-encoded image strings (no
+    "data:" prefix) belonging to the CURRENT turn only -- routes through
+    _chat_with_gemma_vision_ng instead. Only the current turn's images
+    can matter: mlx_vlm's chat template places image tokens on just the
+    last user message (see ltx_vision_chat_helperNG.py's docstring), so
+    an image attached earlier in the conversation was never going to be
+    visible to Gemma on a later call anyway -- callers should only ever
+    pass images alongside the newest turn."""
+    if images:
+        return _chat_with_gemma_vision_ng(turns, images, config, seed=seed)
+
     python = _resolve_ltx_python_ng()
     if not python:
         raise FileNotFoundError(
@@ -609,4 +700,52 @@ def chat_with_gemma_ng(turns: list, config: LtxConfig,
     idx = proc.stdout.rfind(marker)
     if idx == -1:
         raise RuntimeError(f"chat produced no 'Reply:' output: {proc.stdout[-500:]}")
+    return {"reply": proc.stdout[idx + len(marker):].strip()}
+
+
+def _chat_with_gemma_vision_ng(turns: list, images: list, config: LtxConfig,
+                                seed: Optional[int] = None) -> dict:
+    """Vision-aware sibling of chat_with_gemma_ng's text-only path -- runs
+    LTX_VISION_CHAT_HELPER via the venv's own python. `images` (base64
+    strings) travel over the subprocess's stdin alongside `turns`, never
+    touching disk: mlx_vlm's own image loader accepts a base64 data URI
+    directly, so there's nothing a temp file would buy here that the
+    bytes already sitting in memory don't -- per this repo's no-disk-cache
+    principle (only real exports belong on disk)."""
+    python = _resolve_ltx_python_ng()
+    if not python:
+        raise FileNotFoundError(
+            f"ltx-2-mlx venv python not found at {LTX_DEFAULT_PYTHON}")
+    if not LTX_VISION_CHAT_HELPER.is_file():
+        raise FileNotFoundError(
+            f"vision-chat helper script not found at {LTX_VISION_CHAT_HELPER}")
+    gemma = _resolve_ltx_enhance_gemma_ng(config)
+    if not gemma:
+        raise FileNotFoundError(
+            f"Chat Gemma-3 checkpoint for free chat not found at "
+            f"{config.enhance_gemma_path or LTX_DEFAULT_ENHANCE_GEMMA}")
+
+    seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+    cmd = [python, str(LTX_VISION_CHAT_HELPER), "--gemma", gemma, "--seed", str(seed)]
+
+    with _LTX_SUBPROCESS_LOCK:
+        proc = subprocess.run(
+            cmd,
+            input=json.dumps({"turns": turns, "images": images}),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=_clean_subprocess_env_ng(),
+            cwd=str(LTX_REPO_DIR),
+            timeout=LTX_ENHANCE_TIMEOUT_S,
+        )
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"vision chat failed (rc={proc.returncode}): {proc.stdout[-500:]}")
+
+    marker = "\nReply: "
+    idx = proc.stdout.rfind(marker)
+    if idx == -1:
+        raise RuntimeError(f"vision chat produced no 'Reply:' output: {proc.stdout[-500:]}")
     return {"reply": proc.stdout[idx + len(marker):].strip()}

@@ -1,12 +1,14 @@
 /**
  * settingsNG.js -- settings-cog modal, top-right of the top bar.
  *
- * First slice of the "settings cog" plan: a single curated venv-
- * maintenance action (update yt-dlp), proving the pattern -- modal +
- * backend action + visible success/failure output -- before adding
- * more actions later. Deliberately not an open-ended "run any command"
- * panel; each action gets its own reviewed backend endpoint
- * (routes/settingsNG.py).
+ * Curated actions (update yt-dlp, launch Suno Vault) plus an "Addresses"
+ * section for the machine-specific endpoints in configNG.NG_ADDRESS_SETTINGS
+ * (Ollama URL, Hermes gateway URL/key/model/session, Tailscale hostname).
+ * Addresses are fetched/saved via routes/settingsNG.py, which persists
+ * them to a gitignored JSON file (configNG.NG_SETTINGS_FILE) -- edits
+ * take effect immediately, no server restart. Deliberately not an
+ * open-ended "run any command" panel; each action gets its own reviewed
+ * backend endpoint.
  *
  * Self-contained: only touches its own DOM (#ng-settings-cog,
  * #ng-settings-modal and children), so it doesn't need to sit in the
@@ -22,9 +24,69 @@
   const outputEl = document.getElementById("ng-settings-ytdlp-output");
   const launchSunoBtn = document.getElementById("ng-settings-launch-suno");
   const sunoOutputEl = document.getElementById("ng-settings-suno-output");
+  const addressesEl = document.getElementById("ng-settings-addresses");
+  const saveAddressesBtn = document.getElementById("ng-settings-save-addresses");
+  const addressesOutputEl = document.getElementById("ng-settings-addresses-output");
+
+  const SOURCE_LABEL = {
+    env: "env var",
+    saved: "saved",
+    default: "default",
+  };
+
+  function renderAddressField(setting) {
+    const wrap = document.createElement("div");
+    wrap.className = "ng-settings-field";
+
+    const head = document.createElement("div");
+    head.className = "ng-settings-field-head";
+    const label = document.createElement("strong");
+    label.textContent = setting.label;
+    const source = document.createElement("span");
+    source.className = "ng-settings-field-source";
+    source.textContent = SOURCE_LABEL[setting.source] || setting.source;
+    head.appendChild(label);
+    head.appendChild(source);
+
+    const desc = document.createElement("span");
+    desc.className = "ng-settings-row-desc";
+    desc.textContent = setting.description || "";
+
+    const input = document.createElement("input");
+    input.type = setting.secret ? "password" : "text";
+    input.dataset.settingKey = setting.key;
+    input.value = setting.value || "";
+    input.placeholder = setting.default || "";
+    if (setting.source === "env") {
+      // An env var always wins over a saved override -- editing here
+      // would silently do nothing, so disable it and say why.
+      input.disabled = true;
+      source.textContent += " (takes precedence, edit not possible here)";
+    }
+
+    wrap.appendChild(head);
+    wrap.appendChild(desc);
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  async function loadAddresses() {
+    addressesEl.textContent = "Loading...";
+    try {
+      const res = await fetch("/api/ng/settings/addresses");
+      const data = await res.json();
+      addressesEl.textContent = "";
+      (data.settings || []).forEach((setting) => {
+        addressesEl.appendChild(renderAddressField(setting));
+      });
+    } catch (e) {
+      addressesEl.textContent = "Failed to load: " + e.message;
+    }
+  }
 
   function openModal() {
     overlay.style.display = "flex";
+    loadAddresses();
   }
 
   function closeModal() {
@@ -84,6 +146,42 @@
     } finally {
       launchSunoBtn.disabled = false;
       launchSunoBtn.textContent = "Launch";
+    }
+  });
+
+  saveAddressesBtn.addEventListener("click", async () => {
+    const values = {};
+    addressesEl.querySelectorAll("input[data-setting-key]").forEach((input) => {
+      if (!input.disabled) values[input.dataset.settingKey] = input.value;
+    });
+
+    saveAddressesBtn.disabled = true;
+    saveAddressesBtn.textContent = "Saving...";
+    addressesOutputEl.style.display = "block";
+    addressesOutputEl.textContent = "Saving...";
+
+    try {
+      const res = await fetch("/api/ng/settings/addresses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const data = await res.json();
+
+      if (data.ok) {
+        addressesOutputEl.textContent = "Saved. Takes effect immediately.";
+        addressesEl.textContent = "";
+        (data.settings || []).forEach((setting) => {
+          addressesEl.appendChild(renderAddressField(setting));
+        });
+      } else {
+        addressesOutputEl.textContent = "Failed: " + (data.error || "unknown error");
+      }
+    } catch (e) {
+      addressesOutputEl.textContent = "Failed: " + e.message;
+    } finally {
+      saveAddressesBtn.disabled = false;
+      saveAddressesBtn.textContent = "Save";
     }
   });
 })();

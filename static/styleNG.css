@@ -1301,7 +1301,8 @@ html, body {
   overflow: hidden;
 }
 .ng-selected-modal-wide { width: min(960px, 94vw); }
-.ng-settings-modal { width: min(480px, 92vw); max-height: none; }
+.ng-settings-modal { width: min(560px, 92vw); max-height: 86vh; }
+.ng-settings-modal .ng-modal-body { overflow-y: auto; flex: 1; min-height: 0; }
 .ng-modal-body { padding: 14px; }
 .ng-settings-row {
   display: flex;
@@ -1317,6 +1318,44 @@ html, body {
 .ng-settings-row-desc {
   font-size: 0.8571rem;
   color: var(--ng-text-dim);
+}
+.ng-settings-section-title {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ng-border);
+  font-weight: 600;
+  color: var(--ng-text);
+}
+.ng-settings-section-desc { display: block; margin: 2px 0 10px; }
+.ng-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+}
+.ng-settings-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ng-settings-field-source {
+  font-size: 0.7143rem;
+  color: var(--ng-text-dim);
+  white-space: nowrap;
+}
+.ng-settings-field input {
+  background: var(--ng-panel-raised);
+  border: 1px solid var(--ng-border);
+  border-radius: 4px;
+  color: var(--ng-text);
+  padding: 5px 8px;
+  font-size: 0.8571rem;
+  font-family: inherit;
+}
+.ng-settings-field input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .ng-settings-output {
   margin-top: 12px;

@@ -29,6 +29,7 @@
 
   var POLL_MS = 3000;
   var API = "/api/ng/videogen";
+  var MAX_IMAGE_DIM = 1568; // downscale above this so payloads stay sane
 
   // ---- module state ----
   var inited = false;
@@ -36,6 +37,15 @@
   var generationDisabled = false;
   var currentRefBlob = null; // File/Blob picked from disk or pulled from Generate
   var currentRefPreviewUrl = null; // object URL for the <img> preview
+  // Set only when currentRefBlob came from a live curation-session frame
+  // (pulled via useGenerateReference(), which fetched it from
+  // /api/ng/framefile/<id> -- an in-memory cache, see video_analysisNG.
+  // find_cache_frame_ng). When set, submit ref_frame_id instead of
+  // re-uploading currentRefBlob: the backend already has these bytes in
+  // the same process, no need to round-trip them over HTTP first. A
+  // local disk pick (onDiskFile) has no server-side frame, so this stays
+  // null for that case -- the blob is genuinely the only copy.
+  var currentRefFrameId = null;
   var queue = []; // [{localId, jobId, status, refPreviewUrl, prompt, durationS, seed, error, videoUrl, logTail}]
   var localSeq = 0;
   // "Discuss next scene" panel: [{role, content, discussion?, options?,
@@ -48,6 +58,12 @@
   // fields since Gemma isn't steered toward any fixed reply shape here.
   var chatTurns = [];
   var chatBusy = false;
+  // Images attached to the NEXT chat message -- [{dataUrl, base64}], same
+  // shape as chatNG.js/rachelNG.js's pendingImages. Only the current
+  // (about-to-be-sent) turn's images are ever sent -- see
+  // ltx_engineNG.chat_with_gemma_ng's docstring for why an image
+  // attached to an earlier turn couldn't be seen by Gemma again anyway.
+  var pendingChatImages = [];
   var pollTimer = null;
 
   // "Job Log" panel: durable history from job_logsNG.py, fetched fresh
@@ -102,6 +118,9 @@
     els.chatEmpty = document.getElementById("ng-vg-chat-empty");
     els.chatInput = document.getElementById("ng-vg-chat-input");
     els.chatSend = document.getElementById("ng-vg-chat-send");
+    els.chatAttach = document.getElementById("ng-vg-chat-attach");
+    els.chatFile = document.getElementById("ng-vg-chat-file");
+    els.chatAttachments = document.getElementById("ng-vg-chat-attachments");
     els.duration = document.getElementById("ng-vg-duration");
     els.durationVal = document.getElementById("ng-vg-duration-val");
     els.durationAuto = document.getElementById("ng-vg-duration-auto");
@@ -129,15 +148,26 @@
     if (els.status) els.status.textContent = msg || "";
   }
 
-  function setReference(blob) {
+  function setReference(blob, frameId) {
     if (currentRefPreviewUrl) URL.revokeObjectURL(currentRefPreviewUrl);
     currentRefBlob = blob;
+    currentRefFrameId = frameId || null;
     currentRefPreviewUrl = URL.createObjectURL(blob);
     if (els.refPreview) {
       els.refPreview.src = currentRefPreviewUrl;
       els.refPreview.style.display = "";
     }
     if (els.refEmpty) els.refEmpty.style.display = "none";
+  }
+
+  // /api/ng/framefile/<job_id>_anchor and /api/ng/framefile/<job_id>_<frame>
+  // are the only URLs Generate's ref tray ever hands back for a "proj"-kind
+  // ref (anchor or a selected frame) -- both resolve, server-side, to
+  // video_analysisNG.find_cache_frame_ng's in-memory cache. A "disk"-kind
+  // ref (a local file the user picked) never matches this.
+  function frameIdFromUrl(url) {
+    var m = /\/api\/ng\/framefile\/([^/?#]+)/.exec(url || "");
+    return m ? m[1] : null;
   }
 
   function isT2vMode() {
@@ -170,7 +200,10 @@
         return r.blob();
       })
       .then(function (blob) {
-        setReference(blob);
+        // Still fetched for the preview thumbnail either way, but when
+        // this resolves to a frame id we submit that instead of
+        // re-uploading the blob -- see setReference's comment.
+        setReference(blob, frameIdFromUrl(gen.url));
         setStatus("");
       })
       .catch(function (e) {
@@ -237,18 +270,29 @@
     }
     var seedRaw = (els.seed.value || "").trim();
     var seed = seedRaw === "" ? null : parseInt(seedRaw, 10);
+    var t2v = isT2vMode();
+    var hasRef = !t2v && !!currentRefBlob;
 
     els.enhanceBtn.disabled = true;
-    setStatus("Enhancing prompt with Gemma...");
+    setStatus(hasRef
+      ? "Enhancing prompt with Gemma (looking at the reference image)..."
+      : "Enhancing prompt with Gemma...");
 
-    var body = { prompt: prompt };
-    if (seed !== null && !isNaN(seed)) body.seed = seed;
+    var form = new FormData();
+    form.append("prompt", prompt);
+    if (seed !== null && !isNaN(seed)) form.append("seed", String(seed));
+    if (hasRef) {
+      if (currentRefFrameId) {
+        // Already cached server-side (a curation-session frame) -- send
+        // the reference, not the bytes we just downloaded.
+        form.append("ref_frame_id", currentRefFrameId);
+      } else {
+        var ext = currentRefBlob.type === "image/png" ? ".png" : ".jpg";
+        form.append("file", currentRefBlob, "reference" + ext);
+      }
+    }
 
-    fetch(API + "/enhance", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
+    fetch(API + "/enhance", { method: "POST", body: form })
       .then(function (res) {
         return res.json().then(function (payload) {
           return { ok: res.ok, payload: payload };
@@ -563,6 +607,67 @@
     if (opening && els.chatInput) els.chatInput.focus();
   }
 
+  // ---- "Chat with Gemma" image attachments ----
+  // Same shape/behavior as chatNG.js's/rachelNG.js's own pendingImages --
+  // duplicated rather than shared since each *NG.js file is self-contained.
+  function addChatImageFiles(fileList) {
+    Array.prototype.forEach.call(fileList || [], function (f) {
+      if (!/^image\//.test(f.type)) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        downscaleChatImage(reader.result, function (dataUrl) {
+          pendingChatImages.push({ dataUrl: dataUrl, base64: dataUrl.split(",")[1] });
+          renderChatAttachments();
+        });
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+
+  function downscaleChatImage(dataUrl, cb) {
+    var img = new Image();
+    img.onload = function () {
+      var w = img.naturalWidth, h = img.naturalHeight;
+      if (w <= MAX_IMAGE_DIM && h <= MAX_IMAGE_DIM) {
+        cb(dataUrl);
+        return;
+      }
+      var scale = MAX_IMAGE_DIM / Math.max(w, h);
+      var canvas = document.createElement("canvas");
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      cb(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = function () {
+      cb(dataUrl); // fall back to the original rather than dropping it
+    };
+    img.src = dataUrl;
+  }
+
+  function renderChatAttachments() {
+    if (!els.chatAttachments) return;
+    els.chatAttachments.innerHTML = "";
+    els.chatAttachments.hidden = !pendingChatImages.length;
+    pendingChatImages.forEach(function (im, idx) {
+      var thumb = document.createElement("div");
+      thumb.className = "ng-chat-attach-thumb";
+      var img = document.createElement("img");
+      img.src = im.dataUrl;
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.title = "Remove";
+      rm.addEventListener("click", function () {
+        pendingChatImages.splice(idx, 1);
+        renderChatAttachments();
+      });
+      thumb.appendChild(img);
+      thumb.appendChild(rm);
+      els.chatAttachments.appendChild(thumb);
+    });
+  }
+
   function buildChatTurnEl(turn) {
     var msg = document.createElement("div");
     msg.className = "ng-chat-msg " + (turn.role === "user" ? "ng-chat-user" : "ng-chat-assistant");
@@ -571,6 +676,17 @@
     who.className = "ng-chat-who";
     who.textContent = turn.role === "user" ? "You" : "Gemma";
     msg.appendChild(who);
+
+    if (turn.images && turn.images.length) {
+      var thumbs = document.createElement("div");
+      thumbs.className = "ng-chat-msg-thumbs";
+      turn.images.forEach(function (im) {
+        var img = document.createElement("img");
+        img.src = im.dataUrl;
+        thumbs.appendChild(img);
+      });
+      msg.appendChild(thumbs);
+    }
 
     var body = document.createElement("div");
     body.className = "ng-chat-body" + (turn.error ? " ng-chat-error" : "");
@@ -618,16 +734,29 @@
   function sendChatMessage() {
     if (chatBusy) return;
     var raw = (els.chatInput.value || "").trim();
-    if (!raw) return;
+    if (!raw && !pendingChatImages.length) return;
 
-    chatTurns.push({ role: "user", content: raw });
+    var userTurn = { role: "user", content: raw };
+    if (pendingChatImages.length) userTurn.images = pendingChatImages.slice();
+    chatTurns.push(userTurn);
     els.chatInput.value = "";
+    pendingChatImages = [];
+    renderChatAttachments();
     renderChatTranscript();
     setChatBusy(true);
 
     var wireTurns = chatTurns
       .filter(function (t) { return !t.error; })
       .map(function (t) { return { role: t.role, content: t.content }; });
+    if (userTurn.images && userTurn.images.length) {
+      // Only the LAST wire turn's images can ever matter -- mlx_vlm's
+      // chat template only places image tokens on the current turn (see
+      // ltx_engineNG.chat_with_gemma_ng's docstring) -- so this is
+      // always the one we just pushed.
+      wireTurns[wireTurns.length - 1].images = userTurn.images.map(function (im) {
+        return im.base64;
+      });
+    }
 
     fetch(API + "/chat", {
       method: "POST",
@@ -1001,8 +1130,12 @@
 
     var form = new FormData();
     if (!t2v) {
-      var ext = currentRefBlob.type === "image/png" ? ".png" : ".jpg";
-      form.append("file", currentRefBlob, "reference" + ext);
+      if (currentRefFrameId) {
+        form.append("ref_frame_id", currentRefFrameId);
+      } else {
+        var ext = currentRefBlob.type === "image/png" ? ".png" : ".jpg";
+        form.append("file", currentRefBlob, "reference" + ext);
+      }
     }
     form.append("prompt", prompt);
     form.append("duration_s", String(durationS));
@@ -1256,6 +1389,30 @@
           e.preventDefault();
           sendChatMessage();
         }
+      });
+      // Paste an image straight from the clipboard; let plain text paste
+      // through untouched.
+      els.chatInput.addEventListener("paste", function (e) {
+        var items = (e.clipboardData && e.clipboardData.items) || [];
+        var files = [];
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].kind === "file" && /^image\//.test(items[i].type)) {
+            files.push(items[i].getAsFile());
+          }
+        }
+        if (files.length) {
+          e.preventDefault();
+          addChatImageFiles(files);
+        }
+      });
+    }
+    if (els.chatAttach && els.chatFile) {
+      els.chatAttach.addEventListener("click", function () {
+        els.chatFile.click();
+      });
+      els.chatFile.addEventListener("change", function () {
+        addChatImageFiles(els.chatFile.files);
+        els.chatFile.value = "";
       });
     }
     if (els.logToggle) els.logToggle.addEventListener("click", toggleLogView);
