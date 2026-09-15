@@ -197,6 +197,18 @@
       this.excludedFrames = new Set(); // frame numbers manually rejected -- excluded from ring even if passed
       this.staticPreviewFrame = null; // folder/image-set jobs only -- a chart-click result row, since there's no live decode to scrub (see renderFramePreview)
 
+      // "Just split into frames" -- no face/sim/blur gatekeeping, a plain
+      // frame-by-frame list instead of a ring (the ring needs pose data
+      // these frames don't have). Independent of this.job/this.ring
+      // above: a project can run a split alongside its normal analysis
+      // without either clobbering the other. Frames are judged by eye,
+      // not filtered automatically, so selection defaults to "none picked
+      // yet" rather than "everything passed."
+      this.splitMode = false; // Start button's split-vs-analyze branch, see wireLeftRailChrome-adjacent wiring
+      this.splitJob = null; // { jobId, status, error, sourceName, frameCount, results, startSec, endSec }
+      this.splitSelectedFrames = new Set();
+      this.splitFavoriteFrames = new Set();
+
       // Pose Picker / Shot Scale Picker state -- ported from viz-render.js's
       // pose/scale picker pools. Per-project (not shared globals) so each
       // tab keeps its own dialed-in target pitch/yaw/scale and its own
@@ -395,6 +407,87 @@
         this.job = { status: "error", error: e.message };
         if (this.isActive) ProjectManager.render();
       }
+    }
+
+    // ---- split: no face/sim/blur gatekeeping, just decode every frame in
+    // range (default: the whole video) and list it -- sibling of
+    // startAnalysis() above, not a mode of it, since the backend job
+    // (run_video_split_ng) has no reference-frame requirement at all. ----
+    async startSplit() {
+      if (!this.video || !this.videoFile) return;
+      this.stopPolling();
+      this.splitSelectedFrames = new Set();
+      this.splitFavoriteFrames = new Set();
+      this.splitJob = {
+        status: "running",
+        sourceName: this.videoFile.name,
+        frameCount: 0,
+        results: [],
+      };
+      ProjectManager.render();
+
+      const form = new FormData();
+      form.append("video", this.videoFile);
+      form.append("cacheFormat", this.cacheFormatPng ? "png" : "jpg");
+      if (this.video.rangeStartSec != null) form.append("startSec", this.video.rangeStartSec);
+      if (this.video.rangeEndSec != null) form.append("endSec", this.video.rangeEndSec);
+
+      try {
+        const res = await fetch("/api/ng/video-split", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          this.splitJob = { status: "error", error: data.error || res.status };
+          if (this.isActive) ProjectManager.render();
+          return;
+        }
+        this.splitJob.jobId = data.jobId;
+        this.pollSplit();
+      } catch (e) {
+        this.splitJob = { status: "error", error: e.message };
+        if (this.isActive) ProjectManager.render();
+      }
+    }
+
+    async pollSplit() {
+      if (!this.splitJob || !this.splitJob.jobId) return;
+      try {
+        const res = await fetch(`/api/ng/video-split-status/${this.splitJob.jobId}`);
+        const data = await res.json();
+
+        if (data.error) {
+          this.splitJob.status = "error";
+          this.splitJob.error = data.error;
+          if (this.isActive) ProjectManager.render();
+          return;
+        }
+
+        this.splitJob.status = data.status;
+        this.splitJob.frameCount = data.frameCount;
+        this.splitJob.results = data.results;
+
+        if (data.status === "running") {
+          if (this.isActive) ProjectManager.render();
+          this._pollTimer = setTimeout(() => this.pollSplit(), 800);
+          return;
+        }
+        if (this.isActive) ProjectManager.render();
+      } catch (e) {
+        this.splitJob.status = "error";
+        this.splitJob.error = e.message;
+        if (this.isActive) ProjectManager.render();
+      }
+    }
+
+    toggleSplitFrameSelection(frame) {
+      if (this.splitSelectedFrames.has(frame)) this.splitSelectedFrames.delete(frame);
+      else this.splitSelectedFrames.add(frame);
+      ProjectManager.saveState();
+    }
+
+    toggleSplitFrameFavorite(frame) {
+      if (this.splitFavoriteFrames.has(frame)) this.splitFavoriteFrames.delete(frame);
+      else this.splitFavoriteFrames.add(frame);
+      ProjectManager.saveState();
     }
 
     // ---- analysis: Load folder / .zip -> same pipeline, over stills ----

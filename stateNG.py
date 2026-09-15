@@ -10,6 +10,8 @@ import threading
 
 _analysis_jobs_ng = {}  # jobId -> {"status": ..., "results": [...], "videoBytes": ..., ...}
 
+_split_jobs_ng = {}  # jobId -> {"status": ..., "results": [...], ...} -- no-analysis frame split, see video_analysisNG.run_video_split_ng
+
 _preview_jobs_ng = {}  # previewId -> {"videoBytes": bytes, "fps": float, "frames": int}
 
 _frame_cache_ng = {}

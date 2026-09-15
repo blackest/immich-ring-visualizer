@@ -13,7 +13,7 @@ import av
 import numpy as np
 
 from detectionNG import get_face_app_ng, get_blur_score_ng, pick_best_face_ng
-from stateNG import _analysis_jobs_ng, _frame_cache_ng, _frame_cache_lock_ng, _face_app_lock_ng
+from stateNG import _analysis_jobs_ng, _split_jobs_ng, _frame_cache_ng, _frame_cache_lock_ng, _face_app_lock_ng
 
 
 def run_video_analysis_ng(job_id, video_bytes, sim_threshold, blur_threshold, ref_frame_idx=1, cache_format="jpg", start_sec=None, end_sec=None):
@@ -94,6 +94,58 @@ def run_video_analysis_ng(job_id, video_bytes, sim_threshold, blur_threshold, re
 
         job["status"] = "done"
         job["resolutionSummary"] = summarize_resolutions_ng(results)
+    except Exception as e:
+        job["status"] = "error"
+        job["error"] = str(e)
+
+
+# A frame-extraction pass with no face/blur/similarity gatekeeping at
+# all -- every frame in range gets written and listed, judged by eye
+# afterward rather than filtered automatically (see run_video_split_ng).
+# Cap exists purely so a long clip's whole-video default can't silently
+# queue tens of thousands of cache writes; narrowing the start/end
+# section (already wired up for the face-analysis path) raises it.
+MAX_SPLIT_FRAMES = 2000
+
+
+def run_video_split_ng(job_id, video_bytes, cache_format="jpg", start_sec=None, end_sec=None):
+    """Just split a video into frame images -- no face detection, no
+    sim/blur thresholds, no reference-frame requirement. Sibling of
+    run_video_analysis_ng for people who want to eyeball focus/clarity
+    themselves (e.g. picking a sharp-enough shot of a subject) rather
+    than have InsightFace gatekeep on similarity to a reference face.
+    start_sec/end_sec reuse the same section-picker the analysis path
+    already has; leaving both None means "the whole video," capped at
+    MAX_SPLIT_FRAMES frames."""
+    job = _split_jobs_ng[job_id]
+    try:
+        mv = MemoryVideo(video_bytes)
+
+        start_frame = int(start_sec * mv.fps) + 1 if start_sec else None
+        end_frame = int(end_sec * mv.fps) + 1 if end_sec else None
+
+        range_start = start_frame or 1
+        range_end = end_frame or mv.frame_count
+        expected = max(0, range_end - range_start + 1)
+        if expected > MAX_SPLIT_FRAMES:
+            job["status"] = "error"
+            job["error"] = (
+                f"That range is ~{expected} frames, over the {MAX_SPLIT_FRAMES}-frame "
+                f"split limit -- narrow the start/end section first."
+            )
+            return
+
+        results = []
+        for frame_idx, frame in mv.iter_frames(start_frame=start_frame, end_frame=end_frame):
+            frame_id = write_cache_frame_ng(job_id, frame_idx, frame, cache_format)
+            fh, fw = frame.shape[:2]
+            results.append({
+                "frame": frame_idx, "frameId": frame_id,
+                "width": fw, "height": fh,
+            })
+            job["results"] = results
+
+        job["status"] = "done"
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)

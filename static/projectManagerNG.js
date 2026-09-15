@@ -293,6 +293,7 @@
       this.renderLeftRail();
       this.renderMain();
       const active = this.getActive();
+      this.renderSplitFramesList(active);
       // Generate view (task === "generate") owns its own rail pane and
       // main region -- it just needs to be told which project is active
       // (for the reference image) and when to show/hide itself.
@@ -442,9 +443,14 @@
             // the (already-placed, see above) video preview/scrubber, so
             // the person can actually watch/judge it and pick a reference
             // frame, instead of a plain "go do something" text placeholder.
+            // The sidebar stays hidden UNLESS a split job has results to
+            // show -- splitJob never produces a ring (no pose data), so
+            // without this the split-frames list would render into the
+            // DOM but never actually become visible.
+            const hasSplitResults = active.splitJob && active.splitJob.results && active.splitJob.results.length > 0;
             mainPlaceholderEl.style.display = "none";
             stageWrapEl.style.display = "none";
-            sidebarEl.style.display = "none";
+            sidebarEl.style.display = hasSplitResults ? "" : "none";
             return;
           }
           showPlaceholder("No analysis yet for “" + active.name + "” — load a video, pick a frame, and press Run Analysis.");
@@ -677,6 +683,47 @@
 
       framesSectionEl.style.display = kept.length ? "" : "none";
       framesSectionCountEl.textContent = kept.length ? `(${kept.length})` : "";
+    },
+
+    // ---- "Just split into frames" list -- sibling of renderRankedList
+    // above, not a variant of it: no sim%/pose (there isn't any, nothing
+    // was filtered), a favorite star instead of a reject button since the
+    // whole point is picking good-by-eye frames rather than rejecting
+    // bad ones. Independent of project.ring, so it renders regardless of
+    // whether a normal analysis ring exists for this project too. See
+    // CharacterProject.startSplit()/toggleSplitFrameFavorite(). ----
+    renderSplitFramesList(project) {
+      listBodySplitEl.innerHTML = "";
+      const results = project && project.splitJob && project.splitJob.results
+        ? project.splitJob.results : [];
+
+      results.forEach((r) => {
+        const row = document.createElement("div");
+        row.className = "ng-list-row";
+        row.dataset.frame = r.frame;
+        const isFavorite = project.splitFavoriteFrames.has(r.frame);
+
+        row.innerHTML = `
+          <input type="checkbox" class="ng-frame-select-cb" data-frame="${r.frame}" ${project.splitSelectedFrames.has(r.frame) ? "checked" : ""} style="margin-right:6px;flex-shrink:0;">
+          <img src="/api/ng/framefile/${r.frameId}" loading="lazy">
+          <div class="info">
+            <div class="fname">frame_${r.frame}</div>
+          </div>
+          <button type="button" class="ng-btn ng-btn-favorite-frame${isFavorite ? " ng-btn-favorite-active" : ""}" data-frame="${r.frame}" title="${isFavorite ? "Unfavorite" : "Favorite"} this frame">${isFavorite ? "★" : "☆"}</button>
+        `;
+        const cb = row.querySelector(".ng-frame-select-cb");
+        cb.addEventListener("change", () => project.toggleSplitFrameSelection(r.frame));
+        const favBtn = row.querySelector(".ng-btn-favorite-frame");
+        favBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          project.toggleSplitFrameFavorite(r.frame);
+          this.renderSplitFramesList(project);
+        });
+        listBodySplitEl.appendChild(row);
+      });
+
+      splitSectionEl.style.display = results.length ? "" : "none";
+      splitSectionCountEl.textContent = results.length ? `(${results.length})` : "";
     },
 
     // ---- Immich stage: same ring-layout approach as the video stage, but

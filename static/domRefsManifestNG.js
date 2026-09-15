@@ -211,6 +211,13 @@
   const framesDeselectAllBtn = document.getElementById("ng-frames-deselect-all");
   const rankedSortRadios = Array.from(document.querySelectorAll(".ng-ranked-sort-cb"));
 
+  // ---- DOM refs: "Just split into frames" sidebar section ----
+  const splitSectionEl = document.getElementById("ng-split-section");
+  const splitSectionCountEl = document.getElementById("ng-split-section-count");
+  const listBodySplitEl = document.getElementById("ng-list-body-split");
+  const splitSelectAllBtn = document.getElementById("ng-split-select-all");
+  const splitDeselectAllBtn = document.getElementById("ng-split-deselect-all");
+
   // ---- DOM refs: Immich matches sidebar section ----
   const immichSectionEl = document.getElementById("ng-immich-section");
   const immichSectionCountEl = document.getElementById("ng-immich-section-count");

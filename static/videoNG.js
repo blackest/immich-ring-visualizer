@@ -106,6 +106,7 @@
   const stopBtn = document.getElementById("ng-btn-stop-frames");
   const nextFrameBtn = document.getElementById("ng-btn-next-frame");
   const startAnalysisBtn = document.getElementById("ng-btn-start-analysis");
+  const splitModeCheckbox = document.getElementById("ng-split-mode-checkbox");
   const popoutVideoBtn = document.getElementById("ng-btn-popout-video");
 
   // ---- Playback modal (pop-out, real <video> element) ----
@@ -539,11 +540,16 @@
 
     analysisStartInput.value = project.video && project.video.rangeStartSec != null ? project.video.rangeStartSec : "";
     analysisEndInput.value = project.video && project.video.rangeEndSec != null ? project.video.rangeEndSec : "";
+    splitModeCheckbox.checked = !!project.splitMode;
 
-    startAnalysisBtn.disabled = !project.video || project.videoLoading || (project.job && project.job.status === "running");
+    const busy = project.splitMode
+      ? (project.splitJob && project.splitJob.status === "running")
+      : (project.job && project.job.status === "running");
+    startAnalysisBtn.disabled = !project.video || project.videoLoading || busy;
+    startAnalysisBtn.textContent = project.splitMode ? "Split Video Into Frames" : "Run Analysis with Selected Frame";
     startAnalysisBtn.title = !project.video
       ? "Load a video and pick a frame first"
-      : (project.job && project.job.status === "running" ? "Analysis already running for this tab" : "");
+      : (busy ? (project.splitMode ? "Split already running for this tab" : "Analysis already running for this tab") : "");
   };
 
   ProjectManager.renderFramePreview = function (project) {
@@ -628,7 +634,16 @@
   });
   startAnalysisBtn.addEventListener("click", () => {
     const active = ProjectManager.getActive();
-    if (active && active.video && active.videoFile) active.startAnalysis();
+    if (!active || !active.video || !active.videoFile) return;
+    if (active.splitMode) active.startSplit();
+    else active.startAnalysis();
+  });
+  splitModeCheckbox.addEventListener("change", () => {
+    const project = ProjectManager.getActive();
+    if (!project) return;
+    project.splitMode = splitModeCheckbox.checked;
+    ProjectManager.saveState();
+    ProjectManager.render();
   });
 
   rewindBtn.addEventListener("click", () => {

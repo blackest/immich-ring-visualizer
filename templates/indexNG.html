@@ -946,6 +946,11 @@
                 >
                   Pop out video
                 </button>
+                <label id="ng-split-mode-label" class="ng-checkbox-row"
+                  ><input type="checkbox" id="ng-split-mode-checkbox" />
+                  Just split into frames (no face analysis) &mdash; defaults
+                  to the whole video, judge sharpness by eye</label
+                >
                 <button
                   class="btn-analyze"
                   id="ng-btn-start-analysis"
@@ -1191,6 +1196,14 @@
                   >
                     + add photo from disk&hellip;
                   </button>
+                  <div
+                    id="ng-gen-ref-paste"
+                    class="ng-gen-ref-paste"
+                    tabindex="0"
+                    title="Click here, then paste (Cmd+V) an image."
+                  >
+                    Paste an image here (Ctrl+V)
+                  </div>
                 </div>
               </div>
 
@@ -1983,6 +1996,36 @@
                   </button>
                 </div>
                 <div id="ng-list-body-frames"></div>
+              </div>
+              <!-- "Just split into frames" results -- no sim%/pose shown
+                   (there isn't any), just a thumbnail, a keep checkbox, and
+                   a favorite star for judging focus/clarity by eye. See
+                   CharacterProject.startSplit() in characterProjectNG.js. -->
+              <div
+                id="ng-split-section"
+                class="ng-list-section"
+                style="display: none"
+              >
+                <div class="ng-list-section-header">
+                  <span class="ng-list-section-title">Split frames</span>
+                  <span
+                    class="ng-list-section-count"
+                    id="ng-split-section-count"
+                  ></span>
+                  <button
+                    class="ng-section-select-all-btn"
+                    id="ng-split-select-all"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    class="ng-section-deselect-all-btn"
+                    id="ng-split-deselect-all"
+                  >
+                    Deselect All
+                  </button>
+                </div>
+                <div id="ng-list-body-split"></div>
               </div>
               <div
                 id="ng-immich-section"

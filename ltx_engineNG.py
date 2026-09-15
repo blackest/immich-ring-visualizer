@@ -85,6 +85,32 @@ LTX_DEFAULT_GEMMA = LTX_WEIGHTS_ROOT / "gemma4-12b-ltx25-q4"
 LTX_DEFAULT_ENHANCE_GEMMA = LTX_WEIGHTS_ROOT / "gemma-3-12b-it-4bit"
 LTX_FRAME_RATE = 24.0
 
+# Optional standalone mlx_vlm.server (see gemma_server.sh) holding the
+# enhance Gemma checkpoint resident instead of reloading it from disk on
+# every chat turn. Purely an optimization: chat_with_gemma_ng tries this
+# first and falls back to the existing per-call subprocess helpers
+# unchanged if nothing's listening here.
+LTX_GEMMA_SERVER_URL = os.environ.get("RINGVIZ_GEMMA_SERVER_URL", "http://127.0.0.1:8811")
+LTX_GEMMA_SERVER_CONNECT_TIMEOUT_S = 3.0
+
+
+def _unload_gemma_server_ng(on_log: Optional[Callable[[str], None]] = None) -> None:
+    """Best-effort: free the standalone Gemma server's resident model
+    before a render takes the GPU, so the two never fight over memory on
+    a machine where they wouldn't both fit (see gemma_server.sh's own
+    docstring). Silently does nothing if the server isn't running -- it
+    not being up is the common case, not an error -- and never raises,
+    since a failed unload attempt must never block a render. She lazy-
+    reloads on her own next chat request, same as any cold start."""
+    import requests
+    try:
+        requests.post(f"{LTX_GEMMA_SERVER_URL}/unload",
+                       timeout=LTX_GEMMA_SERVER_CONNECT_TIMEOUT_S)
+        if on_log:
+            on_log("[gemma] unloaded from the standalone server before render")
+    except requests.exceptions.RequestException:
+        pass
+
 # "high" tier (2nd of phosphene's 4: draft/balanced/high/high_720p) --
 # two-stages-hq pipeline, 10+3 steps. Fixed; no tier plumbing. Width/height/
 # frame-rate are the caller's choice (validated below); these are just the
@@ -291,6 +317,7 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
                f"at {width}x{height}, {frame_rate}fps, seed={seed}")
 
     with _LTX_SUBPROCESS_LOCK:
+        _unload_gemma_server_ng(on_log=on_log)
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -702,25 +729,221 @@ def _discuss_next_scene_vision_ng(turns: list, images: list, config: LtxConfig,
     return {"raw": raw, **parsed}
 
 
+# Same wording as ltx_scene_chat_helperNG.py / ltx_vision_chat_helperNG.py's
+# own SYSTEM_PROMPT -- duplicated here (not imported) because those are
+# standalone scripts meant to run inside the ltx-2-mlx venv as a
+# subprocess, not modules for the main app's own Python environment to
+# import. Keep the two in sync by hand if either wording changes.
+_ASK_RACHEL_INSTRUCTION = (
+    " You have a friend, Rachel, who can look things up in the real world "
+    "for you -- current events, live data, anything your training can't "
+    "know or might have wrong. If you genuinely need that, write a line "
+    "starting with exactly 'ASK_RACHEL:' followed by your question, and "
+    "nothing else in your reply. Only do this when you actually need "
+    "outside information -- not for creative or storyboarding questions "
+    "you can already answer yourself."
+)
+_GEMMA_CHAT_SYSTEM_PROMPT = (
+    "You are Gemma, chatting with a filmmaker who is using you elsewhere in "
+    "this app to storyboard shots for an image-to-video render. Right now "
+    "they just want to talk -- about the project, an idea, or anything else "
+    "on their mind. Reply naturally and conversationally, in plain text. Do "
+    "not force the conversation toward shot options, JSON, or any fixed "
+    "format unless they specifically ask for one."
+) + _ASK_RACHEL_INSTRUCTION
+_GEMMA_VISION_CHAT_SYSTEM_PROMPT = (
+    "You are Gemma, chatting with a filmmaker who is using you elsewhere in "
+    "this app to storyboard shots for an image-to-video render. Right now "
+    "they just want to talk -- about the project, an idea, or anything else "
+    "on their mind, sometimes with a reference image attached. Reply "
+    "naturally and conversationally, in plain text. Do not force the "
+    "conversation toward shot options, JSON, or any fixed format unless "
+    "they specifically ask for one."
+) + _ASK_RACHEL_INSTRUCTION
+
+
+def _chat_with_gemma_server_ng(turns: list, config: LtxConfig,
+                                seed: Optional[int] = None,
+                                images: Optional[list] = None) -> Optional[dict]:
+    """Try the standalone gemma_server.sh (mlx_vlm.server) first. Returns
+    None -- not raises -- when nothing's listening, so callers fall back
+    to the existing subprocess helpers unchanged; only raises once the
+    server has actually accepted the connection and then failed, since a
+    running-but-erroring server is a real failure worth surfacing rather
+    than silently masking behind a slow subprocess retry."""
+    import requests
+
+    gemma = _resolve_ltx_enhance_gemma_ng(config)
+    if not gemma:
+        return None
+
+    system_prompt = _GEMMA_VISION_CHAT_SYSTEM_PROMPT if images else _GEMMA_CHAT_SYSTEM_PROMPT
+    messages = [{"role": "system", "content": system_prompt}]
+    for i, turn in enumerate(turns):
+        content = turn["content"]
+        if images and i == len(turns) - 1 and turn.get("role") == "user":
+            parts = [{"type": "text", "text": content}]
+            for b64 in images:
+                parts.append({"type": "image_url",
+                               "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+            content = parts
+        messages.append({"role": turn["role"], "content": content})
+
+    try:
+        resp = requests.post(
+            f"{LTX_GEMMA_SERVER_URL}/v1/chat/completions",
+            json={
+                "model": gemma,
+                "messages": messages,
+                "max_tokens": 768,
+                "temperature": 0.7,
+                **({"seed": seed} if seed is not None else {}),
+            },
+            timeout=(LTX_GEMMA_SERVER_CONNECT_TIMEOUT_S, LTX_ENHANCE_TIMEOUT_S),
+        )
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        return None
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"Gemma server chat failed (HTTP {resp.status_code}): {resp.text[-500:]}")
+
+    reply = resp.json()["choices"][0]["message"]["content"]
+    if not reply or not reply.strip():
+        raise RuntimeError("Gemma server chat produced empty output")
+    return {"reply": reply.strip()}
+
+
+_ASK_RACHEL_MARKER = "ASK_RACHEL:"
+
+
+def _extract_ask_rachel_ng(reply: str) -> Optional[str]:
+    """Pull the question out of a Gemma reply that used the ASK_RACHEL
+    delegation convention (see _ASK_RACHEL_INSTRUCTION), or None if she
+    didn't ask for anything this turn. Takes everything from the marker
+    to the end of the reply as the question, in case she wrote more
+    after it despite being told not to -- confirmed live that she
+    sometimes keeps chatting past it, which drags Rachel into a longer
+    tangential answer than a strict single-line extraction would allow.
+    Left this way on purpose rather than trimmed to the first line: it's
+    a real personality quirk, not just noise, and worth living with
+    rather than engineering away."""
+    idx = reply.find(_ASK_RACHEL_MARKER)
+    if idx == -1:
+        return None
+    question = reply[idx + len(_ASK_RACHEL_MARKER):].strip()
+    return question or None
+
+
+def ask_rachel_ng(question: str) -> str:
+    """Forward one delegated question to the same Hermes agent gateway
+    Rachel's own chat view (routes/rachelNG.py) talks to -- reusing its
+    auth/config, but as a plain synchronous call instead of that route's
+    browser-facing SSE stream. This is the hand-off Gemma's ASK_RACHEL
+    convention exists for: she has no reliable structured tool-calling of
+    her own (confirmed live -- asked to call a tool, she wrote a fake
+    Python implementation instead of a real call), so delegation goes
+    through plain text on both sides rather than any API-level tool
+    contract.
+
+    Deliberately does NOT send routes/rachelNG.py's X-Hermes-Session-Id/
+    X-Hermes-Session-Key headers -- those exist specifically to load
+    Rachel's persistent memory/context onto a turn (see that route's own
+    comment), which a one-off factual lookup doesn't need and shouldn't
+    pay for. Per Hermes' own API docs, /v1/chat/completions is stateless
+    by default without them -- the full conversation is just whatever's
+    in `messages`, nothing more -- while the full toolset (web search
+    etc.) is still available since that's bound to the API-server
+    config, not to session continuity."""
+    import requests
+    from configNG import get_hermes_api_key, get_hermes_base_url, get_hermes_model
+
+    base_url = get_hermes_base_url()
+    if not base_url:
+        raise RuntimeError("Hermes gateway not configured (hermes_base_url is empty)")
+
+    resp = requests.post(
+        f"{base_url}/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {get_hermes_api_key()}",
+        },
+        json={
+            "model": get_hermes_model(),
+            "messages": [{"role": "user", "content": question}],
+            "stream": False,
+        },
+        # Same generous read timeout as routes/rachelNG.py, and for the
+        # same reason -- the agent can sit for minutes on the first token
+        # (a long tool-use loop plus a big context preamble).
+        timeout=(10, 600),
+    )
+    resp.raise_for_status()
+    answer = resp.json()["choices"][0]["message"]["content"]
+    return answer.strip()
+
+
 def chat_with_gemma_ng(turns: list, config: LtxConfig,
                         seed: Optional[int] = None,
                         images: Optional[list] = None) -> dict:
-    """Free-form, unconstrained chat against the enhance Gemma checkpoint
-    via LTX_SCENE_CHAT_HELPER (same venv-python subprocess pattern as
-    discuss_next_scene_ng) -- for when the user just wants to talk, not
-    be steered into 3 labeled shot options every reply. `turns` is the
-    caller's full conversation so far -- a list of {"role": "user"|
-    "assistant", "content": str} dicts, excluding the system prompt (the
-    helper script always prepends its own). Returns {"reply": str}.
+    """Free-form, unconstrained chat against the enhance Gemma checkpoint,
+    with one round of ASK_RACHEL delegation: if her reply uses that
+    convention (see _ASK_RACHEL_INSTRUCTION), the question is forwarded
+    to Rachel via ask_rachel_ng, the answer is folded back in as one more
+    turn, and Gemma is asked once more for a final reply -- no further
+    delegation on that second pass, so this can never loop. `turns` is
+    the caller's full conversation so far -- a list of {"role": "user"|
+    "assistant", "content": str} dicts, excluding the system prompt
+    (_generate_gemma_reply_ng's paths prepend their own). Returns
+    {"reply": str}, plus {"delegated": {"question": str, "answer": str}}
+    when a hand-off happened, so callers/logs can see it occurred.
 
     images, when given, is a list of base64-encoded image strings (no
-    "data:" prefix) belonging to the CURRENT turn only -- routes through
-    _chat_with_gemma_vision_ng instead. Only the current turn's images
-    can matter: mlx_vlm's chat template places image tokens on just the
-    last user message (see ltx_vision_chat_helperNG.py's docstring), so
-    an image attached earlier in the conversation was never going to be
-    visible to Gemma on a later call anyway -- callers should only ever
-    pass images alongside the newest turn."""
+    "data:" prefix) belonging to the CURRENT turn only -- see
+    _generate_gemma_reply_ng for why only the newest turn's images can
+    ever matter."""
+    result = _generate_gemma_reply_ng(turns, config, seed=seed, images=images)
+    question = _extract_ask_rachel_ng(result["reply"])
+    if question is None:
+        return result
+
+    try:
+        answer = ask_rachel_ng(question)
+    except Exception as e:
+        # Rachel unreachable/misconfigured -- surface Gemma's raw reply
+        # (marker text and all) rather than losing the turn entirely.
+        result["rachel_error"] = str(e)
+        return result
+
+    followup_turns = turns + [
+        {"role": "assistant", "content": result["reply"]},
+        {"role": "user", "content": f"[Rachel says: {answer}]"},
+    ]
+    final = _generate_gemma_reply_ng(followup_turns, config, seed=seed, images=None)
+    final["delegated"] = {"question": question, "answer": answer}
+    return final
+
+
+def _generate_gemma_reply_ng(turns: list, config: LtxConfig,
+                              seed: Optional[int] = None,
+                              images: Optional[list] = None) -> dict:
+    """One Gemma turn, no delegation handling -- tries the standalone
+    gemma_server.sh first (see _chat_with_gemma_server_ng), falling back
+    to LTX_SCENE_CHAT_HELPER (same venv-python subprocess pattern as
+    discuss_next_scene_ng) when nothing's listening there. Returns
+    {"reply": str}.
+
+    images, when given, is a list of base64-encoded image strings (no
+    "data:" prefix) belonging to the CURRENT turn only -- via the server
+    path above, or _chat_with_gemma_vision_ng as a subprocess fallback.
+    Only the current turn's images can matter: mlx_vlm's chat template
+    places image tokens on just the last user message (see
+    ltx_vision_chat_helperNG.py's docstring), so an image attached
+    earlier in the conversation was never going to be visible to Gemma on
+    a later call anyway -- callers should only ever pass images alongside
+    the newest turn."""
+    server_result = _chat_with_gemma_server_ng(turns, config, seed=seed, images=images)
+    if server_result is not None:
+        return server_result
+
     if images:
         return _chat_with_gemma_vision_ng(turns, images, config, seed=seed)
 

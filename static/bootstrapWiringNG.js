@@ -345,6 +345,22 @@
     ProjectManager.saveState();
   });
 
+  // ---- wiring: "Just split into frames" select all / deselect all ----
+  splitSelectAllBtn.addEventListener("click", () => {
+    const active = ProjectManager.getActive();
+    if (!active || !active.splitJob || !active.splitJob.results) return;
+    active.splitJob.results.forEach((r) => active.splitSelectedFrames.add(r.frame));
+    ProjectManager.render();
+    ProjectManager.saveState();
+  });
+  splitDeselectAllBtn.addEventListener("click", () => {
+    const active = ProjectManager.getActive();
+    if (!active) return;
+    active.splitSelectedFrames.clear();
+    ProjectManager.render();
+    ProjectManager.saveState();
+  });
+
   // ---- wiring: Immich matches select all / deselect all ----
   immichSelectAllBtn.addEventListener("click", () => {
     const active = ProjectManager.getActive();
@@ -402,9 +418,21 @@
   // ---- left rail chrome: collapse-all / per-section expand / resize /
   // splitter. Ported from selection-ui.js's wireMiscBlock1() (unchanged
   // from the previous NG pass). ----
+  // Bug (iPad, confirmed live): a width saved from a wider window/
+  // orientation was being reapplied verbatim on load with no ceiling
+  // relative to the CURRENT viewport, and nothing re-checked it on
+  // rotation -- so a rail that fit fine in landscape could eat most of
+  // a narrower portrait screen, and rotating back and forth never
+  // self-corrected since the same stale px value just kept reapplying.
+  // 720 alone isn't a safe ceiling on a ~768-834px iPad in portrait, so
+  // this also caps at a fraction of the live viewport width.
+  function clampRailWidth(px) {
+    return Math.max(240, Math.min(720, window.innerWidth * 0.7, px));
+  }
+
   function wireLeftRailChrome() {
     const savedWidth = localStorage.getItem("immichRingNG:leftPanelWidth");
-    if (savedWidth) leftRailEl.style.width = savedWidth + "px";
+    if (savedWidth) leftRailEl.style.width = clampRailWidth(parseFloat(savedWidth)) + "px";
 
     const savedCollapsedAll = localStorage.getItem("immichRingNG:leftPanelCollapsedAll") === "1";
     if (savedCollapsedAll) {
@@ -440,24 +468,45 @@
     // videoNG.js's header) -- ng-controls-pane is now the rail body's
     // only content, so there's nothing left to split against.
 
+    // Re-clamp whenever the viewport itself changes -- covers rotation
+    // (iPadOS fires `resize` on orientation change, no separate
+    // orientationchange listener needed) as well as a plain window
+    // resize. Without this, a width that was valid a moment ago can
+    // become disproportionate the instant the viewport shrinks, and
+    // nothing would ever pull it back in line.
+    window.addEventListener("resize", () => {
+      if (leftRailEl.classList.contains("collapsed-all")) return;
+      const current = leftRailEl.getBoundingClientRect().width;
+      const clamped = clampRailWidth(current);
+      if (Math.abs(clamped - current) > 0.5) {
+        leftRailEl.style.width = clamped + "px";
+        localStorage.setItem("immichRingNG:leftPanelWidth", Math.round(clamped));
+      }
+    });
+
+    // Pointer Events (not mousedown/mousemove/mouseup) so this also
+    // works with touch on iPad -- confirmed live the old mouse-only
+    // handler left touch users with no way to drag the handle at all,
+    // which is exactly how the width above gets stuck once it's wrong.
     let widthDragging = false;
     let startX = 0;
     let startWidth = 0;
-    resizeHandleEl.addEventListener("mousedown", (e) => {
+    resizeHandleEl.addEventListener("pointerdown", (e) => {
       if (leftRailEl.classList.contains("collapsed-all")) return;
       widthDragging = true;
       resizeHandleEl.classList.add("dragging");
+      resizeHandleEl.setPointerCapture(e.pointerId);
       startX = e.clientX;
       startWidth = leftRailEl.getBoundingClientRect().width;
       document.body.style.cursor = "ew-resize";
       e.preventDefault();
     });
-    document.addEventListener("mousemove", (e) => {
+    resizeHandleEl.addEventListener("pointermove", (e) => {
       if (!widthDragging) return;
-      const newWidth = Math.max(240, Math.min(720, startWidth + (e.clientX - startX)));
+      const newWidth = clampRailWidth(startWidth + (e.clientX - startX));
       leftRailEl.style.width = newWidth + "px";
     });
-    document.addEventListener("mouseup", () => {
+    resizeHandleEl.addEventListener("pointerup", () => {
       if (!widthDragging) return;
       widthDragging = false;
       resizeHandleEl.classList.remove("dragging");

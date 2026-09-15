@@ -202,6 +202,11 @@ a.ng-btn {
   width: 8px;
   height: 100%;
   cursor: ew-resize;
+  /* Without this, touch drag on the handle is interpreted as a page
+     scroll/pan by the browser instead of reaching the pointermove
+     handler in bootstrapWiringNG.js -- needed for the handle to be
+     draggable on iPad at all, not just for a smoother drag. */
+  touch-action: none;
   z-index: 5;
 }
 
@@ -822,8 +827,16 @@ a.ng-btn {
 }
 
 #ng-sidebar {
-  flex: 0 0 340px;
-  width: 340px;
+  /* Fixed 340px had never had to coexist with the main-stage video
+     preview's row of controls before -- only ever shown alongside the
+     ring view, which lays out completely differently. The "Split
+     frames" list (see renderSplitFramesList in projectManagerNG.js) is
+     the first thing that shows the sidebar next to the video preview,
+     and on a narrow viewport a rigid 340px plus the resizable left rail
+     left the preview's controls squeezed into almost no room. Same
+     proportional-shrink treatment as #ng-leftrail's own max-width. */
+  flex: 0 0 clamp(200px, 30vw, 340px);
+  width: clamp(200px, 30vw, 340px);
   background: #0e0e12;
   border-left: 1px solid var(--ng-border);
   overflow: hidden;
@@ -1009,6 +1022,25 @@ a.ng-btn {
   border-color: #e05a5a;
 }
 
+.ng-btn-favorite-frame {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin-left: 6px;
+  flex-shrink: 0;
+  font-size: 0.9286rem;
+  line-height: 1;
+  color: var(--ng-text-dim);
+}
+.ng-btn-favorite-frame:hover {
+  color: #e8c547;
+  border-color: #e8c547;
+}
+.ng-btn-favorite-active {
+  color: #e8c547;
+  border-color: #e8c547;
+}
+
 .ng-anchor-row {
   display: flex;
   align-items: center;
@@ -1081,6 +1113,26 @@ a.ng-btn {
   cursor: text;
 }
 .ng-vg-ref-paste:focus {
+  outline: none;
+  border-color: var(--ng-accent);
+  color: var(--ng-text);
+}
+
+/* Same paste-a-reference-image target as .ng-vg-ref-paste above, for
+   Generate's own reference tray (see generateNG.js's onRefPaste) --
+   kept as its own class rather than reused across tasks, matching how
+   ng-gen-*/ng-vg-* stay separate throughout this file. */
+.ng-gen-ref-paste {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--ng-border);
+  border-radius: 4px;
+  font-size: 0.7857rem;
+  color: var(--ng-text-dim);
+  text-align: center;
+  cursor: text;
+}
+.ng-gen-ref-paste:focus {
   outline: none;
   border-color: var(--ng-accent);
   color: var(--ng-text);

@@ -28,8 +28,8 @@ import numpy as np
 from flask import Blueprint, request, jsonify, Response, send_file
 
 from configNG import FRAME_STORE
-from stateNG import _analysis_jobs_ng, _preview_jobs_ng
-from video_analysisNG import MemoryVideo, run_video_analysis_ng, find_cache_frame_ng
+from stateNG import _analysis_jobs_ng, _split_jobs_ng, _preview_jobs_ng
+from video_analysisNG import MemoryVideo, run_video_analysis_ng, run_video_split_ng, find_cache_frame_ng
 
 videoNG_bp = Blueprint("videoNG", __name__)
 
@@ -200,6 +200,57 @@ def analysis_status_ng(job_id):
         "simThreshold": job.get("simThreshold", 0.1),
         "blurThreshold": job.get("blurThreshold", 1),
         "resolutionSummary": job.get("resolutionSummary"),
+    })
+
+
+@videoNG_bp.route("/api/ng/video-split", methods=["POST"])
+def video_split_ng():
+    """Just split a video into frame images -- no face detection, no
+    sim/blur gatekeeping, for eyeballing focus/clarity by hand instead.
+    Sibling of analyze_video_ng; same re-upload tradeoff, same
+    startSec/endSec section-picker, no refFrame/thresholds since there's
+    no face-similarity pass to configure."""
+    if "video" not in request.files:
+        return jsonify({"error": "video file required"}), 400
+
+    cache_format = "png" if request.form.get("cacheFormat") == "png" else "jpg"
+    start_sec_raw = request.form.get("startSec", "").strip()
+    end_sec_raw = request.form.get("endSec", "").strip()
+    start_sec = float(start_sec_raw) if start_sec_raw else None
+    end_sec = float(end_sec_raw) if end_sec_raw else None
+
+    job_id = uuid.uuid4().hex[:12]
+    video_bytes = request.files["video"].read()
+    source_name = os.path.splitext(request.files["video"].filename or "clip")[0]
+
+    _split_jobs_ng[job_id] = {
+        "status": "running", "results": [], "error": None,
+        "sourceName": source_name,
+        "cacheFormat": cache_format,
+        "startSec": start_sec,
+        "endSec": end_sec,
+    }
+
+    t = threading.Thread(
+        target=run_video_split_ng,
+        args=(job_id, video_bytes, cache_format, start_sec, end_sec),
+        daemon=True
+    )
+    t.start()
+
+    return jsonify({"jobId": job_id})
+
+
+@videoNG_bp.route("/api/ng/video-split-status/<job_id>")
+def video_split_status_ng(job_id):
+    job = _split_jobs_ng.get(job_id)
+    if not job:
+        return jsonify({"error": "unknown job"}), 404
+    return jsonify({
+        "status": job["status"],
+        "error": job.get("error"),
+        "frameCount": len(job["results"]),
+        "results": job["results"],
     })
 
 

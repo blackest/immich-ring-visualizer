@@ -82,6 +82,7 @@
     els.refTray = $("ng-gen-ref-tray");
     els.refFile = $("ng-gen-ref-file");
     els.refFileBtn = $("ng-gen-ref-file-btn");
+    els.refPaste = $("ng-gen-ref-paste");
     els.style = $("ng-gen-style");
     els.sizePreset = $("ng-gen-size-preset");
     els.width = $("ng-gen-width");
@@ -140,6 +141,7 @@
       els.refFile.click();
     });
     els.refFile.addEventListener("change", onDiskFile);
+    if (els.refPaste) els.refPaste.addEventListener("paste", onRefPaste);
 
     els.sizePreset.addEventListener("change", function () {
       var v = els.sizePreset.value;
@@ -599,8 +601,7 @@
     });
   }
 
-  function onDiskFile() {
-    var f = els.refFile.files && els.refFile.files[0];
+  function addDiskFile(f) {
     if (!f) return;
     var n = ++localSeq;
     var diskCount = refs.filter(function (r) {
@@ -614,8 +615,34 @@
       file: f,
     });
     activeRefId = "disk" + n;
-    els.refFile.value = "";
     renderRefTray();
+  }
+
+  function onDiskFile() {
+    var f = els.refFile.files && els.refFile.files[0];
+    addDiskFile(f);
+    els.refFile.value = "";
+  }
+
+  // Same paste-a-reference-image pattern as Animate's #ng-vg-ref-paste
+  // (see videogenNG.js's onRefPaste) -- click the paste target, Cmd+V,
+  // done, instead of a save/re-upload round trip.
+  function onRefPaste(e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    var file = null;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === "file" && /^image\//.test(items[i].type)) {
+        file = items[i].getAsFile();
+        break;
+      }
+    }
+    if (!file) {
+      setStatus("Clipboard has no image -- copy one first, then paste here.");
+      return;
+    }
+    e.preventDefault();
+    addDiskFile(file);
+    setStatus("Reference added from pasted image.");
   }
 
   // ---- settings ----
