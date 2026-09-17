@@ -12,6 +12,11 @@ _analysis_jobs_ng = {}  # jobId -> {"status": ..., "results": [...], "videoBytes
 
 _split_jobs_ng = {}  # jobId -> {"status": ..., "results": [...], ...} -- no-analysis frame split, see video_analysisNG.run_video_split_ng
 
+_hdmulti_jobs_ng = {}  # jobId -> {"status": ..., "error": ..., "pngPath": ..., "seed": ...} -- HiDream edit/multi-ref, see routes/hdmultiNG.py
+
+_comfy_extracts_ng = {}  # extractId -> {"graph": {...}} -- a workflow extracted from a PNG's embedded metadata, see routes/comfyNG.py
+_comfy_jobs_ng = {}  # jobId -> {"promptId": ..., "status": ..., "resultFilename": ...} -- a submitted ComfyUI run, see routes/comfyNG.py
+
 _preview_jobs_ng = {}  # previewId -> {"videoBytes": bytes, "fps": float, "frames": int}
 
 _frame_cache_ng = {}

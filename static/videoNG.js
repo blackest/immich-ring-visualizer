@@ -248,7 +248,15 @@
       ngRailVideoPreviewSlotEl.appendChild(ngMainVideoPreviewEl);
       ngMainVideoPreviewEl.classList.add("ng-video-preview-compact");
     } else {
-      mainEl.appendChild(ngMainVideoPreviewEl);
+      // Not a plain appendChild: #ng-sidebar is a static child of #ng-main
+      // that sits BEFORE this point in the DOM, and #ng-main is a flex
+      // row, so appending would put the preview after (right of) the
+      // sidebar whenever both are visible at once -- exactly the "split
+      // frames list shows left of the video player" bug (confirmed
+      // live). insertBefore keeps the preview ahead of the sidebar
+      // regardless of whether the sidebar happens to be shown, matching
+      // the normal main-stage-then-sidebar layout everywhere else.
+      mainEl.insertBefore(ngMainVideoPreviewEl, sidebarEl);
       ngMainVideoPreviewEl.classList.remove("ng-video-preview-compact");
     }
     ngMainVideoPreviewEl.style.display = "flex";

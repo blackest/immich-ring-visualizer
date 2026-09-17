@@ -49,6 +49,7 @@
   // poses/custom poses, not persisted -- these are meant as one-off
   // tweaks before queuing, not standing preferences).
   var shotOverrides = {};
+  var poseModalPose = null; // the pose object {key, pose, isCustom} currently open in the edit modal, or null
   var refs = []; // [{id, label, kind: "proj"|"disk", url, file?}]
   var activeRefId = null;
   var queue = []; // [{localId, character, key, refId, refUrl, settings, jobId, status, thumbUrl, error}]
@@ -101,6 +102,11 @@
     els.customPoseCancel = $("ng-gen-custom-pose-cancel");
     els.customPoseSave = $("ng-gen-custom-pose-save");
     els.poseList = $("ng-gen-pose-list");
+    els.poseModal = $("ng-gen-pose-modal");
+    els.poseModalTitle = $("ng-gen-pose-modal-title");
+    els.poseModalClose = $("ng-gen-pose-modal-close");
+    els.poseModalTextarea = $("ng-gen-pose-modal-textarea");
+    els.poseModalReset = $("ng-gen-pose-modal-reset");
     els.addBtn = $("ng-gen-add-btn");
     els.status = $("ng-gen-status");
     els.queue = $("ng-gen-queue");
@@ -142,6 +148,28 @@
     });
     els.refFile.addEventListener("change", onDiskFile);
     if (els.refPaste) els.refPaste.addEventListener("paste", onRefPaste);
+
+    if (els.poseModalClose) els.poseModalClose.addEventListener("click", closePoseEditModal);
+    if (els.poseModal) {
+      els.poseModal.addEventListener("click", function (e) {
+        if (e.target === els.poseModal) closePoseEditModal();
+      });
+    }
+    if (els.poseModalTextarea) {
+      els.poseModalTextarea.addEventListener("input", function () {
+        if (!poseModalPose) return;
+        var s = (shotOverrides[poseModalPose.key] = shotOverrides[poseModalPose.key] || {});
+        s.promptOverride = els.poseModalTextarea.value;
+      });
+    }
+    if (els.poseModalReset) {
+      els.poseModalReset.addEventListener("click", function () {
+        if (!poseModalPose) return;
+        var s = (shotOverrides[poseModalPose.key] = shotOverrides[poseModalPose.key] || {});
+        s.promptOverride = null;
+        fetchPromptPreview(poseModalPose, els.poseModalTextarea);
+      });
+    }
 
     els.sizePreset.addEventListener("change", function () {
       var v = els.sizePreset.value;
@@ -377,6 +405,32 @@
       });
   }
 
+  function openPoseEditModal(p) {
+    if (!els.poseModal) return;
+    poseModalPose = p;
+    var st = shotOverrides[p.key];
+    els.poseModalTitle.textContent = "Edit prompt — " + p.key;
+    els.poseModalTextarea.value = "";
+    els.poseModalTextarea.placeholder = "";
+    els.poseModal.style.display = "flex";
+    els.poseModalTextarea.focus();
+    if (st && typeof st.promptOverride === "string") {
+      els.poseModalTextarea.value = st.promptOverride;
+    } else {
+      fetchPromptPreview(p, els.poseModalTextarea);
+    }
+  }
+
+  function closePoseEditModal() {
+    if (!els.poseModal) return;
+    els.poseModal.style.display = "none";
+    poseModalPose = null;
+    // The toggle's "(edited)" marker only gets (re)read on the next
+    // renderPoseList() pass -- cheap enough to just always re-render
+    // on close rather than track per-row whether it needs updating.
+    renderPoseList();
+  }
+
   function renderPoseList() {
     if (!els.poseList) return;
     var checked = {};
@@ -456,55 +510,20 @@
       body.appendChild(pSpan);
 
       // ---- editable prompt (pre-submission preview + override) ----
+      // Opens in a shared modal rather than expanding inline -- inline
+      // made whichever card was open taller than its neighbors in the
+      // fixed grid, on top of just being a cramped 4-row textarea to
+      // edit a full prompt in (John's report). See openPoseEditModal().
       var promptToggle = document.createElement("div");
       promptToggle.className = "pose-prompt-toggle";
-      var isOpen = !!(st0 && st0.open);
-      promptToggle.textContent = (isOpen ? "▾ " : "▸ ") + "edit prompt";
-      body.appendChild(promptToggle);
-
-      var editorWrap = document.createElement("div");
-      editorWrap.className = "pose-prompt-editor";
-      editorWrap.style.display = isOpen ? "" : "none";
-      var ta = document.createElement("textarea");
-      ta.rows = 4;
-      if (st0 && typeof st0.promptOverride === "string") ta.value = st0.promptOverride;
-      editorWrap.appendChild(ta);
-
-      var actions = document.createElement("div");
-      actions.className = "pose-prompt-actions";
-      var resetBtn = document.createElement("button");
-      resetBtn.type = "button";
-      resetBtn.className = "ng-gen-reroll";
-      resetBtn.textContent = "reset to default";
-      actions.appendChild(resetBtn);
-      editorWrap.appendChild(actions);
-      body.appendChild(editorWrap);
-
-      ta.addEventListener("click", function (e) {
-        e.stopPropagation();
-      });
-      ta.addEventListener("input", function () {
-        var s = (shotOverrides[p.key] = shotOverrides[p.key] || {});
-        s.promptOverride = ta.value;
-      });
-      resetBtn.addEventListener("click", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        var s = (shotOverrides[p.key] = shotOverrides[p.key] || {});
-        s.promptOverride = null;
-        fetchPromptPreview(p, ta);
-      });
+      var hasOverride = !!(st0 && typeof st0.promptOverride === "string");
+      promptToggle.textContent = "edit prompt" + (hasOverride ? " (edited)" : "");
       promptToggle.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        var s = (shotOverrides[p.key] = shotOverrides[p.key] || {});
-        s.open = !s.open;
-        promptToggle.textContent = (s.open ? "▾ " : "▸ ") + "edit prompt";
-        editorWrap.style.display = s.open ? "" : "none";
-        if (s.open && typeof s.promptOverride !== "string") {
-          fetchPromptPreview(p, ta);
-        }
+        openPoseEditModal(p);
       });
+      body.appendChild(promptToggle);
 
       row.appendChild(body);
 
@@ -580,6 +599,16 @@
     renderRefTray();
   }
 
+  function removeDiskRef(id) {
+    var idx = refs.findIndex(function (r) { return r.id === id; });
+    if (idx === -1) return;
+    refs.splice(idx, 1);
+    if (activeRefId === id) {
+      activeRefId = refs.length ? refs[0].id : null;
+    }
+    renderRefTray();
+  }
+
   function renderRefTray() {
     if (!els.refTray) return;
     els.refTray.innerHTML = "";
@@ -593,12 +622,51 @@
         '" alt=""><span class="ng-gen-ref-badge">' +
         escapeHtml(ref.label) +
         "</span>";
+      // Only disk-kind refs are removable here -- "proj"-kind (anchor/
+      // ring-selected frames) get rebuilt from active.selectedFrames on
+      // every rebuildRefTray() call, so an X on those would just
+      // reappear on the next render; removing one for real means
+      // deselecting it where it actually lives (the ring/frame list).
+      if (ref.kind === "disk") {
+        var rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "ng-gen-ref-remove";
+        rm.title = "Remove this candidate";
+        rm.textContent = "✕";
+        rm.addEventListener("click", function (e) {
+          e.stopPropagation();
+          removeDiskRef(ref.id);
+        });
+        d.appendChild(rm);
+      }
+      // Click toggles: picking the already-active ref again deselects it
+      // (clears the big preview back to the empty paste state) rather
+      // than being a no-op.
       d.addEventListener("click", function () {
-        activeRefId = ref.id;
+        activeRefId = activeRefId === ref.id ? null : ref.id;
         renderRefTray();
       });
       els.refTray.appendChild(d);
     });
+    renderRefPreview();
+  }
+
+  // The paste box doing double duty as the big preview of whichever
+  // reference is currently active -- merges what Animate keeps as two
+  // separate elements (#ng-vg-ref-preview-wrap + #ng-vg-ref-paste) into
+  // one, per direct request. Still a valid paste target either way:
+  // pasting while a ref is active replaces it, same as clicking a new
+  // disk file would.
+  function renderRefPreview() {
+    if (!els.refPaste) return;
+    var active = refs.filter(function (r) { return r.id === activeRefId; })[0];
+    if (active) {
+      els.refPaste.innerHTML = '<img src="' + escapeHtml(active.url) + '" alt="">';
+      els.refPaste.classList.add("ng-gen-ref-paste-filled");
+    } else {
+      els.refPaste.textContent = "Paste an image here (Ctrl+V)";
+      els.refPaste.classList.remove("ng-gen-ref-paste-filled");
+    }
   }
 
   function addDiskFile(f) {

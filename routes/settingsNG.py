@@ -10,12 +10,15 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import urlparse
 
 from flask import Blueprint, jsonify, request
 
 from configNG import (
+    COMFYUI_DIR,
     SUNO_DIR,
     SUNO_PORT,
+    get_comfyui_base_url,
     get_ng_address_settings,
     get_tailscale_hostname,
     save_ng_address_settings,
@@ -127,4 +130,78 @@ def launch_suno_ng():
     return jsonify({
         "ok": False,
         "error": "Server didn't come up within 5s -- check it manually.",
+    }), 500
+
+
+@settingsNG_bp.route("/api/ng/settings/launch-comfyui", methods=["POST"])
+def launch_comfyui_ng():
+    """Start the local ComfyUI server (/Volumes/AI/ComfyUI, its own venv)
+    if it isn't already running. Host/port come from the comfyui_base_url
+    address setting rather than a hardcoded constant (unlike Suno) so this
+    stays in sync if that setting is ever repointed -- only makes sense to
+    call this when that URL actually names this machine, though; there's
+    no check for that here.
+
+    Deliberately doesn't open/navigate anywhere on success (contrast
+    launch_suno_ng's window.open) -- ComfyUI's own graph UI isn't the
+    point, the ComfyUI tab's own API calls to this server are, and
+    window.open(..., "_blank") on an iPad PWA hands the external origin
+    to Safari in a way that has left the installed app needing a force-
+    quit to recover (John's report from the Suno launch button)."""
+    base_url = get_comfyui_base_url()
+    parsed = urlparse(base_url)
+    port = parsed.port or 8188
+
+    already_log = os.path.join(COMFYUI_DIR, "comfyui_launch.log")
+    if _port_open("127.0.0.1", port):
+        # If it's already running, this may well be an older instance
+        # started before this log-file redirect existed (or started some
+        # other way entirely) -- only claim a log path if one's actually
+        # there to tail, rather than pointing at a file with nothing in it.
+        resp = {"ok": True, "already_running": True, "url": base_url}
+        if os.path.isfile(already_log):
+            resp["logPath"] = already_log
+        return jsonify(resp)
+
+    if not os.path.isdir(COMFYUI_DIR):
+        return jsonify({
+            "ok": False,
+            "error": f"ComfyUI directory not found: {COMFYUI_DIR}",
+        }), 500
+
+    venv_python = os.path.join(COMFYUI_DIR, "venv", "bin", "python3")
+    python_bin = venv_python if os.path.exists(venv_python) else sys.executable
+
+    # Truncated fresh on every launch -- this is "this run's log", not an
+    # accumulating history, so `tail -f` always shows what the currently
+    # running process is actually doing. Previously stdout/stderr went to
+    # DEVNULL, so a launch's console output (custom-node errors, sampler
+    # progress, anything short of ComfyUI's own web UI) was unrecoverable
+    # -- John asked where to find it and there was nothing to point at.
+    log_path = os.path.join(COMFYUI_DIR, "comfyui_launch.log")
+    try:
+        with open(log_path, "w") as log_file:
+            subprocess.Popen(
+                [python_bin, "main.py", "--listen", "--port", str(port)],
+                cwd=COMFYUI_DIR,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        # Popen dup()s the fd for the child at spawn time, so closing our
+        # own handle here (the `with` block exiting) doesn't affect the
+        # now-independent detached process's writes to it.
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # ComfyUI is a much heavier startup than Suno's plain server (loads
+    # torch, scans custom nodes) -- give it real time before giving up.
+    for _ in range(60):
+        if _port_open("127.0.0.1", port):
+            return jsonify({"ok": True, "already_running": False, "url": base_url, "logPath": log_path})
+        time.sleep(0.5)
+
+    return jsonify({
+        "ok": False,
+        "error": "Server didn't come up within 30s -- check it manually.",
     }), 500

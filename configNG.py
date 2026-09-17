@@ -17,6 +17,12 @@ IMMICH_API_KEY = "L4mP37A5kNWHPME0024ms2SGep7KR8xP4oAB9UNGqOM"
 SUNO_DIR = os.path.expanduser("~/Music/mysunodb")
 SUNO_PORT = 8001
 
+# ComfyUI -- lives outside this repo on the external AI volume, its own
+# venv. comfyui_base_url (below) already carries its host:port, since that
+# server doesn't always run on this same machine; when it does (the
+# settings cog's Launch button assumes so), this is where to find it.
+COMFYUI_DIR = "/Volumes/AI/ComfyUI"
+
 FRAME_STORE = tempfile.mkdtemp(prefix="ringvizng_frames_")
 
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exportsNG")
@@ -33,6 +39,22 @@ VIDEOGEN_DIR = os.path.join(EXPORT_DIR, "_videogen")
 # This is the permanent, never-pruned record: day folders, rolled up into
 # <year>/<month>/ once a month ends. See job_logsNG.py for the layout.
 JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_job_logsNG")
+
+# Hd-Multi view (routes/hdmultiNG.py) -- one-off HiDream edit/multi-ref
+# generations (1-3 reference images + a prompt -> one result image).
+# Same "flat, persistent, keyed by job id" shape as VIDEOGEN_DIR above,
+# since a job's ref images aren't tied to any saved character either.
+HDMULTI_DIR = os.path.join(EXPORT_DIR, "_hdmulti")
+
+# ComfyUI view (routes/comfyNG.py) -- a small curated library of saved
+# workflows, each just a successful result PNG (ComfyUI already embeds
+# the exact workflow that made it in the PNG's own metadata, so the file
+# *is* the save format) plus a display name in index.json. Explicit
+# "Save this workflow" action only, not every run -- otherwise this fills
+# with 50 near-duplicates of the same workflow (John's point). Exists so
+# picking a workflow is a list click instead of a local file picker,
+# which doesn't work from the iPad (no access to the Mac's disk).
+COMFY_WORKFLOWS_DIR = os.path.join(EXPORT_DIR, "_comfy_workflows")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
@@ -105,6 +127,13 @@ NG_ADDRESS_SETTINGS = [
         "default": "macstudio-2.tail74ab30.ts.net",
         "label": "Tailscale hostname",
         "description": "This machine's tailnet name, used to build the Suno Vault URL.",
+    },
+    {
+        "key": "comfyui_base_url",
+        "env": "RINGVIZ_COMFYUI_URL",
+        "default": "http://192.168.3.54:8182",
+        "label": "ComfyUI URL",
+        "description": "ComfyUI server powering the ComfyUI view (extract a workflow from a PNG, edit its parameters, run it).",
     },
 ]
 
@@ -189,3 +218,7 @@ def get_hermes_session_key():
 
 def get_tailscale_hostname():
     return _ng_setting("tailscale_hostname")
+
+
+def get_comfyui_base_url():
+    return _ng_setting("comfyui_base_url").rstrip("/")

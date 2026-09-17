@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+import numpy as np
 from PIL import Image
 
 
@@ -89,6 +90,36 @@ def _patch_align_ng(value: int, patch: int = HIDREAM_PATCH_SIZE) -> int:
     return max(patch, (value // patch) * patch)
 
 
+def _color_match_to_reference_ng(result_path: Path, reference_path: Path) -> None:
+    """Reinhard-style color transfer (Reinhard et al. 2001): shift
+    result_path's per-channel mean/std to match reference_path's, then
+    overwrite result_path in place. Same fix as kjnodes' ColorMatch node in
+    ComfyUI (John's report) for the same underlying issue: HiDream's
+    edit-mode output drifting in overall tonality/brightness from the
+    source photo instead of only changing what the prompt asked for.
+
+    Matches in YCbCr rather than LAB -- LAB was the first attempt, but
+    Pillow's LAB mode doesn't round-trip cleanly through Image.fromarray
+    (produced garish magenta/blue output in testing, not a subtle
+    correction). YCbCr is a plain linear transform Pillow implements
+    correctly both ways, still separates luminance from color the way
+    plain RGB matching wouldn't, and needs no new dependency.
+    """
+    with Image.open(reference_path) as ref_im:
+        ref_ycbcr = np.asarray(ref_im.convert("RGB").convert("YCbCr"), dtype=np.float64)
+    with Image.open(result_path) as res_im:
+        res_mode = res_im.mode
+        res_ycbcr = np.asarray(res_im.convert("RGB").convert("YCbCr"), dtype=np.float64)
+
+    ref_mean, ref_std = ref_ycbcr.mean((0, 1)), ref_ycbcr.std((0, 1)) + 1e-6
+    res_mean, res_std = res_ycbcr.mean((0, 1)), res_ycbcr.std((0, 1)) + 1e-6
+
+    matched = (res_ycbcr - res_mean) * (ref_std / res_std) + ref_mean
+    matched = np.clip(matched, 0, 255).astype(np.uint8)
+    matched_rgb = Image.fromarray(matched, mode="YCbCr").convert("RGB")
+    matched_rgb.convert(res_mode).save(result_path)
+
+
 def _clean_subprocess_env_ng() -> dict:
     """os.environ.copy() with macOS Malloc* debug vars stripped, so a
     HiDream subprocess doesn't spam stderr with "MallocStackLogging:
@@ -111,6 +142,7 @@ class HiDreamConfig:
     noise_scale: float = 7.5       # FlashFlowMatch tuned default; lowering collapses the image
     noise_clip_std: float = 2.5
     editing_scheduler: str = "flow_match"   # only value the script implements today
+    blend_seams: int = 2           # smooth the 32px patch-grid color seams (0=off); see generate_hidream_o1_mlx.py's --blend-seams -- edit-mode output showed a hard color split along a patch boundary at 2048x2048 until this was wired through
     timeout_s: float = 1800.0      # per-subprocess-call watchdog; override via RINGVIZ_HIDREAM_TIMEOUT_S
 
 
@@ -215,6 +247,7 @@ def generate_hidream_ng(prompt: str, n: int, width: int, height: int,
         "--noise-scale-start", str(config.noise_scale),
         "--noise-scale-end", str(config.noise_scale),
         "--noise-clip-std", str(config.noise_clip_std),
+        "--blend-seams", str(config.blend_seams),
     ]
     if allow_offspec_res:
         # The script has its own independent trained-resolution snap that
@@ -309,6 +342,18 @@ def generate_hidream_ng(prompt: str, n: int, width: int, height: int,
                 f"HiDream gen wrote a {actual_size[0]}x{actual_size[1]} "
                 f"image but expected {aligned_w}x{aligned_h} at {png} -- "
                 f"likely a partial write. Reroll this shot.")
+        if refs:
+            # Edit mode should keep the source's lighting/tonality --
+            # only what the prompt asked for should change. Best-effort:
+            # a failed color match still leaves the original (uncorrected
+            # but otherwise valid) render in place rather than losing it.
+            try:
+                _color_match_to_reference_ng(png, Path(refs[0]))
+                if on_log:
+                    on_log(f"[hidream] color-matched to {Path(refs[0]).name}")
+            except Exception as exc:
+                if on_log:
+                    on_log(f"[hidream] color-match skipped ({exc})")
         results.append({
             "png_path": str(png),
             "seed": seed,

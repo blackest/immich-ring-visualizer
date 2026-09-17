@@ -98,6 +98,25 @@
             style="display: none"
           ></pre>
 
+          <div class="ng-settings-row">
+            <div class="ng-settings-row-label">
+              <strong>ComfyUI</strong>
+              <span class="ng-settings-row-desc"
+                >Start the local ComfyUI server (/Volumes/AI/ComfyUI) so the
+                ComfyUI tab has something to talk to -- it doesn't run all the
+                time. Doesn't open anything; just gets the server up.</span
+              >
+            </div>
+            <button id="ng-settings-launch-comfyui" class="ng-btn">
+              Launch
+            </button>
+          </div>
+          <pre
+            id="ng-settings-comfyui-output"
+            class="ng-settings-output"
+            style="display: none"
+          ></pre>
+
           <div class="ng-settings-section-title">Addresses</div>
           <span class="ng-settings-row-desc ng-settings-section-desc"
             >Machine-specific endpoints (Ollama, Hermes, Tailscale). Saved here
@@ -114,6 +133,39 @@
             class="ng-settings-output"
             style="display: none"
           ></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pose prompt editor -- was an inline textarea inside each pose
+         card in the grid, which made that one card taller than its
+         neighbors and cramped the actual editing space (John's report).
+         Moved to a modal, same overlay/header/body shape as the settings
+         modal above; see renderPoseList()/openPoseEditModal() in
+         generateNG.js. -->
+    <div id="ng-gen-pose-modal" class="ng-modal-overlay" style="display: none">
+      <div class="ng-modal ng-gen-pose-modal-box">
+        <div class="ng-modal-header">
+          <span id="ng-gen-pose-modal-title">Edit prompt</span>
+          <button id="ng-gen-pose-modal-close" class="ng-btn" title="Close">
+            &times;
+          </button>
+        </div>
+        <div class="ng-modal-body">
+          <textarea
+            id="ng-gen-pose-modal-textarea"
+            rows="12"
+            class="ng-gen-pose-modal-textarea"
+          ></textarea>
+          <div class="pose-prompt-actions">
+            <button
+              type="button"
+              id="ng-gen-pose-modal-reset"
+              class="ng-gen-reroll"
+            >
+              reset to default
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -840,6 +892,35 @@
             </button>
           </div>
 
+          <!-- Hd-Multi view's rail pane -- just a short explainer; every
+               actual control (K selector, ref slots, prompt, result)
+               lives in the main region. See static/hdmultiNG.js. -->
+          <div id="ng-hdmulti-pane" style="display: none">
+            <p class="ng-video-hint">
+              One-off HiDream edit/multi-ref jobs: pick 1-3 reference
+              images and write a prompt describing what to do with them
+              -- K=1 edits a single image (e.g. remove something), K=2-3
+              compose multiple images together (e.g. a pose/scene from
+              one image, a likeness from another). No character or pose
+              grid involved -- one job in, one image out.
+            </p>
+          </div>
+
+          <!-- ComfyUI view's rail pane -- just a short explainer, same
+               deal as Hd-Multi's. See static/comfyNG.js. -->
+          <div id="ng-comfy-pane" style="display: none">
+            <p class="ng-video-hint">
+              Run an arbitrary ComfyUI workflow: pick a PNG that ComfyUI
+              generated (it embeds the exact workflow that made it), and
+              every plain value in that workflow -- prompt text, steps,
+              dimensions, seed, LoRA strength, whatever the workflow
+              actually has -- becomes an editable field here, pre-filled
+              with its original value. Node wiring itself stays fixed.
+              Image-input nodes (ControlNet etc.) aren't specially
+              handled yet -- see this session's own notes.
+            </p>
+          </div>
+
           <!-- Animate view's rail pane -- render queue for LTX image-to-
                video jobs. See static/videogenNG.js. Rail=queue / main=
                settings form, same flip as Generate's canvas redesign. -->
@@ -1480,6 +1561,269 @@
             </form>
           </div>
 
+          <!-- Hd-Multi view's main region -- K selector, 1-3 reference
+               slots, one prompt, Generate, one result image. See
+               static/hdmultiNG.js. -->
+          <div id="ng-hdmulti-main" style="display: none">
+            <div id="ng-hdmulti-compose" class="ng-gen-canvas">
+              <div class="ng-gen-label">Reference images</div>
+              <div id="ng-hdmulti-k-row" class="ng-checkbox-row">
+                <label
+                  ><input
+                    type="radio"
+                    name="ng-hdmulti-k"
+                    value="1"
+                    checked
+                  />
+                  1 (instruction edit)</label
+                >
+                <label
+                  ><input type="radio" name="ng-hdmulti-k" value="2" />
+                  2 (compose)</label
+                >
+                <label
+                  ><input type="radio" name="ng-hdmulti-k" value="3" />
+                  3 (compose)</label
+                >
+              </div>
+              <div id="ng-hdmulti-ref-slots" class="ng-hdmulti-ref-slots"></div>
+
+              <!-- Same render-size options as Generate's own "Render size
+                   & steps" card (#ng-gen-size-preset et al, this file
+                   above) -- HD-Multi shares the same reference-conditioned
+                   HiDream pipeline (allow_offspec_res is always on for
+                   both, see hidream_engineNG.generate_hidream_ng), and
+                   Generate's card already carries the hard-won warning
+                   below: an arbitrary custom size (e.g. a raw reference
+                   image's own pixel dimensions, which is what this used
+                   to send) renders blank in that mode. Auto-picks the
+                   trained preset closest to the first loaded reference's
+                   aspect ratio; picking a preset or editing width/height
+                   by hand stops that auto-pick. See static/hdmultiNG.js. -->
+              <div class="ng-gen-settings-card" style="max-width: 360px">
+                <label class="ng-gen-label" style="margin-top: 0"
+                  >Render size &amp; steps</label
+                >
+                <select id="ng-hdmulti-size-preset" class="ng-gen-input">
+                  <option value="2048x2048">
+                    2048 × 2048 — square (trained)
+                  </option>
+                  <option value="2304x1728">
+                    2304 × 1728 — landscape ~4:3 (trained)
+                  </option>
+                  <option value="1728x2304">
+                    1728 × 2304 — portrait ~3:4 (trained)
+                  </option>
+                  <option value="2560x1440">
+                    2560 × 1440 — landscape 16:9 (trained)
+                  </option>
+                  <option value="1440x2560">
+                    1440 × 2560 — portrait 9:16 (trained)
+                  </option>
+                  <option value="custom">Custom…</option>
+                </select>
+                <div style="display: flex; gap: 6px; align-items: center">
+                  <input
+                    id="ng-hdmulti-width"
+                    type="number"
+                    class="ng-gen-input"
+                    style="flex: 1"
+                    min="256"
+                    max="4096"
+                    step="32"
+                    value="2048"
+                    title="Width (px, patch-aligned to 32)"
+                  />
+                  <span class="ng-gen-label" style="margin: 0">×</span>
+                  <input
+                    id="ng-hdmulti-height"
+                    type="number"
+                    class="ng-gen-input"
+                    style="flex: 1"
+                    min="256"
+                    max="4096"
+                    step="32"
+                    value="2048"
+                    title="Height (px, patch-aligned to 32)"
+                  />
+                  <span class="ng-gen-label" style="margin: 0">steps</span>
+                  <input
+                    id="ng-hdmulti-steps"
+                    type="number"
+                    class="ng-gen-input"
+                    style="width: 52px"
+                    min="1"
+                    max="100"
+                    value="28"
+                    title="Inference steps — fewer = faster, softer"
+                  />
+                </div>
+                <!-- Blank = random (routes/hdmultiNG.py already accepted a
+                     seed form field, just nothing in this tab ever sent
+                     one) -- pinning it is the only way to compare two
+                     runs (e.g. before/after a color-match or prompt
+                     tweak) on the same roll, and the only way to recover
+                     a result if a job gets lost (a dev-server reload
+                     mid-job kills it silently, John hit this). The result
+                     panel's "Reuse this seed" link below fills this back
+                     in from whatever a job actually used. -->
+                <div style="display: flex; gap: 6px; align-items: center; margin-top: 6px">
+                  <input
+                    id="ng-hdmulti-seed"
+                    type="number"
+                    class="ng-gen-input"
+                    style="flex: 1; margin: 0"
+                    placeholder="Seed (blank = random)"
+                  />
+                </div>
+                <div
+                  class="ng-gen-label"
+                  style="margin-top: 2px; text-transform: none; letter-spacing: 0"
+                >
+                  Stick to the trained presets above — a Custom size outside
+                  that list currently renders blank in this pipeline's
+                  reference-conditioned mode. Steps below ~28 visibly degrade
+                  quality (the model's distillation floor); neither is a safe
+                  way to speed things up right now.
+                </div>
+              </div>
+
+              <label class="ng-gen-label" for="ng-hdmulti-prompt"
+                >Prompt</label
+              >
+              <textarea
+                id="ng-hdmulti-prompt"
+                rows="6"
+                class="ng-gen-pose-modal-textarea"
+                placeholder="What should HiDream do with the reference image(s) above? e.g. 'Remove the car in the background, keep everything else the same.' With 2-3 refs, describe which image each part should come from."
+              ></textarea>
+
+              <!-- Exact request summary so it's clear what Generate will
+                   actually POST before it's sent -- resolution in
+                   particular used to silently default to a hardcoded
+                   1024x1024 square regardless of the reference image's
+                   own aspect ratio (John's report); now it's shown here
+                   and hdmultiNG.js sends the reference's own dimensions
+                   instead of leaving it to that backend default. -->
+              <div id="ng-hdmulti-preview" class="ng-hdmulti-preview"></div>
+
+              <div id="ng-hdmulti-actions">
+                <button
+                  type="button"
+                  id="ng-hdmulti-generate-btn"
+                  class="ng-gen-btn"
+                >
+                  Generate
+                </button>
+                <span id="ng-hdmulti-status" class="ng-gen-status"></span>
+              </div>
+
+              <!-- Live log tail while a job runs -- same box/sizing as
+                   Animate's ng-vg-log, since the one-line status span
+                   above was too cramped to read progress in (John's
+                   report). See static/hdmultiNG.js. -->
+              <div
+                id="ng-hdmulti-log"
+                class="ng-vg-mainlog"
+                style="display: none"
+              ></div>
+
+              <div id="ng-hdmulti-result-wrap" style="display: none">
+                <div class="ng-gen-label">
+                  Result <span id="ng-hdmulti-result-seed"></span>
+                  <button
+                    type="button"
+                    id="ng-hdmulti-reuse-seed"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto; margin: 0 0 0 8px; padding: 2px 8px; font-size: 0.7143rem"
+                  >
+                    Reuse this seed
+                  </button>
+                </div>
+                <img id="ng-hdmulti-result-img" alt="" />
+              </div>
+            </div>
+          </div>
+
+          <!-- ComfyUI view's main region -- pick a PNG, get a dynamic
+               form for whatever plain values its embedded workflow has,
+               Generate, one result image back. See static/comfyNG.js. -->
+          <div id="ng-comfy-main" style="display: none">
+            <div id="ng-comfy-compose" class="ng-gen-canvas">
+              <!-- Saved-workflow library -- a curated list of past
+                   successful runs (each just a result PNG + a name; the
+                   PNG's own embedded metadata IS the saved workflow, see
+                   routes/comfyNG.py's save/load routes). Exists because
+                   the file-picker/paste flow below needs access to
+                   whatever machine's disk the PNG lives on, which doesn't
+                   work from the iPad (John's report) -- picking from this
+                   list instead works the same from either device. Only
+                   ever grows by an explicit "Save this workflow" click
+                   after a generate, not automatically. -->
+              <div class="ng-gen-label">Saved workflows</div>
+              <div id="ng-comfy-workflow-list" class="ng-comfy-workflow-list">
+                <p class="ng-placeholder">No saved workflows yet.</p>
+              </div>
+
+              <div class="ng-gen-label">Workflow PNG</div>
+              <input
+                id="ng-comfy-png-file"
+                type="file"
+                accept="image/png"
+                style="display: none"
+              />
+              <button
+                type="button"
+                id="ng-comfy-png-file-btn"
+                class="ng-gen-btn ng-gen-btn-quiet"
+              >
+                + choose a ComfyUI PNG&hellip;
+              </button>
+              <div
+                id="ng-comfy-png-paste"
+                class="ng-gen-ref-paste"
+                tabindex="0"
+                title="Click here, then paste (Cmd+V) a ComfyUI-generated PNG."
+              >
+                Paste a ComfyUI PNG here (Ctrl+V)
+              </div>
+              <div id="ng-comfy-extract-status" class="ng-gen-status"></div>
+
+              <div id="ng-comfy-fields" class="ng-comfy-fields"></div>
+
+              <div id="ng-comfy-actions" style="display: none">
+                <button
+                  type="button"
+                  id="ng-comfy-generate-btn"
+                  class="ng-gen-btn"
+                >
+                  Generate
+                </button>
+              </div>
+
+              <!-- FIFO job queue -- same {localId, jobId, status, ...}
+                   array/renderQueue/poll-all-active shape as Animate's
+                   own queue (static/videogenNG.js), adapted for one
+                   image out instead of one video out. Nothing on the
+                   backend needed changing for this: comfy_generate_ng/
+                   comfy_status_ng/comfy_result_ng were already fully
+                   job_id-scoped, so multiple in-flight submissions just
+                   worked once the frontend stopped serializing them
+                   behind a single currentJobId/busy flag. Each row keeps
+                   its own frozen snapshot of the overrides that were
+                   live when Generate was clicked, plus its own
+                   "Save this workflow…" action. See static/comfyNG.js. -->
+              <div id="ng-comfy-queue-head">
+                <span class="ng-gen-label" style="margin: 0">Queue</span>
+                <span id="ng-comfy-queue-count"></span>
+              </div>
+              <p id="ng-comfy-queue-empty" class="ng-placeholder">
+                Nothing queued yet.
+              </p>
+              <div id="ng-comfy-queue"></div>
+            </div>
+          </div>
+
           <!-- Animate view's main region -- reference + prompt + duration
                form. See static/videogenNG.js. -->
           <div id="ng-videogen-main" style="display: none">
@@ -2083,6 +2427,8 @@
         <button class="ng-task-btn" data-task="videogen">Animate</button>
         <button class="ng-task-btn" data-task="chat">Chat</button>
         <button class="ng-task-btn" data-task="rachel">Rachel</button>
+        <button class="ng-task-btn" data-task="hdmulti">Hd-Multi</button>
+        <button class="ng-task-btn" data-task="comfy">ComfyUI</button>
       </footer>
     </div>
 
@@ -2132,6 +2478,8 @@
     <script src="{{ url_for('static', filename='chatNG.js') }}"></script>
     <script src="{{ url_for('static', filename='rachelNG.js') }}"></script>
     <script src="{{ url_for('static', filename='videogenNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='hdmultiNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='comfyNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>
     <script src="{{ url_for('static', filename='settingsNG.js') }}"></script>
     <script src="{{ url_for('static', filename='initguing.js') }}"></script>

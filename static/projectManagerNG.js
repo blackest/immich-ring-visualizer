@@ -311,6 +311,13 @@
       // #ng-controls-pane shown when it's active -- this one's own
       // unconditional hide-when-on is what actually wins).
       if (window.VideoGenNG) window.VideoGenNG.sync(active);
+      // Hd-Multi view (task === "hdmulti") -- one-off HiDream edit/
+      // multi-ref jobs. Same "owns its own pane/main region" deal as the
+      // others above.
+      if (window.HdMultiNG) window.HdMultiNG.sync(active);
+      // ComfyUI view (task === "comfy") -- arbitrary workflow from a
+      // PNG's embedded metadata. Same "owns its own pane/main" deal.
+      if (window.ComfyNG) window.ComfyNG.sync(active);
       applyResolutionSummaryNG(active && active.job ? active.job.resolutionSummary : null);
       this.saveState();
     },
@@ -400,7 +407,7 @@
       // switches over to showing the ring (see placeVideoPreview() in
       // videoNG.js). The Generate view takes over the whole main stage
       // and rail, so the preview is fully hidden there regardless.
-      if (!active || !active.video || active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen") {
+      if (!active || !active.video || active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "hdmulti" || active.task === "comfy") {
         placeVideoPreview("hidden");
       } else if (active.ring) {
         placeVideoPreview("rail");
@@ -427,7 +434,7 @@
         showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Animate, Chat, or Rachel below to get started with “" + active.name + "”.");
         return;
       }
-      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen") {
+      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "hdmulti" || active.task === "comfy") {
         // The Generate/Chat/Rachel view's main region (#ng-generate-main /
         // #ng-chat-main / #ng-rachel-main) is shown by that view's sync();
         // everything else in the main stage stays hidden.
@@ -702,12 +709,17 @@
         row.className = "ng-list-row";
         row.dataset.frame = r.frame;
         const isFavorite = project.splitFavoriteFrames.has(r.frame);
+        // showHoverPreview/thumbUrlFor read .thumbUrl/.filename, neither
+        // of which a split result carries (no sim/pose either, which
+        // showHoverPreview already omits gracefully when absent) --
+        // adapt rather than pass r directly.
+        const hoverR = { thumbUrl: `/api/ng/framefile/${r.frameId}`, filename: `frame_${r.frame}` };
 
         row.innerHTML = `
           <input type="checkbox" class="ng-frame-select-cb" data-frame="${r.frame}" ${project.splitSelectedFrames.has(r.frame) ? "checked" : ""} style="margin-right:6px;flex-shrink:0;">
-          <img src="/api/ng/framefile/${r.frameId}" loading="lazy">
+          <img src="${hoverR.thumbUrl}" loading="lazy">
           <div class="info">
-            <div class="fname">frame_${r.frame}</div>
+            <div class="fname">${hoverR.filename}</div>
           </div>
           <button type="button" class="ng-btn ng-btn-favorite-frame${isFavorite ? " ng-btn-favorite-active" : ""}" data-frame="${r.frame}" title="${isFavorite ? "Unfavorite" : "Favorite"} this frame">${isFavorite ? "★" : "☆"}</button>
         `;
@@ -719,6 +731,8 @@
           project.toggleSplitFrameFavorite(r.frame);
           this.renderSplitFramesList(project);
         });
+        row.addEventListener("mouseenter", () => showHoverPreview(hoverR));
+        row.addEventListener("mouseleave", hideHoverPreview);
         listBodySplitEl.appendChild(row);
       });
 
@@ -905,7 +919,7 @@
       }
       leftRailEmptyEl.style.display = "none";
 
-      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen") {
+      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "hdmulti" || active.task === "comfy") {
         // Generate/Chat/Rachel views swap the whole rail body for their own
         // pane (#ng-generate-pane / #ng-chat-pane / #ng-rachel-pane, siblings
         // of #ng-leftrail-body under #ng-leftrail, shown by that view's sync).

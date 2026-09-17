@@ -196,7 +196,17 @@
 
   function onModeChange() {
     var t2v = isT2vMode();
-    if (els.refCol) els.refCol.style.display = t2v ? "none" : "";
+    // Not display:none -- #ng-vg-ref-col shares its parent's
+    // .ng-gen-identity-row grid with the Motion prompt column, no
+    // explicit grid-column on either (auto-placed by DOM order). Fully
+    // removing ref-col from layout removes it from grid auto-placement
+    // too, so the Motion prompt column -- normally the second, wide
+    // track -- becomes the only item and gets auto-placed into the
+    // first, narrow track instead (confirmed live: "everything slides
+    // into the now empty column"). The checkbox should just reflect the
+    // choice, not restructure the grid, so this dims + disables the
+    // column in place instead of hiding it.
+    if (els.refCol) els.refCol.classList.toggle("ng-vg-ref-col-disabled", t2v);
     setStatus("");
   }
 
@@ -820,6 +830,45 @@
     body.className = "ng-chat-body" + (turn.error ? " ng-chat-error" : "");
     body.textContent = turn.content || "";
     msg.appendChild(body);
+
+    // One-tap copy for Gemma's replies -- e.g. a removal/edit prompt she
+    // wrote for a pasted image, meant to land in Generate's pose-prompt
+    // modal. Whole-message copy on purpose, no smart extraction: trimming
+    // preamble is easy once it's in that modal's big textarea, but
+    // selecting just the useful part out of a chat bubble by hand is
+    // exactly the friction this exists to skip (worst on iPad).
+    if (turn.role !== "user" && turn.content) {
+      var copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "ng-chat-copy-btn";
+      copyBtn.textContent = "📋 Copy";
+      copyBtn.title = "Copy this reply";
+      copyBtn.addEventListener("click", function () {
+        var text = turn.content || "";
+        var done = function () {
+          copyBtn.textContent = "Copied!";
+          setTimeout(function () {
+            copyBtn.textContent = "📋 Copy";
+          }, 1200);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, done);
+        } else {
+          // Fallback for a non-secure-context edge case: a hidden
+          // textarea + document.execCommand, the pre-Clipboard-API way.
+          var ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); } catch (e) {}
+          document.body.removeChild(ta);
+          done();
+        }
+      });
+      msg.appendChild(copyBtn);
+    }
 
     return msg;
   }

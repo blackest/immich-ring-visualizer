@@ -24,6 +24,8 @@
   const outputEl = document.getElementById("ng-settings-ytdlp-output");
   const launchSunoBtn = document.getElementById("ng-settings-launch-suno");
   const sunoOutputEl = document.getElementById("ng-settings-suno-output");
+  const launchComfyBtn = document.getElementById("ng-settings-launch-comfyui");
+  const comfyOutputEl = document.getElementById("ng-settings-comfyui-output");
   const addressesEl = document.getElementById("ng-settings-addresses");
   const saveAddressesBtn = document.getElementById("ng-settings-save-addresses");
   const addressesOutputEl = document.getElementById("ng-settings-addresses-output");
@@ -146,6 +148,36 @@
     } finally {
       launchSunoBtn.disabled = false;
       launchSunoBtn.textContent = "Launch";
+    }
+  });
+
+  launchComfyBtn.addEventListener("click", async () => {
+    launchComfyBtn.disabled = true;
+    launchComfyBtn.textContent = "Launching...";
+    comfyOutputEl.style.display = "block";
+    comfyOutputEl.textContent = "Starting ComfyUI server (can take a while -- it's loading torch)...";
+
+    try {
+      const res = await fetch("/api/ng/settings/launch-comfyui", { method: "POST" });
+      const data = await res.json();
+
+      if (data.ok) {
+        // No window.open here (unlike Suno above) -- the ComfyUI tab talks
+        // to this server over its own API, nothing needs to navigate
+        // anywhere, and popping an external origin is exactly what forced
+        // a kill-and-restart of the installed iPad app after Suno's launch.
+        comfyOutputEl.textContent =
+          (data.already_running ? "Already running at " : "Started at ") +
+          data.url +
+          (data.logPath ? "\nLog: tail -f " + data.logPath : "");
+      } else {
+        comfyOutputEl.textContent = "Failed: " + (data.error || "unknown error");
+      }
+    } catch (e) {
+      comfyOutputEl.textContent = "Failed: " + e.message;
+    } finally {
+      launchComfyBtn.disabled = false;
+      launchComfyBtn.textContent = "Launch";
     }
   });
 
