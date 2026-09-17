@@ -84,6 +84,33 @@ def _coerce_like(original, new_value):
     return new_value
 
 
+def _extract_node_titles(png_text):
+    """Best-effort node_id -> custom title map from the PNG's separate
+    'workflow' metadata chunk -- the full editor graph ComfyUI embeds
+    alongside 'prompt' (same shape ComfyUI's own "Save (API Format)"
+    vs. plain save produces). Only that full-graph format carries a
+    node's UI title ("Load Image-insert reolace" etc); the flattened
+    'prompt' format this route otherwise runs on on doesn't. This is
+    purely cosmetic (tells two same-class_type LoadImage nodes apart in
+    the generic form), so missing/unparsable 'workflow' metadata just
+    means no titles, not an error -- extraction still works from
+    'prompt' alone."""
+    raw = (png_text or {}).get("workflow")
+    if not raw:
+        return {}
+    try:
+        workflow = json.loads(raw)
+    except ValueError:
+        return {}
+    titles = {}
+    for node in workflow.get("nodes") or []:
+        title = node.get("title")
+        node_id = node.get("id")
+        if title and node_id is not None:
+            titles[str(node_id)] = title
+    return titles
+
+
 def _extract_fields_from_png_bytes(png_bytes):
     """Parse a ComfyUI-saved PNG's embedded 'prompt' metadata into a graph
     plus the flat field list the frontend renders a form from. Shared by
@@ -94,7 +121,8 @@ def _extract_fields_from_png_bytes(png_bytes):
     on any problem (unreadable image, no embedded workflow, bad JSON)."""
     try:
         im = Image.open(io.BytesIO(png_bytes))
-        raw = im.text.get("prompt") if hasattr(im, "text") else None
+        png_text = im.text if hasattr(im, "text") else {}
+        raw = png_text.get("prompt")
     except Exception as e:
         raise ValueError(f"could not read that image: {e}")
     if not raw:
@@ -105,6 +133,8 @@ def _extract_fields_from_png_bytes(png_bytes):
     except ValueError as e:
         raise ValueError(f"embedded workflow is not valid JSON: {e}")
 
+    titles = _extract_node_titles(png_text)
+
     fields = []
     for node_id, node in graph.items():
         class_type = node.get("class_type", "?")
@@ -114,6 +144,7 @@ def _extract_fields_from_png_bytes(png_bytes):
             fields.append({
                 "nodeId": node_id,
                 "classType": class_type,
+                "title": titles.get(node_id),
                 "inputName": input_name,
                 "value": value,
                 "valueType": "image" if _is_image_field(class_type, input_name) else _value_type(value),
@@ -156,6 +187,33 @@ def view_comfy_image_ng():
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"could not reach ComfyUI: {e}"}), 502
     return Response(content, mimetype=content_type)
+
+
+@comfyNG_bp.route("/api/ng/comfy/server-images")
+def list_comfy_server_images_ng():
+    """Filenames already sitting in ComfyUI's own input/ folder -- e.g.
+    stuff dropped there directly on whatever machine ComfyUI actually
+    runs on ("the studio"), which the browser has no local copy of to
+    paste or pick from disk. Reuses the exact combo list ComfyUI's own
+    LoadImage widget populates itself from (its /object_info), rather
+    than this app reaching into that machine's filesystem itself --
+    if ComfyUI can see it, so can this, through the one HTTP hop it
+    already talks over."""
+    base_url = get_comfyui_base_url()
+    try:
+        resp = requests.get(f"{base_url}/object_info/LoadImage", timeout=10)
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"could not reach ComfyUI at {base_url}: {e}"}), 502
+    if resp.status_code != 200:
+        return jsonify({"error": f"ComfyUI returned HTTP {resp.status_code}"}), 502
+
+    try:
+        data = resp.json()
+        images = data["LoadImage"]["input"]["required"]["image"][0]
+    except (ValueError, KeyError, IndexError, TypeError):
+        return jsonify({"error": "unexpected response shape from ComfyUI's object_info"}), 502
+
+    return jsonify({"images": images})
 
 
 @comfyNG_bp.route("/api/ng/comfy/upload-image", methods=["POST"])

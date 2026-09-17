@@ -916,9 +916,16 @@
               dimensions, seed, LoRA strength, whatever the workflow
               actually has -- becomes an editable field here, pre-filled
               with its original value. Node wiring itself stays fixed.
-              Image-input nodes (ControlNet etc.) aren't specially
-              handled yet -- see this session's own notes.
+              Each LoadImage field can be filled by pasting, picking a
+              file from this device's disk, or -- for images that only
+              exist on whatever machine ComfyUI itself runs on -- click
+              "Pick from server list" on that field, then choose one
+              from the gallery below.
             </p>
+            <div class="ng-gen-label">ComfyUI's own input images</div>
+            <div id="ng-comfy-server-images" class="ng-comfy-workflow-list">
+              <p class="ng-placeholder">Loading&hellip;</p>
+            </div>
           </div>
 
           <!-- Animate view's rail pane -- render queue for LTX image-to-

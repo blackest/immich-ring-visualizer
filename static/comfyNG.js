@@ -26,6 +26,8 @@
   var localSeq = 0;
   var pollTimer = null;
   var POLL_MS = 2000;
+  var activeImageField = null; // the field object last armed via "Pick from server list", or null
+  var activeImageWrapEl = null; // its dropbox element, for the highlight class -- cleared together with activeImageField
 
   function $(id) {
     return document.getElementById(id);
@@ -43,6 +45,7 @@
     els.actions = $("ng-comfy-actions");
     els.generateBtn = $("ng-comfy-generate-btn");
     els.workflowList = $("ng-comfy-workflow-list");
+    els.serverImages = $("ng-comfy-server-images");
     els.queueCount = $("ng-comfy-queue-count");
     els.queueEmpty = $("ng-comfy-queue-empty");
     els.queue = $("ng-comfy-queue");
@@ -95,9 +98,26 @@
       fileInput.click();
     });
 
+    // For multi-reference workflows (identity ref / scene ref / clothing
+    // ref, say) whose source images live on whatever machine ComfyUI
+    // itself runs on rather than this device -- arms this field as the
+    // target, then a click in the "ComfyUI's own input images" gallery
+    // in the left rail (renderServerImages below) fills it in directly,
+    // no upload needed since the file's already there. Toggles off on a
+    // second click, same as the gallery cancelling on a successful pick.
+    var serverBtn = document.createElement("button");
+    serverBtn.type = "button";
+    serverBtn.className = "ng-gen-btn ng-gen-btn-quiet";
+    serverBtn.textContent = "Pick from server list ←";
+    serverBtn.title = "Then choose an image from ComfyUI's own input folder in the left column.";
+    serverBtn.addEventListener("click", function () {
+      setActiveImageField(activeImageField === f ? null : f, wrap);
+    });
+
     var btnRow = document.createElement("div");
     btnRow.className = "ng-hdmulti-ref-slot-btns";
     btnRow.appendChild(diskBtn);
+    btnRow.appendChild(serverBtn);
     btnRow.appendChild(clearBtn);
 
     function setPending(file) {
@@ -106,6 +126,18 @@
       f._pendingUrl = URL.createObjectURL(file);
       renderPreview();
     }
+
+    // Called from pickServerImage when this field is the active target --
+    // the filename is already valid on ComfyUI's own server, so it goes
+    // straight into f.value like an original wired-in value would, no
+    // upload/pendingFile round trip like the disk/paste path needs.
+    f._applyServerFilename = function (filename) {
+      if (f._pendingUrl) URL.revokeObjectURL(f._pendingUrl);
+      f._pendingFile = null;
+      f._pendingUrl = null;
+      f.value = filename;
+      renderPreview();
+    };
 
     function currentValueUrl() {
       if (!f.value) return null;
@@ -183,7 +215,14 @@
 
       var heading = document.createElement("div");
       heading.className = "ng-gen-label";
-      heading.textContent = nodeFields[0].classType + " (" + nodeId + ")";
+      // A saved workflow's PNG carries node titles ("Load Image-insert
+      // reolace" etc) via the extra 'workflow' metadata chunk (see
+      // routes/comfyNG.py's _extract_node_titles) -- shown when present
+      // so two same-class_type nodes (e.g. two LoadImage boxes) read as
+      // distinct instead of both just "LoadImage (N)".
+      heading.textContent = nodeFields[0].title
+        ? nodeFields[0].title + " — " + nodeFields[0].classType + " (" + nodeId + ")"
+        : nodeFields[0].classType + " (" + nodeId + ")";
       group.appendChild(heading);
 
       nodeFields.forEach(function (f) {
@@ -260,6 +299,101 @@
       .catch(function (e) {
         setExtractStatus("Error: " + e.message);
       });
+  }
+
+  // Arms/disarms a field as the target for the next click in the server-
+  // images gallery. Only one field can be armed at a time -- arming a
+  // second clears the first's highlight, same single-target model as the
+  // gallery click itself (see pickServerImage).
+  function setActiveImageField(f, wrapEl) {
+    if (activeImageWrapEl) activeImageWrapEl.classList.remove("ng-comfy-image-field-target");
+    activeImageField = f;
+    activeImageWrapEl = f ? wrapEl : null;
+    if (activeImageWrapEl) activeImageWrapEl.classList.add("ng-comfy-image-field-target");
+  }
+
+  // The "ComfyUI's own input images" gallery in the left rail -- images
+  // that already exist on whatever machine ComfyUI runs on (see
+  // routes/comfyNG.py's list_comfy_server_images_ng), for the common
+  // multi-reference case (identity ref / scene ref / clothing ref, say)
+  // where none of those source files are on *this* device to paste or
+  // pick from disk. Loaded once at init, same as the saved-workflow
+  // library -- the input folder isn't scoped to whichever workflow is
+  // currently loaded, so there's nothing to re-fetch on Generate/extract.
+  function loadServerImages() {
+    if (!els.serverImages) return;
+    els.serverImages.innerHTML = "";
+    var loading = document.createElement("p");
+    loading.className = "ng-placeholder";
+    loading.textContent = "Loading…";
+    els.serverImages.appendChild(loading);
+
+    fetch("/api/ng/comfy/server-images")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) {
+          els.serverImages.innerHTML = "";
+          var p = document.createElement("p");
+          p.className = "ng-placeholder";
+          p.textContent = "Couldn't list ComfyUI's input images: " + data.error;
+          els.serverImages.appendChild(p);
+          return;
+        }
+        renderServerImages(data.images || []);
+      })
+      .catch(function (e) {
+        els.serverImages.innerHTML = "";
+        var p = document.createElement("p");
+        p.className = "ng-placeholder";
+        p.textContent = "Couldn't list ComfyUI's input images: " + e.message;
+        els.serverImages.appendChild(p);
+      });
+  }
+
+  // Reuses the saved-workflow card look (.ng-comfy-workflow-list/-card,
+  // see styleNG.css) -- same "grid of square thumbnails with a filename
+  // caption" shape, just images instead of saved workflows.
+  function renderServerImages(images) {
+    els.serverImages.innerHTML = "";
+    if (!images.length) {
+      var p = document.createElement("p");
+      p.className = "ng-placeholder";
+      p.textContent = "No images in ComfyUI's input folder.";
+      els.serverImages.appendChild(p);
+      return;
+    }
+    images.forEach(function (name) {
+      var parts = String(name).split("/");
+      var filename = parts.pop();
+      var subfolder = parts.join("/");
+
+      var card = document.createElement("div");
+      card.className = "ng-comfy-workflow-card";
+      card.title = "Use " + name;
+
+      var img = document.createElement("img");
+      img.src = "/api/ng/comfy/view?filename=" + encodeURIComponent(filename) +
+        "&subfolder=" + encodeURIComponent(subfolder) + "&type=input";
+      img.alt = "";
+      card.appendChild(img);
+
+      var label = document.createElement("div");
+      label.className = "ng-comfy-workflow-name";
+      label.textContent = name;
+      card.appendChild(label);
+
+      card.addEventListener("click", function () { pickServerImage(name); });
+      els.serverImages.appendChild(card);
+    });
+  }
+
+  function pickServerImage(filename) {
+    if (!activeImageField) {
+      alert('Click "Pick from server list" on an image field first, then choose one here.');
+      return;
+    }
+    activeImageField._applyServerFilename(filename);
+    setActiveImageField(null, null);
   }
 
   // Saved-workflow library -- same {extractId, fields} result as picking
@@ -625,6 +759,7 @@
     els.pngPaste.addEventListener("paste", handlePngPaste);
     els.generateBtn.addEventListener("click", startGenerate);
     loadWorkflowList();
+    loadServerImages();
     renderQueue();
   }
 

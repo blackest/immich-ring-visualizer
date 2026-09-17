@@ -2430,6 +2430,16 @@ a.ng-btn {
   padding-top: 6px;
   word-break: break-word;
 }
+/* Armed via a field's "Pick from server list" button -- the next click
+   in the server-images gallery (renderServerImages in comfyNG.js) fills
+   this field in, so it needs to read as clearly "waiting for a pick"
+   among what can be 2-3 image fields on one workflow (identity/scene/
+   clothing refs, say). */
+.ng-comfy-image-field.ng-comfy-image-field-target {
+  border-style: solid;
+  border-color: var(--ng-accent);
+  box-shadow: 0 0 0 2px var(--ng-accent) inset;
+}
 .ng-comfy-field-textarea {
   width: 100%;
   font-family: inherit;
