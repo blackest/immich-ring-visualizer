@@ -40,6 +40,16 @@ VIDEOGEN_DIR = os.path.join(EXPORT_DIR, "_videogen")
 # <year>/<month>/ once a month ends. See job_logsNG.py for the layout.
 JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_job_logsNG")
 
+# H3 view (routes/h3NG.py, h3_jobsNG.py) -- MiniMax-H3 prompt/image-to-
+# video renders, a peer of Animate's LTX queue above with its own ring
+# buffer (see h3_engineNG.py for why H3/H3Q8 are one engine, not two).
+H3GEN_DIR = os.path.join(EXPORT_DIR, "_h3gen")
+
+# Music view (routes/musicNG.py, music_jobsNG.py) -- YuE2 style+lyrics-
+# to-song renders, a peer of Animate/H3's queues above with its own ring
+# buffer (see music_engineNG.py for why this is a separate venv/engine).
+MUSICGEN_DIR = os.path.join(EXPORT_DIR, "_musicgen")
+
 # Hd-Multi view (routes/hdmultiNG.py) -- one-off HiDream edit/multi-ref
 # generations (1-3 reference images + a prompt -> one result image).
 # Same "flat, persistent, keyed by job id" shape as VIDEOGEN_DIR above,

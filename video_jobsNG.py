@@ -54,6 +54,8 @@ class VideoJobNG:
     width: int = ltx.LTX_WIDTH
     height: int = ltx.LTX_HEIGHT
     frame_rate: float = ltx.LTX_FRAME_RATE
+    lora_path: Optional[str] = None  # optional; resolved server-side, see ltx_loraNG.py
+    lora_strength: float = 1.0
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
     finished_at: Optional[float] = None
@@ -117,6 +119,7 @@ def _worker_loop() -> None:
                 duration_s=job.duration_s, output_dir=job.job_dir,
                 seed=job.seed, config=ltx.LtxConfig(),
                 width=job.width, height=job.height, frame_rate=job.frame_rate,
+                lora_path=job.lora_path, lora_strength=job.lora_strength,
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.mp4_path = result["mp4_path"]
@@ -144,7 +147,9 @@ def _ensure_worker_started() -> None:
 def start_video_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                         duration_s: float, seed: Optional[int] = None,
                         width: Optional[int] = None, height: Optional[int] = None,
-                        frame_rate: Optional[float] = None) -> VideoJobNG:
+                        frame_rate: Optional[float] = None,
+                        lora_path: Optional[str] = None,
+                        lora_strength: float = 1.0) -> VideoJobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     VIDEOGEN_DIR -- this write IS the job's own copy, owned for its whole
     lifetime (read straight off disk by the worker below for the CLI's
@@ -161,7 +166,10 @@ def start_video_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str
     prompt alone (image_ext is ignored in that case). width/height/
     frame_rate default to ltx_engineNG's fixed-tier values when omitted
     (see ltx_engineNG.LTX_WIDTH/HEIGHT/FRAME_RATE); when given, they're
-    validated the same way generate_ltx_video_ng does."""
+    validated the same way generate_ltx_video_ng does. lora_path is an
+    optional style/character LoRA -- must already be a real path on
+    disk (see ltx_loraNG.resolve_ltx_lora_path_ng, which the route
+    calls before this), not a client-supplied name."""
     prompt = (prompt or "").strip()
     if not prompt:
         raise ValueError("prompt is required")
@@ -173,6 +181,8 @@ def start_video_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str
     frame_rate = ltx.LTX_FRAME_RATE if frame_rate is None else float(frame_rate)
     ltx._validate_ltx_dims_ng(width, height)
     ltx._validate_ltx_fps_ng(frame_rate)
+    if lora_path is not None and not Path(lora_path).is_file():
+        raise FileNotFoundError(f"LTX LoRA checkpoint not found at {lora_path}")
 
     has_image = image_bytes is not None
 
@@ -186,7 +196,8 @@ def start_video_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str
 
     job = VideoJobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                       seed=seed, job_dir=job_dir, has_image=has_image,
-                      width=width, height=height, frame_rate=frame_rate)
+                      width=width, height=height, frame_rate=frame_rate,
+                      lora_path=lora_path, lora_strength=lora_strength)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()

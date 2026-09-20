@@ -922,9 +922,38 @@
               "Pick from server list" on that field, then choose one
               from the gallery below.
             </p>
-            <div class="ng-gen-label">ComfyUI's own input images</div>
+            <div class="ng-gen-label">ComfyUI's own images</div>
+            <div class="ng-comfy-images-tabs">
+              <button
+                type="button"
+                id="ng-comfy-images-tab-input"
+                class="ng-comfy-images-tab active"
+                data-image-source="input"
+              >
+                Input
+              </button>
+              <button
+                type="button"
+                id="ng-comfy-images-tab-output"
+                class="ng-comfy-images-tab"
+                data-image-source="output"
+              >
+                Output
+              </button>
+            </div>
+            <input
+              type="text"
+              id="ng-comfy-server-images-filter"
+              class="ng-comfy-images-filter"
+              placeholder="Filter by filename&hellip;"
+            />
             <div id="ng-comfy-server-images" class="ng-comfy-workflow-list">
               <p class="ng-placeholder">Loading&hellip;</p>
+            </div>
+            <div id="ng-comfy-server-images-pager" class="ng-comfy-images-pager" style="display: none">
+              <button type="button" id="ng-comfy-server-images-prev">Previous</button>
+              <span id="ng-comfy-server-images-page-label"></span>
+              <button type="button" id="ng-comfy-server-images-next">More</button>
             </div>
           </div>
 
@@ -960,6 +989,60 @@
               the main stage, then press &ldquo;Generate video&rdquo;.
             </p>
             <div id="ng-vg-queue"></div>
+          </div>
+
+          <!-- H3 view's rail pane -- render queue for MiniMax-H3 prompt/
+               image-to-video jobs. See static/h3NG.js. Rail=queue /
+               main=settings form, same flip as Animate's own pane. -->
+          <div id="ng-h3-pane" style="display: none">
+            <div
+              id="ng-h3-unavailable"
+              class="ng-chat-banner"
+              style="display: none"
+            ></div>
+            <div id="ng-h3-queue-head">
+              <span>Render queue <span id="ng-h3-queue-count"></span></span>
+              <button
+                type="button"
+                id="ng-h3-queue-clear"
+                class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin: 0"
+              >
+                clear finished
+              </button>
+            </div>
+            <p id="ng-h3-queue-empty" class="ng-placeholder">
+              Nothing queued yet. Pick a keyframe (optional) and describe
+              the shot on the main stage, then press &ldquo;Generate
+              video&rdquo;.
+            </p>
+            <div id="ng-h3-queue"></div>
+          </div>
+
+          <!-- Music view's rail pane -- render queue for YuE2
+               style+lyrics-to-song jobs. See static/musicNG.js. -->
+          <div id="ng-music-pane" style="display: none">
+            <div
+              id="ng-music-unavailable"
+              class="ng-chat-banner"
+              style="display: none"
+            ></div>
+            <div id="ng-music-queue-head">
+              <span>Render queue <span id="ng-music-queue-count"></span></span>
+              <button
+                type="button"
+                id="ng-music-queue-clear"
+                class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin: 0"
+              >
+                clear finished
+              </button>
+            </div>
+            <p id="ng-music-queue-empty" class="ng-placeholder">
+              Nothing queued yet. Write a style and/or lyrics on the main
+              stage, then press &ldquo;Compose&rdquo;.
+            </p>
+            <div id="ng-music-queue"></div>
           </div>
         </aside>
         <main id="ng-main">
@@ -1881,10 +1964,10 @@
                     id="ng-vg-ref-paste"
                     class="ng-vg-ref-paste"
                     tabindex="0"
-                    title="Click here, then paste (Cmd+V) an image -- e.g. a frame copied from a video player's right-click menu."
+                    title="Drag and drop an image here, or click and paste (Cmd+V) -- e.g. a frame copied from a video player's right-click menu."
                   >
-                    Paste a frame here (Ctrl+V) &mdash; e.g. a frame copied from
-                    a video player
+                    Drop an image here, or paste (Ctrl+V) &mdash; e.g. a frame
+                    copied from a video player
                   </div>
                 </div>
                 <div>
@@ -2088,6 +2171,30 @@
                       placeholder="Seed (random)"
                     />
                   </div>
+                  <div style="margin-top: 8px">
+                    <label
+                      class="ng-gen-label"
+                      for="ng-vg-res-preset"
+                      style="margin-top: 0"
+                      >Preset</label
+                    >
+                    <select
+                      id="ng-vg-res-preset"
+                      class="ng-gen-input"
+                      style="margin-bottom: 0"
+                    >
+                      <option value="">Custom</option>
+                      <option value="1024x576">1024×576 (16:9, default)</option>
+                      <option value="576x1024">576×1024 (9:16 portrait)</option>
+                      <option value="1280x704">1280×704 (16:9, large)</option>
+                      <option value="704x1280">704×1280 (9:16 portrait, large)</option>
+                      <option value="1536x832">1536×832 (16:9, max width)</option>
+                      <option value="832x1536">832×1536 (9:16, max height)</option>
+                      <option value="704x512">704×512 (4:3)</option>
+                      <option value="640x640">640×640 (1:1 square)</option>
+                      <option value="768x448">768×448 (16:9, fast draft)</option>
+                    </select>
+                  </div>
                   <div
                     style="
                       display: flex;
@@ -2152,6 +2259,48 @@
                     </div>
                   </div>
                   <div
+                    style="
+                      display: flex;
+                      gap: 10px;
+                      align-items: flex-end;
+                      margin-top: 8px;
+                    "
+                  >
+                    <label class="ng-checkbox-row" id="ng-vg-lora-row"
+                      ><input type="checkbox" id="ng-vg-lora-toggle" /> Use
+                      LoRA</label
+                    >
+                    <div style="flex: 1">
+                      <select
+                        id="ng-vg-lora-select"
+                        class="ng-gen-input"
+                        style="margin-bottom: 0"
+                        disabled
+                      >
+                        <option value="">None</option>
+                      </select>
+                    </div>
+                    <div style="width: 110px">
+                      <label
+                        class="ng-gen-label"
+                        for="ng-vg-lora-strength"
+                        style="margin-top: 0"
+                        >Strength</label
+                      >
+                      <input
+                        id="ng-vg-lora-strength"
+                        type="number"
+                        class="ng-gen-input"
+                        step="0.05"
+                        min="0"
+                        max="2"
+                        value="1.0"
+                        style="margin-bottom: 0"
+                        disabled
+                      />
+                    </div>
+                  </div>
+                  <div
                     class="ng-gen-label"
                     style="
                       margin-top: 8px;
@@ -2159,11 +2308,10 @@
                       letter-spacing: 0;
                     "
                   >
-                    LTX-2.5, fixed high-quality two-stage pipeline. Width/height
-                    must be multiples of 64 (the two-stage pipeline halves then
-                    upscales resolution internally; anything else crashes the
-                    render). Roughly 2 minutes of render per second of video at
-                    1024×576 on this machine -- larger sizes take longer.
+                    Width × height — multiples of 64 (the two-stage engine
+                    floors anything else). Roughly 2 minutes of render per
+                    second of video at 1024×576 on this machine -- larger
+                    sizes take longer.
                   </div>
                 </div>
               </div>
@@ -2189,6 +2337,7 @@
                 style="display: none"
               ></div>
             </div>
+
 
             <!-- Durable job-log history -- separate from the ephemeral
                  render queue in the rail. Toggled by #ng-vg-log-toggle,
@@ -2232,6 +2381,348 @@
               <div id="ng-vg-log-list"></div>
             </div>
           </div>
+
+            <!-- H3 view's main region -- keyframe + prompt + duration +
+                 model form. See static/h3NG.js. No enhance/discuss/chat
+                 (LTX/Gemma-only features) and no LoRA dropdown -- see
+                 h3_engineNG.py's docstring for what's deliberately not
+                 built yet. -->
+            <div id="ng-h3-main" style="display: none">
+              <div id="ng-h3-compose" class="ng-gen-canvas">
+                <label class="ng-checkbox-row" id="ng-h3-mode-row"
+                  ><input type="checkbox" id="ng-h3-mode-t2v" /> Text
+                  &rarr; video (no keyframe image)</label
+                >
+                <div class="ng-gen-identity-row">
+                  <div id="ng-h3-ref-col">
+                    <div class="ng-gen-label">Keyframe image</div>
+                    <div id="ng-h3-ref-preview-wrap">
+                      <img
+                        id="ng-h3-ref-preview"
+                        style="
+                          display: none;
+                          width: 100%;
+                          max-width: 320px;
+                          border-radius: 6px;
+                          border: 1px solid var(--ng-border);
+                        "
+                      />
+                      <p id="ng-h3-ref-empty" class="ng-placeholder">
+                        No keyframe picked yet.
+                      </p>
+                    </div>
+                    <input
+                      id="ng-h3-ref-file"
+                      type="file"
+                      accept="image/*"
+                      style="display: none"
+                    />
+                    <button
+                      type="button"
+                      id="ng-h3-ref-file-btn"
+                      class="ng-gen-btn ng-gen-btn-quiet"
+                    >
+                      + choose photo from disk&hellip;
+                    </button>
+                    <button
+                      type="button"
+                      id="ng-h3-ref-use-gen"
+                      class="ng-gen-btn ng-gen-btn-quiet"
+                    >
+                      use Generate&rsquo;s current reference
+                    </button>
+                    <div
+                      id="ng-h3-ref-paste"
+                      class="ng-vg-ref-paste"
+                      tabindex="0"
+                      title="Drag and drop an image here, or click and paste (Cmd+V)."
+                    >
+                      Drop an image here, or paste (Ctrl+V)
+                    </div>
+                  </div>
+                  <div>
+                    <label
+                      class="ng-gen-label"
+                      for="ng-h3-prompt"
+                      style="margin-top: 0"
+                      >Prompt</label
+                    >
+                    <textarea
+                      id="ng-h3-prompt"
+                      class="ng-gen-input"
+                      rows="4"
+                      placeholder="Describe the shot, e.g. &ldquo;a red fox leaps over a mossy log&rdquo;"
+                    ></textarea>
+                    <div
+                      style="display: flex; gap: 10px; align-items: flex-end"
+                    >
+                      <div style="flex: 1">
+                        <label
+                          class="ng-gen-label"
+                          for="ng-h3-duration"
+                          style="margin-top: 0"
+                          >Duration
+                          <span id="ng-h3-duration-val">5.0s</span></label
+                        >
+                        <input
+                          id="ng-h3-duration"
+                          type="range"
+                          min="3"
+                          max="15"
+                          step="0.5"
+                          value="5"
+                          style="width: 100%"
+                        />
+                      </div>
+                      <input
+                        id="ng-h3-seed"
+                        type="number"
+                        class="ng-gen-input"
+                        style="width: 120px; margin-bottom: 0"
+                        placeholder="Seed (random)"
+                      />
+                    </div>
+                    <div style="margin-top: 8px">
+                      <label
+                        class="ng-gen-label"
+                        for="ng-h3-model"
+                        style="margin-top: 0"
+                        >Model</label
+                      >
+                      <select
+                        id="ng-h3-model"
+                        class="ng-gen-input"
+                        style="margin-bottom: 0"
+                      >
+                        <option value="h3q8">
+                          H3Q8 (quantized, recommended)
+                        </option>
+                        <option value="h3">H3 (bf16, full precision)</option>
+                      </select>
+                    </div>
+                    <div
+                      class="ng-gen-label"
+                      style="
+                        margin-top: 8px;
+                        text-transform: none;
+                        letter-spacing: 0;
+                      "
+                    >
+                      Renders at 1024&times;576, 16:9. H3 has no fast
+                      draft tier yet -- expect a long render, longer than
+                      Animate's LTX renders at the same canvas.
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ng-gen-action-bar">
+                  <button
+                    type="button"
+                    id="ng-h3-generate-btn"
+                    class="ng-gen-btn"
+                  >
+                    Generate video
+                  </button>
+                  <div id="ng-h3-status" class="ng-gen-status"></div>
+                </div>
+
+                <div
+                  id="ng-h3-log"
+                  class="ng-vg-mainlog"
+                  style="display: none"
+                ></div>
+              </div>
+            </div>
+
+            <!-- Music view's main region -- style + lyrics + length +
+                 mode form. See static/musicNG.js. Text in, audio out --
+                 no reference image at all, unlike every other Generate-
+                 shaped view here. -->
+            <div id="ng-music-main" style="display: none">
+              <div id="ng-music-compose" class="ng-gen-canvas">
+                <label class="ng-checkbox-row" id="ng-music-cover-row"
+                  ><input type="checkbox" id="ng-music-cover-toggle" />
+                  Cover an existing track (transcribe its melody/chords,
+                  render your style/lyrics over them)</label
+                >
+                <div id="ng-music-cover-file-wrap" style="display: none">
+                  <div class="ng-gen-label">Source track</div>
+                  <p id="ng-music-cover-file-empty" class="ng-placeholder">
+                    No track picked yet.
+                  </p>
+                  <p
+                    id="ng-music-cover-file-name"
+                    style="display: none; word-break: break-all"
+                  ></p>
+                  <input
+                    id="ng-music-cover-file"
+                    type="file"
+                    accept="audio/*"
+                    style="display: none"
+                  />
+                  <button
+                    type="button"
+                    id="ng-music-cover-file-btn"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                  >
+                    + choose audio from disk&hellip;
+                  </button>
+                  <div
+                    class="ng-gen-label"
+                    style="
+                      margin-top: 6px;
+                      text-transform: none;
+                      letter-spacing: 0;
+                    "
+                  >
+                    First cover ever run downloads two extra transcription
+                    models (a few GB, one-time).
+                  </div>
+                </div>
+                <label class="ng-checkbox-row" id="ng-music-instrumental-row"
+                  ><input type="checkbox" id="ng-music-instrumental" />
+                  Instrumental (no vocals -- lyrics box is ignored)</label
+                >
+                <div class="ng-gen-identity-row">
+                  <div>
+                    <label
+                      class="ng-gen-label"
+                      for="ng-music-style"
+                      style="margin-top: 0"
+                      >Style</label
+                    >
+                    <textarea
+                      id="ng-music-style"
+                      class="ng-gen-input"
+                      rows="3"
+                      placeholder="Genre, instruments, singer, language, tempo -- e.g. &ldquo;English, warm piano pop, expressive female vocal, 88 BPM&rdquo;"
+                    ></textarea>
+                    <div style="margin-top: 8px" id="ng-music-mode-row">
+                      <label
+                        class="ng-gen-label"
+                        for="ng-music-mode"
+                        style="margin-top: 0"
+                        >Score</label
+                      >
+                      <select
+                        id="ng-music-mode"
+                        class="ng-gen-input"
+                        style="margin-bottom: 0"
+                      >
+                        <option value="full">Melody + chords (default)</option>
+                        <option value="melody">Melody only</option>
+                        <option value="off">No score</option>
+                      </select>
+                    </div>
+                    <div style="margin-top: 8px; display: none" id="ng-music-task-row">
+                      <label
+                        class="ng-gen-label"
+                        for="ng-music-task"
+                        style="margin-top: 0"
+                        >Cover task</label
+                      >
+                      <select
+                        id="ng-music-task"
+                        class="ng-gen-input"
+                        style="margin-bottom: 0"
+                      >
+                        <option value="melody-full">
+                          Melody only (default)
+                        </option>
+                        <option value="full">Melody + chords</option>
+                        <option value="melody-vocal">Vocal melody only</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label
+                      class="ng-gen-label"
+                      for="ng-music-lyrics"
+                      style="margin-top: 0"
+                      >Lyrics</label
+                    >
+                    <textarea
+                      id="ng-music-lyrics"
+                      class="ng-gen-input"
+                      rows="8"
+                      placeholder="[Verse]&#10;The station lights are fading&#10;Your footsteps find the street&#10;&#10;[Chorus]&#10;Carry the morning home"
+                    ></textarea>
+                    <div style="display: flex; gap: 10px; align-items: flex-end">
+                      <div style="flex: 1">
+                        <label
+                          class="ng-gen-label"
+                          for="ng-music-duration"
+                          style="margin-top: 0"
+                          >Max length
+                          <span id="ng-music-duration-val">4:00</span></label
+                        >
+                        <input
+                          id="ng-music-duration"
+                          type="range"
+                          min="30"
+                          max="360"
+                          step="15"
+                          value="240"
+                          style="width: 100%"
+                        />
+                      </div>
+                      <input
+                        id="ng-music-seed"
+                        type="number"
+                        class="ng-gen-input"
+                        style="width: 120px; margin-bottom: 0"
+                        placeholder="Seed (random)"
+                      />
+                    </div>
+                    <div style="margin-top: 8px">
+                      <label
+                        class="ng-gen-label"
+                        for="ng-music-precision"
+                        style="margin-top: 0"
+                        >Precision</label
+                      >
+                      <select
+                        id="ng-music-precision"
+                        class="ng-gen-input"
+                        style="margin-bottom: 0"
+                      >
+                        <option value="8bit">8-bit (recommended)</option>
+                        <option value="bf16">bf16 (full precision)</option>
+                      </select>
+                    </div>
+                    <div
+                      class="ng-gen-label"
+                      style="
+                        margin-top: 8px;
+                        text-transform: none;
+                        letter-spacing: 0;
+                      "
+                    >
+                      Max length is a ceiling, not a requested length -- the
+                      song follows the lyrics and stops on its own if
+                      shorter. Roughly real time to render at 8-bit.
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ng-gen-action-bar">
+                  <button
+                    type="button"
+                    id="ng-music-generate-btn"
+                    class="ng-gen-btn"
+                  >
+                    Compose
+                  </button>
+                  <div id="ng-music-status" class="ng-gen-status"></div>
+                </div>
+
+                <div
+                  id="ng-music-log"
+                  class="ng-vg-mainlog"
+                  style="display: none"
+                ></div>
+              </div>
+            </div>
           <aside id="ng-sidebar" style="display: none">
             <div id="ng-sidebar-current">
               <img id="ng-sidebar-current-img" src="" alt="" />
@@ -2432,6 +2923,8 @@
         <button class="ng-task-btn" data-task="folderzip">Folder / Zip</button>
         <button class="ng-task-btn" data-task="generate">Generate</button>
         <button class="ng-task-btn" data-task="videogen">Animate</button>
+        <button class="ng-task-btn" data-task="h3">H3</button>
+        <button class="ng-task-btn" data-task="music">Music</button>
         <button class="ng-task-btn" data-task="chat">Chat</button>
         <button class="ng-task-btn" data-task="rachel">Rachel</button>
         <button class="ng-task-btn" data-task="hdmulti">Hd-Multi</button>
@@ -2485,6 +2978,12 @@
     <script src="{{ url_for('static', filename='chatNG.js') }}"></script>
     <script src="{{ url_for('static', filename='rachelNG.js') }}"></script>
     <script src="{{ url_for('static', filename='videogenNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='h3NG.js') }}"></script>
+    <!-- Vendored (not CDN, same convention as every other static file
+         here), MIT-licensed -- renders a cover job's transcribed ABC
+         score to an inline SVG staff. See static/musicNG.js. -->
+    <script src="{{ url_for('static', filename='vendor/abcjs-basic-min.js') }}"></script>
+    <script src="{{ url_for('static', filename='musicNG.js') }}"></script>
     <script src="{{ url_for('static', filename='hdmultiNG.js') }}"></script>
     <script src="{{ url_for('static', filename='comfyNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>

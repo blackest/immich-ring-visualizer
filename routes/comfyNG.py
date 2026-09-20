@@ -33,7 +33,7 @@ import requests
 from flask import Blueprint, Response, jsonify, request, send_file
 from PIL import Image
 
-from configNG import COMFY_WORKFLOWS_DIR, get_comfyui_base_url
+from configNG import COMFY_WORKFLOWS_DIR, COMFYUI_DIR, get_comfyui_base_url
 from stateNG import _comfy_extracts_ng, _comfy_jobs_ng
 
 comfyNG_bp = Blueprint("comfyNG", __name__)
@@ -169,6 +169,60 @@ def comfy_extract_ng():
     return jsonify({"extractId": extract_id, "fields": fields})
 
 
+def _resolve_comfy_disk_path(base_dir, subfolder, filename):
+    """Join + normalize a subfolder/filename pair under base_dir,
+    refusing anything that would escape it (a ".." segment, say).
+    filename/subfolder come from query params sourced from our own
+    gallery listing, but validate anyway since they're still user
+    input by the time they reach here."""
+    base_dir = os.path.normpath(base_dir)
+    candidate = os.path.normpath(os.path.join(base_dir, subfolder or "", filename))
+    if candidate != base_dir and not candidate.startswith(base_dir + os.sep):
+        return None
+    return candidate
+
+
+@comfyNG_bp.route("/api/ng/comfy/server-images/extract")
+def extract_comfy_server_image_ng():
+    """Same PNG-metadata extraction as /api/ng/comfy/extract above, but
+    for a file already sitting on ComfyUI's own machine (picked from the
+    server-images gallery, routes above) rather than one the browser
+    uploads -- lets a past output double as its own workflow PNG with no
+    download/upload round trip. Reads bytes straight off disk when this
+    app shares a filesystem with ComfyUI (same COMFYUI_DIR as
+    _walk_comfy_output_images), falling back to the /view HTTP proxy
+    otherwise."""
+    filename = request.args.get("filename")
+    if not filename:
+        return jsonify({"error": "filename is required"}), 400
+    subfolder = request.args.get("subfolder", "")
+    type_ = request.args.get("type", "output")
+    if type_ not in ("input", "output"):
+        return jsonify({"error": f"unsupported type {type_!r}"}), 400
+
+    base_dir = os.path.join(COMFYUI_DIR, type_)
+    path = _resolve_comfy_disk_path(base_dir, subfolder, filename) if os.path.isdir(base_dir) else None
+
+    if path and os.path.isfile(path):
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    else:
+        try:
+            raw, _ = _fetch_comfy_view_bytes(filename, subfolder, type_)
+        except requests.exceptions.RequestException as e:
+            return jsonify({"error": f"could not reach ComfyUI: {e}"}), 502
+
+    try:
+        graph, fields = _extract_fields_from_png_bytes(raw)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    extract_id = uuid.uuid4().hex[:12]
+    _comfy_extracts_ng[extract_id] = {"graph": graph}
+
+    return jsonify({"extractId": extract_id, "fields": fields})
+
+
 @comfyNG_bp.route("/api/ng/comfy/view")
 def view_comfy_image_ng():
     """Generic proxy for whatever a LoadImage-shaped field's current
@@ -189,30 +243,123 @@ def view_comfy_image_ng():
     return Response(content, mimetype=content_type)
 
 
+_OUTPUT_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+def _walk_comfy_output_images():
+    """Full recursive read of ComfyUI's own output/ folder straight off
+    disk, newest-modified first -- no HTTP round trip, and no flat-
+    listing limitation either. Only works when this app and ComfyUI
+    share a filesystem (COMFYUI_DIR, see configNG.py) -- true for this
+    deployment (routes/settingsNG.py already assumes as much to launch
+    ComfyUI itself via a subprocess with cwd=COMFYUI_DIR). Returns None
+    if that's not the case, so callers can fall back to the /history
+    approach instead.
+
+    Tried and reverted a symlink-in-input/ trick before landing here:
+    ComfyUI's own LoadImage.INPUT_TYPES (nodes.py) builds its combo
+    from a flat os.listdir(input_dir) filtered to os.path.isfile --
+    no recursion, so a symlinked subfolder never shows up there no
+    matter what. This route doesn't have that constraint since it
+    reads output/ itself rather than asking ComfyUI's LoadImage combo
+    about it."""
+    output_dir = os.path.join(COMFYUI_DIR, "output")
+    if not os.path.isdir(output_dir):
+        return None
+
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(output_dir):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if os.path.splitext(name)[1].lower() not in _OUTPUT_IMAGE_EXTS:
+                continue
+            full = os.path.join(dirpath, name)
+            try:
+                mtime = os.path.getmtime(full)
+            except OSError:
+                continue
+            rel = os.path.relpath(full, output_dir).replace(os.sep, "/")
+            entries.append((mtime, rel))
+    entries.sort(key=lambda e: e[0], reverse=True)
+    return [rel for _, rel in entries]
+
+
 @comfyNG_bp.route("/api/ng/comfy/server-images")
 def list_comfy_server_images_ng():
-    """Filenames already sitting in ComfyUI's own input/ folder -- e.g.
-    stuff dropped there directly on whatever machine ComfyUI actually
-    runs on ("the studio"), which the browser has no local copy of to
-    paste or pick from disk. Reuses the exact combo list ComfyUI's own
-    LoadImage widget populates itself from (its /object_info), rather
-    than this app reaching into that machine's filesystem itself --
-    if ComfyUI can see it, so can this, through the one HTTP hop it
-    already talks over."""
+    """Filenames already sitting on whatever machine ComfyUI itself runs
+    on ("the studio"), which the browser has no local copy of to paste
+    or pick from disk. ?type=input|output (default input) picks which:
+      - input: stuff dropped straight into ComfyUI's input/ folder.
+        Reuses the exact combo list ComfyUI's own LoadImage widget
+        populates itself from (its /object_info), rather than this app
+        reaching into that machine's filesystem itself.
+      - output: stuff ComfyUI itself generated. Read straight off disk
+        (_walk_comfy_output_images) when this app shares a filesystem
+        with ComfyUI, which is the actually-complete picture (every
+        file really in output/, not just what ComfyUI's own /history
+        still remembers producing); falls back to /history over HTTP
+        if COMFYUI_DIR/output isn't reachable locally. Either way, a
+        pick here hands back ComfyUI's own "name [output]" annotation
+        (folder_paths.get_annotated_filepath), which a LoadImage node
+        resolves straight from the output folder at execution time, no
+        copy into input/ needed.
+    """
     base_url = get_comfyui_base_url()
+    type_ = request.args.get("type", "input")
+    if type_ not in ("input", "output"):
+        return jsonify({"error": f"unsupported type {type_!r}"}), 400
+
+    if type_ == "input":
+        try:
+            resp = requests.get(f"{base_url}/object_info/LoadImage", timeout=10)
+        except requests.exceptions.RequestException as e:
+            return jsonify({"error": f"could not reach ComfyUI at {base_url}: {e}"}), 502
+        if resp.status_code != 200:
+            return jsonify({"error": f"ComfyUI returned HTTP {resp.status_code}"}), 502
+        try:
+            data = resp.json()
+            images = data["LoadImage"]["input"]["required"]["image"][0]
+        except (ValueError, KeyError, IndexError, TypeError):
+            return jsonify({"error": "unexpected response shape from ComfyUI's object_info"}), 502
+        return jsonify({"images": images})
+
+    from_disk = _walk_comfy_output_images()
+    if from_disk is not None:
+        return jsonify({"images": from_disk})
+
     try:
-        resp = requests.get(f"{base_url}/object_info/LoadImage", timeout=10)
+        resp = requests.get(f"{base_url}/history", timeout=10)
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"could not reach ComfyUI at {base_url}: {e}"}), 502
     if resp.status_code != 200:
         return jsonify({"error": f"ComfyUI returned HTTP {resp.status_code}"}), 502
-
     try:
-        data = resp.json()
-        images = data["LoadImage"]["input"]["required"]["image"][0]
-    except (ValueError, KeyError, IndexError, TypeError):
-        return jsonify({"error": "unexpected response shape from ComfyUI's object_info"}), 502
+        history = resp.json()
+    except ValueError:
+        return jsonify({"error": "unexpected response shape from ComfyUI's history"}), 502
 
+    # Most-recent-timestamp-wins per filename, then newest first -- a
+    # job re-run under the same output name should float to the top,
+    # not show up twice.
+    seen = {}
+    for entry in (history or {}).values():
+        ts = 0
+        for msg in (entry.get("status") or {}).get("messages") or []:
+            if isinstance(msg, list) and len(msg) == 2 and isinstance(msg[1], dict):
+                ts = max(ts, msg[1].get("timestamp") or 0)
+        for node_out in (entry.get("outputs") or {}).values():
+            for img in node_out.get("images") or []:
+                if img.get("type") != "output":
+                    continue
+                name = img.get("filename") or ""
+                if not name:
+                    continue
+                subfolder = img.get("subfolder") or ""
+                key = f"{subfolder}/{name}" if subfolder else name
+                if ts > seen.get(key, -1):
+                    seen[key] = ts
+
+    images = sorted(seen, key=seen.get, reverse=True)
     return jsonify({"images": images})
 
 

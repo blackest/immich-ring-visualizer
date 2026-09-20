@@ -47,6 +47,7 @@
   var inited = false;
   var statusChecked = false;
   var generationDisabled = false;
+  var lorasLoaded = false;
   var currentRefBlob = null; // File/Blob picked from disk or pulled from Generate
   var currentRefPreviewUrl = null; // object URL for the <img> preview
   // Set only when currentRefBlob came from a live curation-session frame
@@ -145,9 +146,13 @@
     els.durationVal = document.getElementById("ng-vg-duration-val");
     els.durationAuto = document.getElementById("ng-vg-duration-auto");
     els.seed = document.getElementById("ng-vg-seed");
+    els.resPreset = document.getElementById("ng-vg-res-preset");
     els.width = document.getElementById("ng-vg-width");
     els.height = document.getElementById("ng-vg-height");
     els.fps = document.getElementById("ng-vg-fps");
+    els.loraToggle = document.getElementById("ng-vg-lora-toggle");
+    els.loraSelect = document.getElementById("ng-vg-lora-select");
+    els.loraStrength = document.getElementById("ng-vg-lora-strength");
 
     els.generateBtn = document.getElementById("ng-vg-generate-btn");
     els.status = document.getElementById("ng-vg-status");
@@ -239,6 +244,40 @@
     setStatus("Reference set from pasted frame.");
   }
 
+  // Drag-and-drop onto the whole reference column (preview, empty
+  // placeholder, or the paste box) as a third way in alongside the file
+  // picker and onRefPaste's Cmd+V -- e.g. dragging a file straight out
+  // of Finder or another browser tab.
+  function onRefDragOver(e) {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    if (els.refCol) els.refCol.classList.add("ng-vg-ref-col-dragover");
+  }
+
+  function onRefDragLeave(e) {
+    // Children re-fire dragenter/dragleave as the pointer crosses them --
+    // only clear the highlight once the pointer has actually left the
+    // column, not when it's just moved onto a child within it.
+    if (els.refCol && els.refCol.contains(e.relatedTarget)) return;
+    if (els.refCol) els.refCol.classList.remove("ng-vg-ref-col-dragover");
+  }
+
+  function onRefDrop(e) {
+    e.preventDefault();
+    if (els.refCol) els.refCol.classList.remove("ng-vg-ref-col-dragover");
+    var files = (e.dataTransfer && e.dataTransfer.files) || [];
+    var file = null;
+    for (var i = 0; i < files.length; i++) {
+      if (/^image\//.test(files[i].type)) { file = files[i]; break; }
+    }
+    if (!file) {
+      setStatus("That wasn't an image file.");
+      return;
+    }
+    setReference(file);
+    setStatus("Reference set from dropped image.");
+  }
+
   function useGenerateReference() {
     var gen = window.GenerateNG && window.GenerateNG.getActiveReference
       ? window.GenerateNG.getActiveReference()
@@ -313,6 +352,34 @@
       .catch(function () {
         statusChecked = false; // let a later sync retry
       });
+  }
+
+  function ensureLorasLoaded() {
+    if (lorasLoaded || !els.loraSelect) return;
+    lorasLoaded = true;
+    fetch(API + "/loras")
+      .then(function (r) { return r.json(); })
+      .then(function (payload) {
+        var loras = (payload && payload.loras) || [];
+        while (els.loraSelect.options.length > 1) {
+          els.loraSelect.remove(1);
+        }
+        loras.forEach(function (entry) {
+          var opt = document.createElement("option");
+          opt.value = entry.name;
+          opt.textContent = entry.name;
+          els.loraSelect.appendChild(opt);
+        });
+      })
+      .catch(function () {
+        lorasLoaded = false; // let a later sync retry
+      });
+  }
+
+  function setLoraEnabled(enabled) {
+    if (els.loraSelect) els.loraSelect.disabled = !enabled;
+    if (els.loraStrength) els.loraStrength.disabled = !enabled;
+    if (enabled) ensureLorasLoaded();
   }
 
   function enhancePrompt() {
@@ -1320,6 +1387,11 @@
     form.append("width", String(width));
     form.append("height", String(height));
     form.append("frame_rate", String(fps));
+    if (els.loraToggle && els.loraToggle.checked && els.loraSelect && els.loraSelect.value) {
+      form.append("lora_name", els.loraSelect.value);
+      var loraStrength = parseFloat(els.loraStrength.value);
+      form.append("lora_strength", String(isNaN(loraStrength) ? 1.0 : loraStrength));
+    }
 
     fetch(API + "/generate", { method: "POST", body: form })
       .then(function (res) {
@@ -1595,6 +1667,11 @@
     els.refFile.addEventListener("change", onDiskFile);
     els.refUseGen.addEventListener("click", useGenerateReference);
     if (els.refPaste) els.refPaste.addEventListener("paste", onRefPaste);
+    if (els.refCol) {
+      els.refCol.addEventListener("dragover", onRefDragOver);
+      els.refCol.addEventListener("dragleave", onRefDragLeave);
+      els.refCol.addEventListener("drop", onRefDrop);
+    }
     if (els.modeT2v) els.modeT2v.addEventListener("change", onModeChange);
 
     els.duration.addEventListener("input", function () {
@@ -1677,6 +1754,26 @@
     if (els.logTabRecent) els.logTabRecent.addEventListener("click", function () { setLogTab("recent"); });
     if (els.logTabArchive) els.logTabArchive.addEventListener("click", function () { setLogTab("years"); });
     els.generateBtn.addEventListener("click", generateVideo);
+    if (els.resPreset) {
+      els.resPreset.addEventListener("change", function () {
+        var parts = (els.resPreset.value || "").split("x");
+        if (parts.length !== 2) return;
+        els.width.value = parts[0];
+        els.height.value = parts[1];
+      });
+      // Manual edits fall out of "Preset" back to "Custom" rather than
+      // silently disagreeing with whatever preset is still shown selected.
+      [els.width, els.height].forEach(function (el) {
+        el.addEventListener("input", function () {
+          els.resPreset.value = "";
+        });
+      });
+    }
+    if (els.loraToggle) {
+      els.loraToggle.addEventListener("change", function () {
+        setLoraEnabled(els.loraToggle.checked);
+      });
+    }
     els.queueClear.addEventListener("click", function () {
       queue = queue.filter(function (q) {
         return q.status !== "done" && q.status !== "failed";

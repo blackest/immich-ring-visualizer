@@ -17,6 +17,7 @@ from flask import Blueprint, jsonify, request, send_file
 import job_logsNG
 import ltx_engineNG
 import video_jobsNG as video_jobs
+from ltx_loraNG import list_ltx_loras_ng, resolve_ltx_lora_path_ng
 from video_analysisNG import find_cache_frame_ng
 
 videogenNG_bp = Blueprint("videogenNG", __name__)
@@ -81,6 +82,13 @@ def videogen_status_ng():
         "min_fps": ltx_engineNG.LTX_MIN_FPS,
         "max_fps": ltx_engineNG.LTX_MAX_FPS,
     })
+
+
+@videogenNG_bp.route("/api/ng/videogen/loras", methods=["GET"])
+def videogen_loras_ng():
+    """Optional style/character LoRAs available to the Animate workflow
+    -- populates the rail's LoRA dropdown. See ltx_loraNG.py."""
+    return jsonify({"loras": list_ltx_loras_ng()})
 
 
 @videogenNG_bp.route("/api/ng/videogen/enhance", methods=["POST"])
@@ -265,6 +273,14 @@ def videogen_generate_ng():
     height = request.form.get("height", type=int)
     frame_rate = request.form.get("frame_rate", type=float)
 
+    lora_name = str(request.form.get("lora_name") or "").strip()
+    lora_path = None
+    if lora_name:
+        lora_path = resolve_ltx_lora_path_ng(lora_name)
+        if lora_path is None:
+            return jsonify({"error": f"unknown LoRA {lora_name!r}"}), 400
+    lora_strength = request.form.get("lora_strength", 1.0, type=float)
+
     try:
         img_bytes, ext = _resolve_ref_image_bytes()
     except LookupError as e:
@@ -273,7 +289,8 @@ def videogen_generate_ng():
     try:
         job = video_jobs.start_video_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
-            width=width, height=height, frame_rate=frame_rate)
+            width=width, height=height, frame_rate=frame_rate,
+            lora_path=lora_path, lora_strength=lora_strength)
     except LookupError as e:
         return jsonify({"error": str(e)}), 404
     except FileNotFoundError as e:

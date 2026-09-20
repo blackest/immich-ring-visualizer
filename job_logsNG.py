@@ -138,6 +138,8 @@ def record_job_ng(job, result: Optional[dict]) -> None:
             "width": job.width,
             "height": job.height,
             "frame_rate": job.frame_rate,
+            "lora_path": job.lora_path,
+            "lora_strength": job.lora_strength if job.lora_path else None,
             "error": job.error,
             "error_type": job.error_type,
             "queued_at": job.queued_at,

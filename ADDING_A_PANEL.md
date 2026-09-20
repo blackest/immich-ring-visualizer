@@ -9,6 +9,22 @@ metadata). Both follow the same shape as the earlier `generate` /
 `chat` / `rachel` / `videogen` tasks. This is that shape, written down
 so the next one goes faster and skips the mistakes made this time.
 
+Updated after a later session added two more: **H3** (`h3`, MiniMax-H3
+prompt/image-to-video via `h3_engineNG.py`) and **Music** (`music`,
+YuE2 style+lyrics-to-song via `music_engineNG.py`) -- both peers of
+Animate's LTX engine, each talking to its own standalone install/venv
+as a subprocess (see those files' own docstrings for why phosphene's
+own wrapper scripts were deliberately NOT reused, only its models/
+weights layout as reference). **Step 4's three-way OR-chain was missed
+for both on the first pass** -- the panels looked and worked fine
+stand-alone (own pane/main shown correctly by their own `sync()`), but
+without being added to `renderMain()`'s two guards and
+`renderLeftRail()`'s guard, the shared rail body wouldn't collapse and
+the video-preview guard didn't know about them either. Caught by
+re-reading this doc, not by testing in a browser -- grep for the task
+name across `projectManagerNG.js` after wiring a new panel, don't just
+trust that adding the `sync()` call in `render()` was enough.
+
 See [APP_ARCHITECTURE_NOTES.md](APP_ARCHITECTURE_NOTES.md) for the
 overall page/tab/layout model this fits into, and
 [MODULARIZATION_PLAN.md](MODULARIZATION_PLAN.md) for the (separate,
@@ -22,10 +38,10 @@ A panel (internally, a "task") is a bottom-bar button
 (`data-task="<name>"`) that, when active, takes over the **entire**
 left rail and main stage with its own self-contained UI — it does not
 plug into the shared ring/sidebar/selection machinery at all. `generate`,
-`chat`, `rachel`, `videogen`, `hdmulti`, and `comfy` are all this shape.
-(Contrast with `video`/`immich`/`folder`, which share the common rail
-body and ring-based main stage — that's a different, older pattern not
-covered here.)
+`chat`, `rachel`, `videogen`, `h3`, `music`, `hdmulti`, and `comfy` are
+all this shape. (Contrast with `video`/`immich`/`folder`, which share
+the common rail body and ring-based main stage — that's a different,
+older pattern not covered here.)
 
 Each panel owns:
 - one rail pane: `#ng-<name>-pane`
@@ -141,8 +157,8 @@ the render-flow area, and ~922 in `renderLeftRail()`). Add
   rail height instead of splitting it 50/50
 
 Then add your own sync call in `render()`, alongside the others
-(`GenerateNG`, `ChatNG`, `RachelNG`, `VideoGenNG`, `HdMultiNG`,
-`ComfyNG`):
+(`GenerateNG`, `ChatNG`, `RachelNG`, `VideoGenNG`, `H3NG`, `MusicNG`,
+`HdMultiNG`, `ComfyNG`):
 ```js
 if (window.<Name>NG) window.<Name>NG.sync(active);
 ```

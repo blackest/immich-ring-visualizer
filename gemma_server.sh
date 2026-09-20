@@ -16,6 +16,9 @@
 set -euo pipefail
 
 PORT="${RINGVIZ_GEMMA_SERVER_PORT:-8811}"
+# 0.0.0.0 so LAN peers (e.g. the Hermes/Rachel gateway) can reach this
+# directly, not just processes on this machine.
+HOST="${RINGVIZ_GEMMA_SERVER_HOST:-0.0.0.0}"
 
 resolve_repo_dir() {
     if [ -n "${LTX_MLX_DIR:-}" ]; then
@@ -58,5 +61,5 @@ if [ ! -d "$GEMMA" ]; then
     exit 1
 fi
 
-echo "Starting Gemma server: $GEMMA on port $PORT"
-exec "$PYTHON" -m mlx_vlm.server --model "$GEMMA" --port "$PORT"
+echo "Starting Gemma server: $GEMMA on $HOST:$PORT"
+exec "$PYTHON" -m mlx_vlm.server --model "$GEMMA" --host "$HOST" --port "$PORT"

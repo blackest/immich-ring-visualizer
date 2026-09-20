@@ -9,9 +9,15 @@ output. One input (reference image + prompt + duration) -> one output
 Deliberately out of scope here (keep this file small -- add a sibling
 module later if any of these turn out to be needed, don't grow this
 one): quality-tier selection (always the "high" tier: two-stages-hq,
-1024x576, 10+3 steps), LoRA, and phosphene's persistent warm-helper
-process (fine for occasional single renders to eat the model-load
-cost per call instead).
+1024x576, 10+3 steps), and phosphene's persistent warm-helper process
+(fine for occasional single renders to eat the model-load cost per
+call instead).
+
+Optional style/character LoRAs (on top of the fixed --distilled-lora
+refine step above) ARE in scope, but only as a thin pass-through of
+an already-resolved path + strength -- see ltx_loraNG.py, a sibling
+module, for discovering what's on disk and resolving a UI-supplied
+name to a real path.
 """
 
 from __future__ import annotations
@@ -250,6 +256,7 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
                            config: LtxConfig,
                            width: Optional[int] = None, height: Optional[int] = None,
                            frame_rate: Optional[float] = None,
+                           lora_path: Optional[str] = None, lora_strength: float = 1.0,
                            on_log: Optional[Callable[[str], None]] = None,
                            on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
@@ -260,7 +267,10 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
     flag is present, not a different pipeline. width/height/frame_rate
     default to LTX_WIDTH/LTX_HEIGHT/LTX_FRAME_RATE when omitted; when
     given, they're validated (dims must be multiples of LTX_DIM_STEP,
-    see its docstring)."""
+    see its docstring). lora_path is optional and separate from the
+    fixed --distilled-lora stage-2 refine step above -- it's the CLI's
+    own repeatable --lora PATH STRENGTH flag (see ltx_loraNG.py for how
+    a name from the UI resolves to a real path on disk)."""
     width = LTX_WIDTH if width is None else int(width)
     height = LTX_HEIGHT if height is None else int(height)
     frame_rate = LTX_FRAME_RATE if frame_rate is None else float(frame_rate)
@@ -284,6 +294,8 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
             f"{config.gemma_path or LTX_DEFAULT_GEMMA}")
     if image_path is not None and not Path(image_path).is_file():
         raise FileNotFoundError(f"LTX reference image not found at {image_path}")
+    if lora_path is not None and not Path(lora_path).is_file():
+        raise FileNotFoundError(f"LTX LoRA checkpoint not found at {lora_path}")
 
     frames = _duration_to_frames_ng(duration_s, frame_rate)
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
@@ -311,6 +323,8 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
     ]
     if image_path is not None:
         cmd += ["--image", image_path]
+    if lora_path is not None:
+        cmd += ["--lora", lora_path, str(lora_strength)]
 
     if on_log:
         on_log(f"[ltx] launching {frames} frames (~{(frames - 1) / frame_rate:.1f}s) "

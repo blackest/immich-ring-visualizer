@@ -46,6 +46,13 @@
     els.generateBtn = $("ng-comfy-generate-btn");
     els.workflowList = $("ng-comfy-workflow-list");
     els.serverImages = $("ng-comfy-server-images");
+    els.imagesTabInput = $("ng-comfy-images-tab-input");
+    els.imagesTabOutput = $("ng-comfy-images-tab-output");
+    els.serverImagesFilter = $("ng-comfy-server-images-filter");
+    els.serverImagesPager = $("ng-comfy-server-images-pager");
+    els.serverImagesPrev = $("ng-comfy-server-images-prev");
+    els.serverImagesNext = $("ng-comfy-server-images-next");
+    els.serverImagesPageLabel = $("ng-comfy-server-images-page-label");
     els.queueCount = $("ng-comfy-queue-count");
     els.queueEmpty = $("ng-comfy-queue-empty");
     els.queue = $("ng-comfy-queue");
@@ -71,7 +78,22 @@
     var wrap = document.createElement("div");
     wrap.className = "ng-gen-ref-paste ng-comfy-image-field";
     wrap.tabIndex = 0;
-    wrap.title = "Click here, then paste (Cmd+V) a photo, or use the button below to choose one from disk.";
+    wrap.title = "Click or drop an image here, or paste (Cmd+V) -- iPad has no Cmd+V, so click opens its own photo picker.";
+
+    // Click-to-browse opens the system file/photo picker -- on iPad
+    // there's no real Ctrl/Cmd+V for pasting an image, and no drag
+    // source to drop from either, so the box itself has to be a usable
+    // target, not just a paste catcher. Shared with diskBtn below (kept
+    // as a second, more discoverable way to reach the same picker).
+    function browseForFile() {
+      var fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.accept = "image/*";
+      fileInput.addEventListener("change", function () {
+        if (fileInput.files && fileInput.files[0]) setPending(fileInput.files[0]);
+      });
+      fileInput.click();
+    }
 
     var clearBtn = document.createElement("button");
     clearBtn.type = "button";
@@ -88,15 +110,7 @@
     diskBtn.type = "button";
     diskBtn.className = "ng-gen-btn ng-gen-btn-quiet";
     diskBtn.textContent = "+ choose from disk…";
-    diskBtn.addEventListener("click", function () {
-      var fileInput = document.createElement("input");
-      fileInput.type = "file";
-      fileInput.accept = "image/*";
-      fileInput.addEventListener("change", function () {
-        if (fileInput.files && fileInput.files[0]) setPending(fileInput.files[0]);
-      });
-      fileInput.click();
-    });
+    diskBtn.addEventListener("click", browseForFile);
 
     // For multi-reference workflows (identity ref / scene ref / clothing
     // ref, say) whose source images live on whatever machine ComfyUI
@@ -141,11 +155,22 @@
 
     function currentValueUrl() {
       if (!f.value) return null;
-      var parts = String(f.value).split("/");
+      // A value picked from the output/temp gallery carries ComfyUI's
+      // own "name [output]" annotation (folder_paths.get_annotated_
+      // filepath) -- strip it back off to preview it, same type the
+      // annotation names rather than always assuming input.
+      var value = String(f.value);
+      var type = "input";
+      var m = /^(.*) \[(input|output|temp)\]$/.exec(value);
+      if (m) {
+        value = m[1];
+        type = m[2];
+      }
+      var parts = value.split("/");
       var filename = parts.pop();
       var subfolder = parts.join("/");
       return "/api/ng/comfy/view?filename=" + encodeURIComponent(filename) +
-        "&subfolder=" + encodeURIComponent(subfolder) + "&type=input";
+        "&subfolder=" + encodeURIComponent(subfolder) + "&type=" + type;
     }
 
     // Rebuilds wrap's content from scratch each time, same as Generate's
@@ -169,7 +194,7 @@
         wrap.classList.add("ng-gen-ref-paste-filled");
       } else {
         wrap.classList.remove("ng-gen-ref-paste-filled");
-        wrap.textContent = "Paste an image here (Ctrl+V)";
+        wrap.textContent = "Click or drop an image here (or paste with Ctrl+V)";
       }
       clearBtn.style.display = f._pendingFile ? "" : "none";
     }
@@ -184,6 +209,21 @@
           return;
         }
       }
+    });
+
+    // iPad has no reliable Ctrl/Cmd+V for an image and no drag source
+    // to drop from within the app itself, but Safari/iPadOS *does*
+    // support dropping a photo dragged in from the Files/Photos app --
+    // and a plain click opens the same native picker as "+ choose from
+    // disk" above, which is the actually-usable path there.
+    wrap.addEventListener("click", browseForFile);
+    wrap.addEventListener("dragover", function (e) {
+      e.preventDefault();
+    });
+    wrap.addEventListener("drop", function (e) {
+      e.preventDefault();
+      var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file && /^image\//.test(file.type)) setPending(file);
     });
 
     var container = document.createElement("div");
@@ -272,6 +312,22 @@
     els.actions.style.display = fields.length ? "" : "none";
   }
 
+  // Shared by every extraction source (upload, paste, saved-workflow
+  // library, and a server-images gallery pick) -- each just fetches
+  // {extractId, fields} its own way and hands it here to become the
+  // live form.
+  function applyExtractData(data, label) {
+    if (data.error) {
+      setExtractStatus("Error: " + data.error);
+      return;
+    }
+    extractId = data.extractId;
+    fields = data.fields || [];
+    currentWorkflowLabel = label;
+    setExtractStatus(fields.length + " editable field(s) found.");
+    renderFields();
+  }
+
   function extractWorkflow(file) {
     if (!file) return;
     setExtractStatus("Reading workflow…");
@@ -282,20 +338,29 @@
     form.append("png", file);
 
     fetch("/api/ng/comfy/extract", { method: "POST", body: form })
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (data) {
-        if (data.error) {
-          setExtractStatus("Error: " + data.error);
-          return;
-        }
-        extractId = data.extractId;
-        fields = data.fields || [];
-        currentWorkflowLabel = file.name;
-        setExtractStatus(fields.length + " editable field(s) found.");
-        renderFields();
-      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) { applyExtractData(data, file.name); })
+      .catch(function (e) {
+        setExtractStatus("Error: " + e.message);
+      });
+  }
+
+  // Lets a past output (or input) image double as its own workflow PNG
+  // -- reads it straight off disk server-side (routes/comfyNG.py's
+  // extract_comfy_server_image_ng), no download/upload round trip.
+  function loadServerImageAsWorkflow(name, type) {
+    var parts = String(name).split("/");
+    var filename = parts.pop();
+    var subfolder = parts.join("/");
+    setExtractStatus("Reading workflow…");
+    els.fieldsWrap.innerHTML = "";
+    els.actions.style.display = "none";
+
+    var url = "/api/ng/comfy/server-images/extract?filename=" + encodeURIComponent(filename) +
+      "&subfolder=" + encodeURIComponent(subfolder) + "&type=" + type;
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) { applyExtractData(data, name); })
       .catch(function (e) {
         setExtractStatus("Error: " + e.message);
       });
@@ -320,48 +385,108 @@
   // pick from disk. Loaded once at init, same as the saved-workflow
   // library -- the input folder isn't scoped to whichever workflow is
   // currently loaded, so there's nothing to re-fetch on Generate/extract.
+  var serverImagesType = "input"; // "input" | "output", see setServerImagesType
+  var serverImagesAll = []; // full filename list for serverImagesType, fetched once
+  var serverImagesFilter = ""; // lowercased substring, see getFilteredServerImages
+  var serverImagesPage = 0; // 0-indexed, into the filtered list
+  var SERVER_IMAGES_PAGE_SIZE = 10;
+
+  // Filtering happens entirely against the in-memory serverImagesAll --
+  // no re-fetch, same reasoning as paging itself (see loadServerImages).
+  function getFilteredServerImages() {
+    if (!serverImagesFilter) return serverImagesAll;
+    return serverImagesAll.filter(function (name) {
+      return name.toLowerCase().indexOf(serverImagesFilter) !== -1;
+    });
+  }
+
   function loadServerImages() {
     if (!els.serverImages) return;
     els.serverImages.innerHTML = "";
+    if (els.serverImagesPager) els.serverImagesPager.style.display = "none";
     var loading = document.createElement("p");
     loading.className = "ng-placeholder";
     loading.textContent = "Loading…";
     els.serverImages.appendChild(loading);
 
-    fetch("/api/ng/comfy/server-images")
+    fetch("/api/ng/comfy/server-images?type=" + serverImagesType)
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data.error) {
           els.serverImages.innerHTML = "";
           var p = document.createElement("p");
           p.className = "ng-placeholder";
-          p.textContent = "Couldn't list ComfyUI's input images: " + data.error;
+          p.textContent = "Couldn't list ComfyUI's " + serverImagesType + " images: " + data.error;
           els.serverImages.appendChild(p);
           return;
         }
-        renderServerImages(data.images || []);
+        serverImagesAll = data.images || [];
+        serverImagesPage = 0;
+        renderServerImagesPage();
       })
       .catch(function (e) {
         els.serverImages.innerHTML = "";
         var p = document.createElement("p");
         p.className = "ng-placeholder";
-        p.textContent = "Couldn't list ComfyUI's input images: " + e.message;
+        p.textContent = "Couldn't list ComfyUI's " + serverImagesType + " images: " + e.message;
         els.serverImages.appendChild(p);
       });
   }
 
+  // Switches the gallery between ComfyUI's input/ and output/ folders
+  // (routes/comfyNG.py's list_comfy_server_images_ng) -- input/ for
+  // stuff dropped there directly, output/ for stuff ComfyUI itself
+  // generated (previous renders you want to feed back in as a ref).
+  function setServerImagesType(type) {
+    if (type === serverImagesType) return;
+    serverImagesType = type;
+    if (els.imagesTabInput) els.imagesTabInput.classList.toggle("active", type === "input");
+    if (els.imagesTabOutput) els.imagesTabOutput.classList.toggle("active", type === "output");
+    loadServerImages();
+  }
+
+  // The filename list itself (serverImagesAll) is cheap even at ~1000
+  // entries -- one JSON array. What isn't cheap is a real <img> per
+  // entry: each one is a live fetch through /api/ng/comfy/view, and an
+  // iPad falls over trying to load/decode a thousand of those at once.
+  // So the network list is fetched whole, but only rendered a page
+  // (SERVER_IMAGES_PAGE_SIZE) at a time -- paging just re-slices the
+  // array already in memory, no re-fetch.
+  function renderServerImagesPage() {
+    var filtered = getFilteredServerImages();
+    var start = serverImagesPage * SERVER_IMAGES_PAGE_SIZE;
+    var slice = filtered.slice(start, start + SERVER_IMAGES_PAGE_SIZE);
+    renderServerImages(slice);
+
+    if (els.serverImagesPager) {
+      els.serverImagesPager.style.display = filtered.length > SERVER_IMAGES_PAGE_SIZE ? "flex" : "none";
+    }
+    if (els.serverImagesPrev) els.serverImagesPrev.disabled = serverImagesPage === 0;
+    if (els.serverImagesNext) {
+      els.serverImagesNext.disabled = start + SERVER_IMAGES_PAGE_SIZE >= filtered.length;
+    }
+    if (els.serverImagesPageLabel) {
+      var totalPages = Math.max(1, Math.ceil(filtered.length / SERVER_IMAGES_PAGE_SIZE));
+      els.serverImagesPageLabel.textContent = (serverImagesPage + 1) + " / " + totalPages;
+    }
+  }
+
   // Reuses the saved-workflow card look (.ng-comfy-workflow-list/-card,
   // see styleNG.css) -- same "grid of square thumbnails with a filename
-  // caption" shape, just images instead of saved workflows.
+  // caption" shape, just images instead of saved workflows. `images` is
+  // already just the current page's slice -- see renderServerImagesPage.
   function renderServerImages(images) {
     els.serverImages.innerHTML = "";
     if (!images.length) {
       var p = document.createElement("p");
       p.className = "ng-placeholder";
-      p.textContent = "No images in ComfyUI's input folder.";
+      p.textContent = serverImagesFilter
+        ? "No images match \"" + serverImagesFilter + "\"."
+        : "No images in ComfyUI's " + serverImagesType + " folder.";
       els.serverImages.appendChild(p);
       return;
     }
+    var type = serverImagesType;
     images.forEach(function (name) {
       var parts = String(name).split("/");
       var filename = parts.pop();
@@ -373,7 +498,7 @@
 
       var img = document.createElement("img");
       img.src = "/api/ng/comfy/view?filename=" + encodeURIComponent(filename) +
-        "&subfolder=" + encodeURIComponent(subfolder) + "&type=input";
+        "&subfolder=" + encodeURIComponent(subfolder) + "&type=" + type;
       img.alt = "";
       card.appendChild(img);
 
@@ -382,17 +507,34 @@
       label.textContent = name;
       card.appendChild(label);
 
-      card.addEventListener("click", function () { pickServerImage(name); });
+      var loadWfBtn = document.createElement("button");
+      loadWfBtn.type = "button";
+      loadWfBtn.className = "ng-comfy-server-image-extract";
+      loadWfBtn.textContent = "Load as workflow";
+      loadWfBtn.title = "Read this image's own embedded ComfyUI workflow instead of using it as a reference";
+      loadWfBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        loadServerImageAsWorkflow(name, type);
+      });
+      card.appendChild(loadWfBtn);
+
+      card.addEventListener("click", function () { pickServerImage(name, type); });
       els.serverImages.appendChild(card);
     });
   }
 
-  function pickServerImage(filename) {
+  function pickServerImage(filename, type) {
     if (!activeImageField) {
       alert('Click "Pick from server list" on an image field first, then choose one here.');
       return;
     }
-    activeImageField._applyServerFilename(filename);
+    // Anything other than input/ needs ComfyUI's own "name [output]"
+    // annotation (folder_paths.get_annotated_filepath) so a LoadImage
+    // node resolves it from the right folder at execution time --
+    // input/ files stay a bare filename, same as ComfyUI's own widget
+    // would set.
+    var value = type === "output" ? filename + " [output]" : filename;
+    activeImageField._applyServerFilename(value);
     setActiveImageField(null, null);
   }
 
@@ -758,6 +900,29 @@
     });
     els.pngPaste.addEventListener("paste", handlePngPaste);
     els.generateBtn.addEventListener("click", startGenerate);
+    if (els.imagesTabInput) els.imagesTabInput.addEventListener("click", function () { setServerImagesType("input"); });
+    if (els.imagesTabOutput) els.imagesTabOutput.addEventListener("click", function () { setServerImagesType("output"); });
+    if (els.serverImagesPrev) {
+      els.serverImagesPrev.addEventListener("click", function () {
+        if (serverImagesPage === 0) return;
+        serverImagesPage -= 1;
+        renderServerImagesPage();
+      });
+    }
+    if (els.serverImagesNext) {
+      els.serverImagesNext.addEventListener("click", function () {
+        if ((serverImagesPage + 1) * SERVER_IMAGES_PAGE_SIZE >= getFilteredServerImages().length) return;
+        serverImagesPage += 1;
+        renderServerImagesPage();
+      });
+    }
+    if (els.serverImagesFilter) {
+      els.serverImagesFilter.addEventListener("input", function () {
+        serverImagesFilter = els.serverImagesFilter.value.trim().toLowerCase();
+        serverImagesPage = 0;
+        renderServerImagesPage();
+      });
+    }
     loadWorkflowList();
     loadServerImages();
     renderQueue();
