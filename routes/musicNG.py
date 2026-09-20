@@ -156,15 +156,16 @@ def music_serve_audio_ng(job_id):
 
 @musicNG_bp.route("/api/ng/music/jobs/<job_id>/score", methods=["GET"])
 def music_serve_score_ng(job_id):
-    """The actual sheet music -- the ABC score SheetSage2 transcribed
-    from a cover job's source track (music_jobsNG.MusicJobNG.score_path).
-    Plain-text ABC notation, not audio; 404 for a non-cover job or one
-    that hasn't reached this point yet."""
+    """The actual sheet music: for a cover job, the ABC score SheetSage2
+    transcribed from the source track; for plain generate, the model's own
+    composed ABC (music_jobsNG.MusicJobNG.score_path either way). Plain-text
+    ABC notation, not audio; 404 if it isn't ready yet or mode="off" meant
+    no score was ever produced."""
     job = music_jobs.get_job_ng(job_id)
     if job is None:
         return jsonify({"error": f"no such job {job_id!r}"}), 404
     if not job.score_path or not os.path.isfile(job.score_path):
-        return jsonify({"error": "score not ready or this isn't a cover job"}), 404
+        return jsonify({"error": "score not ready or this job has no ABC score"}), 404
     return send_file(
         job.score_path,
         mimetype="text/plain",

@@ -60,7 +60,9 @@ class MusicJobNG:
     error_type: Optional[str] = None
     audio_path: Optional[str] = None
     audio_seconds: Optional[float] = None
-    score_path: Optional[str] = None  # cover only -- the transcribed ABC sheet music
+    # Cover: the SOURCE track's transcribed ABC. Plain generate: the model's
+    # own composed ABC (absent only when mode="off", see generate_music_ng).
+    score_path: Optional[str] = None
     log_lines: list = field(default_factory=list)
     cancelled: bool = False
     _log_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -117,7 +119,6 @@ def _worker_loop() -> None:
                     duration_s=job.duration_s, cfg_scale=job.cfg_scale,
                     on_log=job.append_log,
                     on_proc_start=lambda p: setattr(job, "_proc", p))
-                job.score_path = result.get("score_path")
             else:
                 result = music.generate_music_ng(
                     style=job.style, lyrics=job.lyrics, duration_s=job.duration_s,
@@ -126,6 +127,7 @@ def _worker_loop() -> None:
                     mode=job.mode, instrumental=job.instrumental, cfg_scale=job.cfg_scale,
                     on_log=job.append_log,
                     on_proc_start=lambda p: setattr(job, "_proc", p))
+            job.score_path = result.get("score_path")
             job.audio_path = result["audio_path"]
             job.audio_seconds = result.get("audio_seconds")
         except Exception as e:  # noqa: BLE001 -- job.error is the report

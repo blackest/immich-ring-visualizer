@@ -154,11 +154,18 @@ def _validate_music_duration_ng(duration_s: float) -> None:
 
 
 def _clean_subprocess_env_ng() -> dict:
-    """Same Malloc*-stripping helper as ltx_engineNG.py/h3_engineNG.py."""
+    """Same Malloc*-stripping helper as ltx_engineNG.py/h3_engineNG.py, plus
+    unsetting the PyTorch MPS fallback/fast-math vars: this machine's shell
+    profile exports PYTORCH_ENABLE_MPS_FALLBACK=1 globally (for other tools),
+    but yue2-mlx's pipeline.py hard-refuses to run at all when either var is
+    "1" -- it's MLX-native and treats that PyTorch escape hatch as an
+    unvalidated execution path, not something to silently fall back to."""
     env = os.environ.copy()
     for key in list(env.keys()):
         if key.startswith("Malloc"):
             del env[key]
+    env.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
+    env.pop("PYTORCH_MPS_FAST_MATH", None)
     return env
 
 
@@ -378,6 +385,10 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
     audio_path = song_dir / "audio.flac"
     if not audio_path.exists() or audio_path.stat().st_size == 0:
         raise RuntimeError(f"Music gen finished but no/empty audio at {audio_path}")
+    # Present whenever mode isn't "off" -- the model composes its own ABC
+    # transcription as part of generating (yue2/pipeline.py's save_artifacts
+    # only skips it when self.abc is None, i.e. cot="off").
+    score_path = song_dir / "score.abc"
 
     # `lyra generate`'s own final stdout line is a JSON summary (_save in
     # yue2-mlx/src/lyra/cli.py) -- best-effort parse for the real
@@ -386,13 +397,16 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
     summary = {}
     for line in reversed(tail_lines):
         try:
-            summary = json.loads(line)
-            break
+            parsed = json.loads(line)
         except ValueError:
             continue
+        if isinstance(parsed, dict):
+            summary = parsed
+            break
 
     return {
         "audio_path": str(audio_path),
+        "score_path": str(score_path) if score_path.is_file() else None,
         "request_path": str(request_path),
         "seed": seed,
         "engine": f"yue2-{config.precision}",
@@ -509,10 +523,12 @@ def generate_cover_ng(audio_path: str, output_dir: Path, seed: Optional[int],
     summary = {}
     for line in reversed(tail_lines):
         try:
-            summary = json.loads(line)
-            break
+            parsed = json.loads(line)
         except ValueError:
             continue
+        if isinstance(parsed, dict):
+            summary = parsed
+            break
 
     return {
         "audio_path": str(audio_out),
