@@ -370,11 +370,16 @@
   // not on `item` -- rowCache reuses this same DOM node across
   // renderQueue() calls as long as the row's signature is unchanged,
   // so a plain data flag on the node survives those re-renders).
-  function toggleAbcStaff(item, wrap, btn) {
+  // mode "staff" (default) renders standard notation; mode "tab" adds
+  // abcjs's tablature option, converting the same ABC to guitar fret
+  // numbers -- ABC text is unchanged, this is purely a renderAbc option.
+  function toggleAbcRender(item, wrap, btn, mode) {
+    var showLabel = mode === "tab" ? "Show guitar tab" : "Show sheet music";
+    var hideLabel = mode === "tab" ? "Hide guitar tab" : "Hide sheet music";
     if (wrap.dataset.loaded === "1") {
       var showing = wrap.style.display !== "none";
       wrap.style.display = showing ? "none" : "";
-      btn.textContent = showing ? "Show sheet music" : "Hide sheet music";
+      btn.textContent = showing ? showLabel : hideLabel;
       return;
     }
     if (!window.ABCJS || !window.ABCJS.renderAbc) {
@@ -390,15 +395,19 @@
         return r.text();
       })
       .then(function (abcText) {
-        window.ABCJS.renderAbc(wrap, abcText, { responsive: "resize" });
+        var opts = { responsive: "resize" };
+        if (mode === "tab") {
+          opts.tablature = [{ instrument: "guitar", tuning: ["E,", "A,", "D", "G", "B", "e"] }];
+        }
+        window.ABCJS.renderAbc(wrap, abcText, opts);
         wrap.dataset.loaded = "1";
         wrap.style.display = "";
-        btn.textContent = "Hide sheet music";
+        btn.textContent = hideLabel;
       })
       .catch(function (e) {
         wrap.textContent = "Could not load sheet music: " + e.message;
         wrap.style.display = "";
-        btn.textContent = "Show sheet music";
+        btn.textContent = showLabel;
       })
       .then(function () {
         btn.disabled = false;
@@ -438,6 +447,69 @@
       })
       .catch(function (e) {
         setStatus("Could not export MIDI: " + e.message);
+      })
+      .then(function () {
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  }
+
+  // Opens a bare print-friendly popup, renders the ABC into it with the
+  // same vendored abcjs, and triggers window.print() -- "Save as PDF" in
+  // the browser's print dialog is the export. No server-side rendering,
+  // no new vendored PDF library, matches the client-side-only pattern
+  // toggleAbcRender/downloadAbcAsMidi already use. mode "tab" adds the
+  // same tablature option toggleAbcRender uses for the on-page tab view.
+  function printAbcAsPdf(item, btn, mode) {
+    var origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Preparing...";
+    fetch(item.scoreUrl)
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
+      .then(function (abcText) {
+        var w = window.open("", "_blank", "width=900,height=1200");
+        if (!w) throw new Error("popup blocked -- allow popups to print sheet music");
+        var title = "music-" + item.jobId + (mode === "tab" ? "-tab" : "");
+        w.document.write(
+          "<!DOCTYPE html><html><head><title>" + title + "</title>" +
+          "<style>body{margin:24px;font-family:sans-serif;}" +
+          "#abc-target{max-width:800px;margin:0 auto;}" +
+          "@media print{body{margin:0;}}</style></head>" +
+          "<body><div id=\"abc-target\">Loading sheet music...</div>" +
+          "<script src=\"/static/vendor/abcjs-basic-min.js\"><\/script></body></html>"
+        );
+        w.document.close();
+        var waited = 0;
+        var poll = setInterval(function () {
+          waited += 50;
+          if (w.closed) {
+            clearInterval(poll);
+            return;
+          }
+          if (w.ABCJS && w.ABCJS.renderAbc) {
+            clearInterval(poll);
+            var opts = { responsive: "resize" };
+            if (mode === "tab") {
+              opts.tablature = [{ instrument: "guitar", tuning: ["E,", "A,", "D", "G", "B", "e"] }];
+            }
+            w.ABCJS.renderAbc("abc-target", abcText, opts);
+            w.onafterprint = function () { w.close(); };
+            setTimeout(function () {
+              w.focus();
+              w.print();
+            }, 150);
+          } else if (waited > 5000) {
+            clearInterval(poll);
+            var target = w.document.getElementById("abc-target");
+            if (target) target.textContent = "Sheet music renderer failed to load.";
+          }
+        }, 50);
+      })
+      .catch(function (e) {
+        setStatus("Could not prepare PDF: " + e.message);
       })
       .then(function () {
         btn.disabled = false;
@@ -536,6 +608,30 @@
         });
         row.appendChild(midiDl);
 
+        var pdfDl = document.createElement("button");
+        pdfDl.type = "button";
+        pdfDl.className = "ng-btn";
+        pdfDl.textContent = "Download sheet music (PDF)";
+        pdfDl.title = "Opens a print-friendly view -- choose \"Save as PDF\" in the print dialog.";
+        pdfDl.style.gridColumn = "1 / -1";
+        pdfDl.style.marginTop = "4px";
+        pdfDl.addEventListener("click", function () {
+          printAbcAsPdf(item, pdfDl, "staff");
+        });
+        row.appendChild(pdfDl);
+
+        var tabPdfDl = document.createElement("button");
+        tabPdfDl.type = "button";
+        tabPdfDl.className = "ng-btn";
+        tabPdfDl.textContent = "Download guitar tab (PDF)";
+        tabPdfDl.title = "Same print-to-PDF flow, rendered as guitar fret numbers (standard tuning).";
+        tabPdfDl.style.gridColumn = "1 / -1";
+        tabPdfDl.style.marginTop = "4px";
+        tabPdfDl.addEventListener("click", function () {
+          printAbcAsPdf(item, tabPdfDl, "tab");
+        });
+        row.appendChild(tabPdfDl);
+
         var staffWrap = document.createElement("div");
         staffWrap.className = "ng-music-abc-staff";
         staffWrap.style.gridColumn = "1 / -1";
@@ -549,9 +645,27 @@
         staffToggle.style.gridColumn = "1 / -1";
         staffToggle.style.marginTop = "4px";
         staffToggle.addEventListener("click", function () {
-          toggleAbcStaff(item, staffWrap, staffToggle);
+          toggleAbcRender(item, staffWrap, staffToggle, "staff");
         });
         row.appendChild(staffToggle);
+
+        var tabWrap = document.createElement("div");
+        tabWrap.className = "ng-music-abc-staff";
+        tabWrap.style.gridColumn = "1 / -1";
+        tabWrap.style.display = "none";
+        row.appendChild(tabWrap);
+
+        var tabToggle = document.createElement("button");
+        tabToggle.type = "button";
+        tabToggle.className = "ng-btn";
+        tabToggle.textContent = "Show guitar tab";
+        tabToggle.title = "Same score, rendered as guitar fret numbers (standard tuning).";
+        tabToggle.style.gridColumn = "1 / -1";
+        tabToggle.style.marginTop = "4px";
+        tabToggle.addEventListener("click", function () {
+          toggleAbcRender(item, tabWrap, tabToggle, "tab");
+        });
+        row.appendChild(tabToggle);
       }
     }
 
