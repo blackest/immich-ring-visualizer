@@ -2660,7 +2660,7 @@
                           id="ng-music-duration"
                           type="range"
                           min="30"
-                          max="360"
+                          max="900"
                           step="15"
                           value="240"
                           style="width: 100%"
@@ -2719,6 +2719,130 @@
                 <div
                   id="ng-music-log"
                   class="ng-vg-mainlog"
+                  style="display: none"
+                ></div>
+              </div>
+
+              <!-- Standalone ABC load/save/view tools -- independent of the
+                   composer above, works on any ABC file, generated here or
+                   not. See static/musicNG.js's abcTools* functions, which
+                   share their render/MIDI/print core with the queue rows'
+                   own ABC buttons. -->
+              <div
+                id="ng-music-abc-tools"
+                class="ng-gen-canvas"
+                style="margin-top: 16px"
+              >
+                <div class="ng-gen-label" style="margin-top: 0">
+                  Sheet music file
+                </div>
+                <p
+                  class="ng-gen-label"
+                  style="
+                    margin-top: 4px;
+                    text-transform: none;
+                    letter-spacing: 0;
+                  "
+                >
+                  Load an existing ABC file to view, print, or export it as
+                  MIDI. Edit the text directly and save your changes back to
+                  disk.
+                </p>
+                <p id="ng-music-abc-file-empty" class="ng-placeholder">
+                  No file loaded.
+                </p>
+                <p
+                  id="ng-music-abc-file-name"
+                  style="display: none; word-break: break-all"
+                ></p>
+                <input
+                  id="ng-music-abc-file"
+                  type="file"
+                  accept=".abc,text/plain"
+                  style="display: none"
+                />
+                <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                  <button
+                    type="button"
+                    id="ng-music-abc-file-btn"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto"
+                  >
+                    + load ABC file from disk&hellip;
+                  </button>
+                  <button
+                    type="button"
+                    id="ng-music-abc-save-btn"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto"
+                  >
+                    Save ABC file
+                  </button>
+                </div>
+                <textarea
+                  id="ng-music-abc-text"
+                  class="ng-gen-input"
+                  rows="10"
+                  style="margin-top: 8px; font-family: monospace"
+                  placeholder="X:1&#10;T:Untitled&#10;M:4/4&#10;L:1/8&#10;K:C&#10;CDEF GABc|"
+                ></textarea>
+                <div
+                  style="
+                    display: flex;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                    margin-top: 8px;
+                  "
+                >
+                  <button
+                    type="button"
+                    id="ng-music-abc-staff-toggle"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto"
+                  >
+                    Show sheet music
+                  </button>
+                  <button
+                    type="button"
+                    id="ng-music-abc-tab-toggle"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto"
+                  >
+                    Show guitar tab
+                  </button>
+                  <button
+                    type="button"
+                    id="ng-music-abc-midi-btn"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto"
+                  >
+                    Download MIDI
+                  </button>
+                  <button
+                    type="button"
+                    id="ng-music-abc-pdf-btn"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto"
+                  >
+                    Print sheet music (PDF)
+                  </button>
+                  <button
+                    type="button"
+                    id="ng-music-abc-tab-pdf-btn"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto"
+                  >
+                    Print guitar tab (PDF)
+                  </button>
+                </div>
+                <div
+                  id="ng-music-abc-staff-wrap"
+                  class="ng-music-abc-staff"
+                  style="display: none"
+                ></div>
+                <div
+                  id="ng-music-abc-tab-wrap"
+                  class="ng-music-abc-staff"
                   style="display: none"
                 ></div>
               </div>

@@ -111,7 +111,15 @@ MUSIC_DEFAULT_PRECISION: MusicPrecision = "8bit"
 # subprocess, never in-process.
 MUSIC_TOKENS_PER_SECOND = 25
 MUSIC_MIN_SECONDS = 8.0
-MUSIC_MAX_SECONDS = 360.0
+# yue2_run.py itself defaults this to 360.0 but accepts up to 900.0 (see
+# ComfyUI's own YuE2 node, same duration->max_tokens math, max_duration
+# capped at 900.0) -- 360 there is a conservative default, not a hard
+# ceiling, so raised to the model's actual max. Longer asks render
+# proportionally slower (~realtime at 8-bit) and autoregressive
+# coherence over a 15-minute single-shot generation is untested here --
+# nothing stops you from trying, just don't expect quality to hold up
+# past what's been validated at the old 6-minute default.
+MUSIC_MAX_SECONDS = 900.0
 # YuE2 has no instrumental switch of its own; its lyrics protocol reads
 # bare section tags with nothing under them as instrumental passages.
 # Validated by ear in phosphene's own bake-off (yue2_run.py's comment).
@@ -176,7 +184,11 @@ class MusicConfig:
     binary_path: str = ""    # default: MUSIC_DEFAULT_BIN
     model_dir: str = ""      # default: MUSIC_MODEL_DIR
     vae_dir: str = ""        # default: MUSIC_VAE_DIR
-    timeout_s: float = 900.0  # per-call watchdog; override via RINGVIZ_MUSIC_TIMEOUT_S
+    # per-call watchdog; override via RINGVIZ_MUSIC_TIMEOUT_S. Needs
+    # headroom above worst-case render time, not just to equal it --
+    # MUSIC_MAX_SECONDS now goes up to 900s and render is ~realtime at
+    # 8-bit, so 900s alone would leave zero buffer for model load/etc.
+    timeout_s: float = 1500.0
     # Cover adds a transcription pass on top of generate's own render,
     # plus a possible first-use HF download of the transcription/base
     # models -- more headroom than plain generate's timeout_s.

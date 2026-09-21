@@ -14,12 +14,19 @@
  * #ng-music-cover-toggle switches the form between them; queue items
  * carry isCover/task so buildQueueRow can tell them apart.
  *
- * A finished cover job's ABC score (item.scoreUrl) can be rendered as
- * an actual staff inline in its queue row -- see renderAbcStaff -- via
+ * A finished job's ABC score (item.scoreUrl) can be rendered as an
+ * actual staff inline in its queue row -- see toggleAbcRender -- via
  * vendored abcjs (static/vendor/abcjs-basic-min.js, loaded just before
  * this file, window.ABCJS). Fetched and rendered once per row, on
  * first click of its "Show sheet music" toggle, not eagerly for every
  * completed job.
+ *
+ * Below the composer, a separate ABC tools panel (#ng-music-abc-tools)
+ * lets you load any .abc file from disk, edit it in place, and save it
+ * back out -- independent of the job queue. It shares its render/MIDI/
+ * PDF core with the queue rows (toggleAbcRender/downloadAbcAsMidi/
+ * printAbcAsPdf all take a getText() callback now, fed either from a
+ * fetch of item.scoreUrl or straight from the panel's own textarea).
  *
  * Loaded after h3NG.js and before bootstrapWiringNG.js (which fires the
  * first ProjectManager.render(), which calls MusicNG.sync()).
@@ -38,10 +45,11 @@
   var pollTimer = null;
   var rowCache = {};
   var currentCoverBlob = null; // File picked for Cover mode's source track
+  var loadedAbcName = null; // filename of the last file loaded into the ABC tools panel
 
   // Length bounds -- match music_engineNG.py's MUSIC_MIN/MAX_SECONDS;
   // refreshed from /status once reachable so the two never drift apart.
-  var durationBounds = { min: 8.0, max: 360.0 };
+  var durationBounds = { min: 8.0, max: 900.0 };
 
   var els = {};
 
@@ -79,6 +87,20 @@
     els.generateBtn = document.getElementById("ng-music-generate-btn");
     els.status = document.getElementById("ng-music-status");
     els.mainLog = document.getElementById("ng-music-log");
+
+    els.abcFile = document.getElementById("ng-music-abc-file");
+    els.abcFileBtn = document.getElementById("ng-music-abc-file-btn");
+    els.abcFileEmpty = document.getElementById("ng-music-abc-file-empty");
+    els.abcFileName = document.getElementById("ng-music-abc-file-name");
+    els.abcSaveBtn = document.getElementById("ng-music-abc-save-btn");
+    els.abcText = document.getElementById("ng-music-abc-text");
+    els.abcStaffToggle = document.getElementById("ng-music-abc-staff-toggle");
+    els.abcTabToggle = document.getElementById("ng-music-abc-tab-toggle");
+    els.abcMidiBtn = document.getElementById("ng-music-abc-midi-btn");
+    els.abcPdfBtn = document.getElementById("ng-music-abc-pdf-btn");
+    els.abcTabPdfBtn = document.getElementById("ng-music-abc-tab-pdf-btn");
+    els.abcStaffWrap = document.getElementById("ng-music-abc-staff-wrap");
+    els.abcTabWrap = document.getElementById("ng-music-abc-tab-wrap");
   }
 
   function setStatus(msg) {
@@ -373,7 +395,25 @@
   // mode "staff" (default) renders standard notation; mode "tab" adds
   // abcjs's tablature option, converting the same ABC to guitar fret
   // numbers -- ABC text is unchanged, this is purely a renderAbc option.
-  function toggleAbcRender(item, wrap, btn, mode) {
+  // getText() returns a Promise<string> of the ABC source -- a fetch of
+  // a finished job's score for queue rows, or the (possibly hand-
+  // edited) ABC tools textarea for a loaded file; see fetchAbcText and
+  // abcToolsText below.
+  function fetchAbcText(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.text();
+    });
+  }
+
+  // clickListener is optional -- only the ABC tools panel passes one
+  // (see onAbcNoteClick below); queue rows have no textarea to jump to,
+  // so they render read-only. Confirmed live against the vendored
+  // abcjs build: clicking a rendered note DOES select its exact
+  // startChar/endChar range in a paired textarea -- drag-to-retranspose
+  // (the dragging/dragColor machinery also in that build) did NOT, in
+  // several real attempts, so it's deliberately not wired up here.
+  function toggleAbcRender(wrap, btn, mode, getText, clickListener) {
     var showLabel = mode === "tab" ? "Show guitar tab" : "Show sheet music";
     var hideLabel = mode === "tab" ? "Hide guitar tab" : "Hide sheet music";
     if (wrap.dataset.loaded === "1") {
@@ -389,16 +429,13 @@
     }
     btn.disabled = true;
     btn.textContent = "Loading...";
-    fetch(item.scoreUrl)
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.text();
-      })
+    getText()
       .then(function (abcText) {
         var opts = { responsive: "resize" };
         if (mode === "tab") {
           opts.tablature = [{ instrument: "guitar", tuning: ["E,", "A,", "D", "G", "B", "e"] }];
         }
+        if (clickListener) opts.clickListener = clickListener;
         window.ABCJS.renderAbc(wrap, abcText, opts);
         wrap.dataset.loaded = "1";
         wrap.style.display = "";
@@ -422,7 +459,7 @@
   // actual point here -- editable, re-scoreable, yours, same as the
   // ABC text download above, just in the format every music tool
   // already opens.
-  function downloadAbcAsMidi(item, btn) {
+  function downloadAbcAsMidi(btn, filenameBase, getText) {
     if (!window.ABCJS || !window.ABCJS.synth || !window.ABCJS.synth.getMidiFile) {
       setStatus("MIDI export not available (renderer failed to load).");
       return;
@@ -430,17 +467,13 @@
     var origText = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Converting...";
-    fetch(item.scoreUrl)
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.text();
-      })
+    getText()
       .then(function (abcText) {
         var midiUris = window.ABCJS.synth.getMidiFile(abcText, { midiOutputType: "encoded" });
         if (!midiUris || !midiUris[0]) throw new Error("no MIDI data produced");
         var a = document.createElement("a");
         a.href = midiUris[0];
-        a.download = "music-" + item.jobId + ".mid";
+        a.download = filenameBase + ".mid";
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -454,31 +487,129 @@
       });
   }
 
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // Section-level lyric placement, not syllable alignment -- neither
+  // pipeline (plain generate or cover transcription) ever tracks which
+  // word lands on which note, so per-syllable w: lines aren't possible
+  // without a real forced-alignment step. What IS reliable: the ABC's
+  // own "% sectionname" comments (yue2_run.py's own structure markers)
+  // line up 1:1, in order, with the lyrics' own [SectionName] tags --
+  // verified against real plain-generate job output, not assumed.
+  // Tested and rejected: using rests in the Vocal voice to split into
+  // per-LINE phrases -- phrase count didn't match lyric line count (the
+  // model freely compresses/stretches your line breaks when it sings),
+  // so that finer-grained mapping would confidently mislead a singer
+  // rather than help one.
+  //
+  // Requires an EXACT section-count match, not just zipping to the
+  // shorter list -- a plain generate's structure is driven entirely by
+  // your own [Tag]s so counts always match, but a cover's structure
+  // comes from the SOURCE track's transcription, which has no
+  // guaranteed relationship to how many sections your own replacement
+  // lyrics use. A count mismatch there means the pairing can't be
+  // trusted, so it's skipped rather than guessed (same reasoning as
+  // rejecting phrase-level: wrong-but-confident is worse than absent).
+  function zipAbcSectionsWithLyrics(abcText, lyricsText) {
+    var abcLabels = [];
+    var re = /^%\s*(.+)$/gm, m;
+    while ((m = re.exec(abcText))) abcLabels.push(m[1].trim());
+    if (!abcLabels.length) return [];
+
+    var parts = lyricsText.split(/\n?\[([A-Za-z][A-Za-z0-9 ]*)\]\n?/);
+    var lyricBlocks = [];
+    if (parts[0] && parts[0].trim()) lyricBlocks.push(parts[0].trim());
+    for (var i = 1; i < parts.length; i += 2) {
+      lyricBlocks.push((parts[i + 1] || "").trim());
+    }
+    if (lyricBlocks.length !== abcLabels.length) return [];
+
+    var out = [];
+    for (var j = 0; j < abcLabels.length; j++) {
+      var label = abcLabels[j];
+      out.push({ label: label.charAt(0).toUpperCase() + label.slice(1), text: lyricBlocks[j] });
+    }
+    return out;
+  }
+
+  // Prefixes the first note/rest line after each "% sectionname"
+  // comment with a quoted free-text annotation ("^Label") -- standard
+  // ABC decoration syntax, renders as a rehearsal-mark-style label
+  // above the staff at that point. Skips the "V: ..." voice header
+  // line(s) in between to land on actual note content.
+  function injectSectionAnnotations(abcText) {
+    var lines = abcText.split("\n");
+    var out = [];
+    var pendingLabel = null;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var m = /^%\s*(.+)$/.exec(line);
+      if (m) {
+        pendingLabel = m[1].trim();
+        out.push(line);
+        continue;
+      }
+      if (pendingLabel && line.trim() && !/^V:/.test(line.trim())) {
+        var label = pendingLabel.charAt(0).toUpperCase() + pendingLabel.slice(1);
+        out.push("\"^" + label.replace(/"/g, "") + "\"" + line);
+        pendingLabel = null;
+        continue;
+      }
+      out.push(line);
+    }
+    return out.join("\n");
+  }
+
   // Opens a bare print-friendly popup, renders the ABC into it with the
   // same vendored abcjs, and triggers window.print() -- "Save as PDF" in
   // the browser's print dialog is the export. No server-side rendering,
   // no new vendored PDF library, matches the client-side-only pattern
   // toggleAbcRender/downloadAbcAsMidi already use. mode "tab" adds the
   // same tablature option toggleAbcRender uses for the on-page tab view.
-  function printAbcAsPdf(item, btn, mode) {
+  // lyrics is optional (queue rows have item.lyrics; the standalone ABC
+  // tools panel doesn't know any lyrics, so it's omitted there) -- when
+  // given, adds rehearsal-mark section labels to the notation plus a
+  // matching lyrics-by-section block after it. See
+  // zipAbcSectionsWithLyrics's own comment for why this is section-
+  // level, not per-line/per-syllable.
+  function printAbcAsPdf(btn, filenameBase, mode, getText, lyrics) {
     var origText = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Preparing...";
-    fetch(item.scoreUrl)
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.text();
-      })
+    getText()
       .then(function (abcText) {
+        var renderText = abcText;
+        var lyricsHtml = "";
+        if (lyrics && lyrics.trim()) {
+          var sections = zipAbcSectionsWithLyrics(abcText, lyrics);
+          if (sections.length) {
+            renderText = injectSectionAnnotations(abcText);
+            lyricsHtml = "<div id=\"lyrics-block\">" + sections.map(function (s) {
+              return "<h3>" + escapeHtml(s.label) + "</h3><pre>" + escapeHtml(s.text) + "</pre>";
+            }).join("") + "</div>";
+          }
+        }
         var w = window.open("", "_blank", "width=900,height=1200");
         if (!w) throw new Error("popup blocked -- allow popups to print sheet music");
-        var title = "music-" + item.jobId + (mode === "tab" ? "-tab" : "");
+        var title = filenameBase + (mode === "tab" ? "-tab" : "");
         w.document.write(
           "<!DOCTYPE html><html><head><title>" + title + "</title>" +
           "<style>body{margin:24px;font-family:sans-serif;}" +
           "#abc-target{max-width:800px;margin:0 auto;}" +
-          "@media print{body{margin:0;}}</style></head>" +
+          "#lyrics-block{max-width:800px;margin:24px auto 0;}" +
+          "#lyrics-block h3{margin:16px 0 4px;font-size:1em;text-transform:uppercase;" +
+          "letter-spacing:0.05em;color:#555;}" +
+          "#lyrics-block h3:first-child{margin-top:0;}" +
+          "#lyrics-block pre{margin:0;font-family:inherit;white-space:pre-wrap;" +
+          "font-size:0.95em;line-height:1.4;}" +
+          "@media print{body{margin:0;}#lyrics-block{page-break-before:auto;}}" +
+          "</style></head>" +
           "<body><div id=\"abc-target\">Loading sheet music...</div>" +
+          lyricsHtml +
           "<script src=\"/static/vendor/abcjs-basic-min.js\"><\/script></body></html>"
         );
         w.document.close();
@@ -495,7 +626,7 @@
             if (mode === "tab") {
               opts.tablature = [{ instrument: "guitar", tuning: ["E,", "A,", "D", "G", "B", "e"] }];
             }
-            w.ABCJS.renderAbc("abc-target", abcText, opts);
+            w.ABCJS.renderAbc("abc-target", renderText, opts);
             w.onafterprint = function () { w.close(); };
             setTimeout(function () {
               w.focus();
@@ -604,7 +735,9 @@
         midiDl.style.gridColumn = "1 / -1";
         midiDl.style.marginTop = "4px";
         midiDl.addEventListener("click", function () {
-          downloadAbcAsMidi(item, midiDl);
+          downloadAbcAsMidi(midiDl, "music-" + item.jobId, function () {
+            return fetchAbcText(item.scoreUrl);
+          });
         });
         row.appendChild(midiDl);
 
@@ -616,7 +749,9 @@
         pdfDl.style.gridColumn = "1 / -1";
         pdfDl.style.marginTop = "4px";
         pdfDl.addEventListener("click", function () {
-          printAbcAsPdf(item, pdfDl, "staff");
+          printAbcAsPdf(pdfDl, "music-" + item.jobId, "staff", function () {
+            return fetchAbcText(item.scoreUrl);
+          }, item.lyrics);
         });
         row.appendChild(pdfDl);
 
@@ -628,7 +763,9 @@
         tabPdfDl.style.gridColumn = "1 / -1";
         tabPdfDl.style.marginTop = "4px";
         tabPdfDl.addEventListener("click", function () {
-          printAbcAsPdf(item, tabPdfDl, "tab");
+          printAbcAsPdf(tabPdfDl, "music-" + item.jobId, "tab", function () {
+            return fetchAbcText(item.scoreUrl);
+          }, item.lyrics);
         });
         row.appendChild(tabPdfDl);
 
@@ -645,7 +782,9 @@
         staffToggle.style.gridColumn = "1 / -1";
         staffToggle.style.marginTop = "4px";
         staffToggle.addEventListener("click", function () {
-          toggleAbcRender(item, staffWrap, staffToggle, "staff");
+          toggleAbcRender(staffWrap, staffToggle, "staff", function () {
+            return fetchAbcText(item.scoreUrl);
+          });
         });
         row.appendChild(staffToggle);
 
@@ -663,7 +802,9 @@
         tabToggle.style.gridColumn = "1 / -1";
         tabToggle.style.marginTop = "4px";
         tabToggle.addEventListener("click", function () {
-          toggleAbcRender(item, tabWrap, tabToggle, "tab");
+          toggleAbcRender(tabWrap, tabToggle, "tab", function () {
+            return fetchAbcText(item.scoreUrl);
+          });
         });
         row.appendChild(tabToggle);
       }
@@ -704,6 +845,93 @@
     els.mainLog.scrollTop = els.mainLog.scrollHeight;
   }
 
+  // ---- ABC tools panel -- load/edit/save/render a plain ABC file,
+  // independent of the AI job queue above. Shares its render/MIDI/PDF
+  // core with the queue rows via toggleAbcRender/downloadAbcAsMidi/
+  // printAbcAsPdf, just fed from the textarea instead of a fetched URL.
+  function abcToolsText() {
+    return els.abcText ? els.abcText.value : "";
+  }
+
+  function abcToolsGetText() {
+    return Promise.resolve(abcToolsText());
+  }
+
+  function abcToolsFilenameBase() {
+    return (loadedAbcName || "music").replace(/\.abc$/i, "");
+  }
+
+  // Clears the cached staff/tab render so the next toggle click re-
+  // renders from the current textarea contents instead of reusing a
+  // stale render from before a file load or an edit.
+  function resetAbcToolsRenders() {
+    [els.abcStaffWrap, els.abcTabWrap].forEach(function (wrap) {
+      if (!wrap) return;
+      wrap.dataset.loaded = "";
+      wrap.style.display = "none";
+    });
+    if (els.abcStaffToggle) els.abcStaffToggle.textContent = "Show sheet music";
+    if (els.abcTabToggle) els.abcTabToggle.textContent = "Show guitar tab";
+  }
+
+  function onAbcFileChosen() {
+    var f = els.abcFile.files && els.abcFile.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      if (els.abcText) els.abcText.value = String(reader.result || "");
+      loadedAbcName = f.name;
+      if (els.abcFileName) {
+        els.abcFileName.textContent = f.name;
+        els.abcFileName.style.display = "";
+      }
+      if (els.abcFileEmpty) els.abcFileEmpty.style.display = "none";
+      resetAbcToolsRenders();
+      setStatus("Loaded " + f.name + ".");
+    };
+    reader.onerror = function () {
+      setStatus("Could not read file: " + (reader.error && reader.error.message));
+    };
+    reader.readAsText(f);
+  }
+
+  // abcelem.startChar/endChar are character offsets into the ABC
+  // string that was actually rendered -- confirmed live against the
+  // vendored abcjs build (clicking a notehead selected the right
+  // substring in a paired textarea). Selecting rather than just moving
+  // the caret makes the hit visible without hunting for a blinking
+  // cursor in a wall of ABC syntax.
+  function onAbcNoteClick(abcelem) {
+    if (!els.abcText || !abcelem) return;
+    var start = abcelem.startChar;
+    var end = abcelem.endChar;
+    if (typeof start !== "number" || typeof end !== "number" || end <= start) return;
+    els.abcText.focus();
+    els.abcText.setSelectionRange(start, end);
+    var before = els.abcText.value.slice(0, start);
+    var lineNum = before.split("\n").length;
+    var lineHeight = parseFloat(getComputedStyle(els.abcText).lineHeight) || 16;
+    els.abcText.scrollTop = Math.max(0, (lineNum - 3) * lineHeight);
+  }
+
+  function saveAbcFile() {
+    var text = abcToolsText();
+    if (!text.trim()) {
+      setStatus("Nothing to save -- load or type ABC first.");
+      return;
+    }
+    var blob = new Blob([text], { type: "text/plain" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = abcToolsFilenameBase() + ".abc";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus("Saved " + a.download + ".");
+  }
+
   function init() {
     if (inited) return;
     refreshEls();
@@ -714,6 +942,37 @@
     if (els.coverToggle) els.coverToggle.addEventListener("change", onCoverToggleChange);
     if (els.coverFileBtn) els.coverFileBtn.addEventListener("click", function () { els.coverFile.click(); });
     if (els.coverFile) els.coverFile.addEventListener("change", onCoverFile);
+
+    if (els.abcFileBtn) els.abcFileBtn.addEventListener("click", function () { els.abcFile.click(); });
+    if (els.abcFile) els.abcFile.addEventListener("change", onAbcFileChosen);
+    if (els.abcSaveBtn) els.abcSaveBtn.addEventListener("click", saveAbcFile);
+    if (els.abcText) els.abcText.addEventListener("input", resetAbcToolsRenders);
+    if (els.abcStaffToggle) {
+      els.abcStaffToggle.addEventListener("click", function () {
+        toggleAbcRender(els.abcStaffWrap, els.abcStaffToggle, "staff", abcToolsGetText, onAbcNoteClick);
+      });
+    }
+    if (els.abcTabToggle) {
+      els.abcTabToggle.addEventListener("click", function () {
+        toggleAbcRender(els.abcTabWrap, els.abcTabToggle, "tab", abcToolsGetText, onAbcNoteClick);
+      });
+    }
+    if (els.abcMidiBtn) {
+      els.abcMidiBtn.addEventListener("click", function () {
+        downloadAbcAsMidi(els.abcMidiBtn, abcToolsFilenameBase(), abcToolsGetText);
+      });
+    }
+    if (els.abcPdfBtn) {
+      els.abcPdfBtn.addEventListener("click", function () {
+        printAbcAsPdf(els.abcPdfBtn, abcToolsFilenameBase(), "staff", abcToolsGetText);
+      });
+    }
+    if (els.abcTabPdfBtn) {
+      els.abcTabPdfBtn.addEventListener("click", function () {
+        printAbcAsPdf(els.abcTabPdfBtn, abcToolsFilenameBase(), "tab", abcToolsGetText);
+      });
+    }
+
     els.duration.addEventListener("input", function () {
       els.durationVal.textContent = formatDuration(els.duration.value);
     });
