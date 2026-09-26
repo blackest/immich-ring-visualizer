@@ -42,6 +42,7 @@ class H3JobNG:
     width: int = h3.H3_WIDTH
     height: int = h3.H3_HEIGHT
     steps: int = h3.H3_STEPS
+    timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
     finished_at: Optional[float] = None
@@ -99,10 +100,13 @@ def _worker_loop() -> None:
         try:
             if job.has_image and image_path is None:
                 raise FileNotFoundError("keyframe image went missing before render")
+            cfg_kwargs = {"model": job.model}
+            if job.timeout_s is not None:
+                cfg_kwargs["timeout_s"] = job.timeout_s
             result = h3.generate_h3_video_ng(
                 prompt=job.prompt, image_path=str(image_path) if image_path else None,
                 duration_s=job.duration_s, output_dir=job.job_dir,
-                seed=job.seed, config=h3.H3Config(model=job.model),
+                seed=job.seed, config=h3.H3Config(**cfg_kwargs),
                 width=job.width, height=job.height, steps=job.steps,
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
@@ -128,7 +132,8 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      duration_s: float, seed: Optional[int] = None,
                      model: h3.H3Model = "h3q8",
                      width: Optional[int] = None, height: Optional[int] = None,
-                     steps: Optional[int] = None) -> H3JobNG:
+                     steps: Optional[int] = None,
+                     timeout_s: Optional[float] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
     video_jobsNG.start_video_job_ng (see its own docstring for the full
@@ -158,7 +163,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
 
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
-                  width=width, height=height, steps=steps)
+                  width=width, height=height, steps=steps, timeout_s=timeout_s)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()

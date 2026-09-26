@@ -7,10 +7,12 @@
  * reference-image paste/drop/drag UX -- trimmed of what H3 doesn't
  * have server-side yet: no /enhance, /discuss, /chat (LTX's own
  * Gemma-side features), no LoRA dropdown, no durable Job Log view, no
- * width/height/fps controls (fixed at h3_engineNG.H3_WIDTH/HEIGHT/
- * STEPS for now). A `model` dropdown (h3 vs h3q8) replaces all of
- * that -- see h3_engineNG.py's docstring for why those are one engine,
- * not two.
+ * raw width/height/fps controls (steps fixed at h3_engineNG.H3_STEPS
+ * for now). A `model` dropdown (h3 vs h3q8) replaces the model split
+ * -- see h3_engineNG.py's docstring for why those are one engine, not
+ * two -- and a `quality` dropdown (h3_engineNG.H3_QUALITIES, sent as
+ * the named tier, resolved to width/height server-side) replaces
+ * picking a canvas size directly.
  *
  * Loaded after videogenNG.js and before bootstrapWiringNG.js (which
  * fires the first ProjectManager.render(), which calls H3NG.sync()).
@@ -66,6 +68,7 @@
     els.durationVal = document.getElementById("ng-h3-duration-val");
     els.seed = document.getElementById("ng-h3-seed");
     els.model = document.getElementById("ng-h3-model");
+    els.quality = document.getElementById("ng-h3-quality");
 
     els.generateBtn = document.getElementById("ng-h3-generate-btn");
     els.status = document.getElementById("ng-h3-status");
@@ -231,6 +234,7 @@
     var seedRaw = (els.seed.value || "").trim();
     var seed = seedRaw === "" ? null : parseInt(seedRaw, 10);
     var model = els.model ? els.model.value : "h3q8";
+    var quality = els.quality ? els.quality.value : "high";
 
     var localId = "h" + ++localSeq;
     var item = {
@@ -242,6 +246,7 @@
       durationS: durationS,
       seed: seed,
       model: model,
+      quality: quality,
       error: null,
       videoUrl: null,
       logTail: [],
@@ -261,6 +266,7 @@
     form.append("prompt", prompt);
     form.append("duration_s", String(durationS));
     form.append("model", model);
+    form.append("quality", quality);
     if (seed !== null && !isNaN(seed)) form.append("seed", String(seed));
 
     fetch(API + "/generate", { method: "POST", body: form })
@@ -339,7 +345,7 @@
   function rowSignature(item) {
     return JSON.stringify([
       item.status, item.prompt, item.durationS, item.seed, item.model,
-      item.error, item.videoUrl, item.jobId, item.refPreviewUrl,
+      item.quality, item.error, item.videoUrl, item.jobId, item.refPreviewUrl,
     ]);
   }
 
@@ -365,6 +371,7 @@
     var sub = document.createElement("div");
     sub.className = "sub";
     sub.textContent = item.durationS + "s, " + item.model +
+      (item.quality ? ", " + item.quality : "") +
       (item.seed !== null ? ", seed " + item.seed : "");
     meta.appendChild(sub);
     row.appendChild(meta);
@@ -383,7 +390,10 @@
     var rm = document.createElement("button");
     rm.type = "button";
     rm.className = "pose-remove";
-    rm.title = "remove from queue";
+    // removeItem() also DELETEs the job server-side, which kills the
+    // subprocess while it's rendering -- so this doubles as the abort
+    // button; the title/label just makes that explicit in that state.
+    rm.title = item.status === "rendering" ? "cancel render" : "remove from queue";
     rm.textContent = "✕";
     rm.addEventListener("click", function () { removeItem(item.localId); });
     statusRow.appendChild(rm);

@@ -2482,23 +2482,51 @@
                         placeholder="Seed (random)"
                       />
                     </div>
-                    <div style="margin-top: 8px">
-                      <label
-                        class="ng-gen-label"
-                        for="ng-h3-model"
-                        style="margin-top: 0"
-                        >Model</label
-                      >
-                      <select
-                        id="ng-h3-model"
-                        class="ng-gen-input"
-                        style="margin-bottom: 0"
-                      >
-                        <option value="h3q8">
-                          H3Q8 (quantized, recommended)
-                        </option>
-                        <option value="h3">H3 (bf16, full precision)</option>
-                      </select>
+                    <div
+                      style="display: flex; gap: 10px; align-items: flex-end; margin-top: 8px"
+                    >
+                      <div style="flex: 1">
+                        <label
+                          class="ng-gen-label"
+                          for="ng-h3-model"
+                          style="margin-top: 0"
+                          >Model</label
+                        >
+                        <select
+                          id="ng-h3-model"
+                          class="ng-gen-input"
+                          style="margin-bottom: 0"
+                        >
+                          <option value="h3q8">
+                            H3Q8 (quantized, recommended)
+                          </option>
+                          <option value="h3">H3 (bf16, full precision)</option>
+                        </select>
+                      </div>
+                      <div style="flex: 1">
+                        <label
+                          class="ng-gen-label"
+                          for="ng-h3-quality"
+                          style="margin-top: 0"
+                          >Quality</label
+                        >
+                        <select
+                          id="ng-h3-quality"
+                          class="ng-gen-input"
+                          style="margin-bottom: 0"
+                        >
+                          <option value="draft">Draft (640&times;384)</option>
+                          <option value="standard">
+                            Standard (768&times;448)
+                          </option>
+                          <option value="high" selected>
+                            High (1024&times;576)
+                          </option>
+                          <option value="native">
+                            Native (1344&times;768)
+                          </option>
+                        </select>
+                      </div>
                     </div>
                     <div
                       class="ng-gen-label"

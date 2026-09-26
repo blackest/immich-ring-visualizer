@@ -63,6 +63,8 @@ def h3_status_ng():
         "default_width": h3_engineNG.H3_WIDTH,
         "default_height": h3_engineNG.H3_HEIGHT,
         "default_steps": h3_engineNG.H3_STEPS,
+        "qualities": h3_engineNG.H3_QUALITIES,
+        "quality_timeouts_s": h3_engineNG.H3_QUALITY_TIMEOUTS,
         "dim_step": h3_engineNG.H3_DIM_STEP,
         "min_dim": h3_engineNG.H3_MIN_DIM,
         "max_dim": h3_engineNG.H3_MAX_DIM,
@@ -77,8 +79,12 @@ def h3_generate_ng():
     ref_frame_id (a live curation-session frame) -- omit both for a
     text-to-video job with no keyframe. Also: prompt (required),
     duration_s (optional float, default 5.0), model (optional,
-    "h3"|"h3q8", default "h3q8"), seed (optional int), width/height
-    (optional ints, multiples of 32), steps (optional int).
+    "h3"|"h3q8", default "h3q8"), seed (optional int), quality
+    (optional, one of h3_engineNG.H3_QUALITIES -- resolved to width/
+    height and to that tier's watchdog budget, H3_QUALITY_TIMEOUTS,
+    here), width/height (optional ints, multiples of 32, override
+    quality's dims when given -- the tier's timeout still applies since
+    it's resolved from `quality` alone), steps (optional int).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -92,7 +98,14 @@ def h3_generate_ng():
     seed = request.form.get("seed", type=int)
     width = request.form.get("width", type=int)
     height = request.form.get("height", type=int)
+    quality = request.form.get("quality")
+    if quality and width is None and height is None:
+        try:
+            width, height = h3_engineNG.resolve_h3_quality_ng(quality)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
     steps = request.form.get("steps", type=int)
+    timeout_s = h3_engineNG.resolve_h3_quality_timeout_ng(quality)
 
     try:
         img_bytes, ext = _resolve_ref_image_bytes()
@@ -102,7 +115,8 @@ def h3_generate_ng():
     try:
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
-            model=model, width=width, height=height, steps=steps)
+            model=model, width=width, height=height, steps=steps,
+            timeout_s=timeout_s)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

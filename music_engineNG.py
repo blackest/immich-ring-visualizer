@@ -236,6 +236,23 @@ def music_health_ng(precision: MusicPrecision = MUSIC_DEFAULT_PRECISION) -> dict
     }
 
 
+def _parse_trailing_json_ng(tail_lines: list) -> dict:
+    """`lyra generate`/`lyra cover`'s final summary is `json.dumps(..., indent=2)`
+    -- multi-line, so no single captured line parses on its own. Grow the
+    window from the last line backwards until it forms one complete JSON
+    object (any shorter suffix starts mid-object, e.g. `"timing": {`, which
+    is never valid on its own, so this can't mistake a nested fragment for
+    the real summary)."""
+    for start in range(len(tail_lines) - 1, -1, -1):
+        try:
+            parsed = json.loads("\n".join(tail_lines[start:]))
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
 _MUSIC_SUBPROCESS_LOCK = threading.Lock()
 
 
@@ -300,6 +317,18 @@ def _run_lyra_subprocess_ng(cmd: list, timeout_s: float, timeout_env_var: str,
     if rc != 0:
         if rc in (-15, 143, -9, 137, 130):
             raise MusicJobCancelled(f"Music job cancelled (rc={rc})")
+        # `lyra cover`'s own CLI returns rc=1 to flag a truncated render
+        # (commands.py: `return int(any(result.truncated.values()))`)
+        # even though it already wrote a complete audio.flac/score.abc --
+        # not a crash. Let the caller's own truncated-handling see it
+        # instead of throwing the finished render away.
+        if rc == 1:
+            parsed = _parse_trailing_json_ng(tail_lines)
+            truncated = parsed.get("truncated")
+            if isinstance(truncated, dict) and any(truncated.values()):
+                if on_log:
+                    on_log(f"[music] rc=1 but render completed truncated: {truncated}")
+                return tail_lines
         raise RuntimeError(f"Music job failed with rc={rc}: {' '.join(tail_lines[-5:])}")
     return tail_lines
 
@@ -406,15 +435,7 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
     # yue2-mlx/src/lyra/cli.py) -- best-effort parse for the real
     # audio_seconds/truncated info; the file on disk is the ground truth
     # either way, so a parse miss here never fails the render.
-    summary = {}
-    for line in reversed(tail_lines):
-        try:
-            parsed = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(parsed, dict):
-            summary = parsed
-            break
+    summary = _parse_trailing_json_ng(tail_lines)
 
     return {
         "audio_path": str(audio_path),
@@ -532,15 +553,7 @@ def generate_cover_ng(audio_path: str, output_dir: Path, seed: Optional[int],
         raise RuntimeError(f"Cover finished but no/empty audio at {audio_out}")
     score_path = cover_dir / "transcription" / "score.abc"
 
-    summary = {}
-    for line in reversed(tail_lines):
-        try:
-            parsed = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(parsed, dict):
-            summary = parsed
-            break
+    summary = _parse_trailing_json_ng(tail_lines)
 
     return {
         "audio_path": str(audio_out),

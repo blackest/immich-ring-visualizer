@@ -11,13 +11,18 @@ H3 and H3Q8 are the SAME model at two DiT precisions -- bf16
 or two separate subprocess calls. The VAEs/text-encoder (the "compact"
 pack) and the upstream text-encoder config are shared by both.
 
-Renders at H3's "high" tier -- 1024x576, true 16:9, 16 steps -- the
+Defaults to H3's "high" tier -- 1024x576, true 16:9, 16 steps -- the
 same canvas ltx_engineNG.py defaults to (LTX_WIDTH/LTX_HEIGHT), and
 phosphene's own recommended delivery canvas (see mlx_ltx_panel.py's
-_h3_qualities()["high"]). Measured there at 8 forwards/1024x576: 18.8
-min wall, no memory-wall difference vs the smaller "standard" canvas
-(the DiT weights dominate, not activations) -- so H3_TIMEOUT_S below
-budgets roughly double that for the 16-step default.
+_h3_qualities()["high"]). H3_QUALITIES below mirrors that same tier
+table (draft/standard/high/native) so callers can pick a size instead.
+Measured at "high", 8 forwards/1024x576: 18.8 min wall, no memory-wall
+difference vs the smaller "standard" canvas (the DiT weights dominate,
+not activations) -- so H3_TIMEOUT_S below budgets roughly double that
+for the 16-step default. Not (yet) re-measured at "native", the one
+tier above "high" -- if that turns out to need longer than the shared
+timeout, raise it per-call via RINGVIZ_H3_TIMEOUT_S rather than baking
+a bigger default in for every tier.
 
 Deliberately out of scope here (keep this file small -- add a sibling
 module later if any of these turn out to be needed, don't grow this
@@ -109,6 +114,32 @@ H3_WIDTH = 1024
 H3_HEIGHT = 576
 H3_STEPS = 16
 
+# Named size presets ("quality" in the UI) -- phosphene's own tier names
+# and dims (mlx_ltx_panel.py's _h3_qualities()), all true 16:9. "high" is
+# just H3_WIDTH/H3_HEIGHT under another name, so the existing default is
+# unchanged; "native" is above 720p (callers exporting to a 720p cap
+# should downscale on export, not pick native for delivery).
+H3_QUALITIES = {
+    "draft": (640, 384),
+    "standard": (768, 448),
+    "high": (H3_WIDTH, H3_HEIGHT),
+    "native": (1344, 768),
+}
+
+# Per-tier watchdog budget -- self-attention over the packed video tokens
+# scales worse than linearly with pixel count, so "native" (above "high"
+# on both dims) isn't safely covered by the same 3600s the smaller tiers
+# are measured against; give it more room rather than let a legitimate
+# native render race H3JobCancelled. Unmeasured guess, not a benchmark --
+# tune once a real native run's wall time is known. RINGVIZ_H3_TIMEOUT_S
+# (env) still overrides any of these when set, for manual tuning.
+H3_QUALITY_TIMEOUTS = {
+    "draft": 3600.0,
+    "standard": 3600.0,
+    "high": 3600.0,
+    "native": 7200.0,
+}
+
 H3_MIN_DURATION_S = 3.0
 H3_MAX_DURATION_S = 15.0
 
@@ -119,6 +150,26 @@ def _validate_h3_dims_ng(width: int, height: int) -> None:
             raise ValueError(f"{name} must be a multiple of {H3_DIM_STEP} (got {v})")
         if not (H3_MIN_DIM <= v <= H3_MAX_DIM):
             raise ValueError(f"{name} must be between {H3_MIN_DIM} and {H3_MAX_DIM} (got {v})")
+
+
+def resolve_h3_quality_ng(quality: str) -> tuple:
+    """Maps a named tier (see H3_QUALITIES) to (width, height). Raises
+    ValueError for an unknown name -- same "clean 400, not a KeyError"
+    shape as _validate_h3_dims_ng."""
+    dims = H3_QUALITIES.get(quality)
+    if dims is None:
+        raise ValueError(
+            f"quality must be one of {', '.join(H3_QUALITIES)} (got {quality!r})")
+    return dims
+
+
+def resolve_h3_quality_timeout_ng(quality: Optional[str]) -> Optional[float]:
+    """Maps a named tier to its H3_QUALITY_TIMEOUTS budget. None (no
+    named tier -- an explicit width/height call) or an unrecognized
+    name both return None, meaning "let H3Config.timeout_s's own
+    default apply" rather than raise -- unlike resolve_h3_quality_ng,
+    an unknown quality here isn't fatal to the render."""
+    return H3_QUALITY_TIMEOUTS.get(quality) if quality else None
 
 
 def _validate_h3_duration_ng(duration_s: float) -> None:
@@ -159,7 +210,8 @@ class H3Config:
     text_config: str = ""       # default: H3_TEXT_CONFIG
     dit_bf16_path: str = ""     # default: H3_DIT_BF16
     dit_q8_dir: str = ""        # default: H3_DIT_Q8_DIR
-    timeout_s: float = 3600.0   # per-call watchdog; override via RINGVIZ_H3_TIMEOUT_S
+    timeout_s: float = 3600.0   # absolute per-call ceiling; override via RINGVIZ_H3_TIMEOUT_S
+    stall_s: float = 1200.0     # no-output watchdog; override via RINGVIZ_H3_STALL_S
 
 
 def _resolve_h3_python_ng(config: H3Config) -> Optional[str]:
@@ -320,10 +372,12 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             on_proc_start(proc)
 
         timeout_s = float(os.environ.get("RINGVIZ_H3_TIMEOUT_S", config.timeout_s))
+        stall_s = float(os.environ.get("RINGVIZ_H3_STALL_S", config.stall_s))
         timed_out = {"v": False}
+        stalled = {"v": False}
+        last_activity = {"t": time.time()}
 
-        def _kill_on_timeout():
-            timed_out["v"] = True
+        def _kill_proc():
             try:
                 os.killpg(os.getpgid(proc.pid), 9)
             except Exception:
@@ -332,12 +386,38 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                 except Exception:
                     pass
 
+        def _kill_on_timeout():
+            timed_out["v"] = True
+            _kill_proc()
+
+        # Two watchdogs, not one: `watchdog` is the absolute ceiling for
+        # the whole call (catches a process that's genuinely still
+        # working but just slow/large); `stall_watch` kills it as soon
+        # as it goes quiet for stall_s, well before that ceiling, which
+        # is what actually catches a hang -- see the H3 gen that stalled
+        # mid-render (real log progress, then dead silence) but only
+        # got reaped an hour later by the single timeout that used to
+        # be here.
         watchdog = threading.Timer(timeout_s, _kill_on_timeout)
         watchdog.daemon = True
         watchdog.start()
+
+        stop_stall_watch = threading.Event()
+
+        def _stall_watch():
+            while not stop_stall_watch.wait(30):
+                if time.time() - last_activity["t"] > stall_s:
+                    stalled["v"] = True
+                    _kill_proc()
+                    return
+
+        stall_thread = threading.Thread(target=_stall_watch, daemon=True)
+        stall_thread.start()
+
         try:
             if proc.stdout is not None:
                 for line in proc.stdout:
+                    last_activity["t"] = time.time()
                     line = line.rstrip()
                     if not line:
                         continue
@@ -346,7 +426,14 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             rc = proc.wait()
         finally:
             watchdog.cancel()
+            stop_stall_watch.set()
 
+    if stalled["v"]:
+        raise H3JobCancelled(
+            f"H3 gen produced no output for {stall_s:.0f}s and was "
+            f"killed (likely a hung render). Raise RINGVIZ_H3_STALL_S "
+            f"if this machine legitimately goes quiet between log lines "
+            f"for longer than that.")
     if timed_out["v"]:
         raise H3JobCancelled(
             f"H3 gen exceeded its {timeout_s:.0f}s deadline and was "
