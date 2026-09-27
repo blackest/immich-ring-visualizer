@@ -34,11 +34,16 @@ they're fetched to MUSIC_HF_CACHE_DIR on first use (see
 _resolve_music_cover_models_ng) -- not passed --offline for that
 reason, everything else here always is.
 
-Deliberately out of scope here (keep this file small -- add a sibling
-module later if any of these turn out to be needed): supplied/edited
-ABC scores (--abc) on the plain generate path, the plan/render-plan/
-replay two-step workflow, batch requests, 4-bit precision (no ar-4bit.
-safetensors on this machine's pack -- see _resolve_music_precision_ng).
+generate_music_ng also takes an optional abc_text -- a caller-supplied
+ABC score (Music Edit's "render from this score" path, musiceditNG.js),
+passed to `lyra generate --abc` as real conditioning input rather than
+just exported as a byproduct. Deliberately still out of scope here (keep
+this file small -- add a sibling module later if any of these turn out
+to be needed): supplying --abc on the *cover* path (re-scoring a cover
+doesn't fit the product model the way editing a plain generate's own
+score does), the plan/render-plan/replay two-step workflow, batch
+requests, 4-bit precision (no ar-4bit.safetensors on this machine's
+pack -- see _resolve_music_precision_ng).
 """
 
 from __future__ import annotations
@@ -120,6 +125,15 @@ MUSIC_MIN_SECONDS = 8.0
 # nothing stops you from trying, just don't expect quality to hold up
 # past what's been validated at the old 6-minute default.
 MUSIC_MAX_SECONDS = 900.0
+
+# The "weirdness"/creativity knob (Suno calls it that; here it's the raw
+# sampling temperature on the semantic token stream) -- bounds mirror
+# yue2-mlx's own vendor/yue/src/yue2/protocol.py SamplingConfig, which
+# raises outside [0, 5]. Default 1.0 is that same protocol's own default,
+# so omitting it changes nothing.
+MUSIC_MIN_TEMPERATURE = 0.0
+MUSIC_MAX_TEMPERATURE = 5.0
+MUSIC_DEFAULT_TEMPERATURE = 1.0
 # YuE2 has no instrumental switch of its own; its lyrics protocol reads
 # bare section tags with nothing under them as instrumental passages.
 # Validated by ear in phosphene's own bake-off (yue2_run.py's comment).
@@ -159,6 +173,13 @@ def _validate_music_duration_ng(duration_s: float) -> None:
         raise ValueError(
             f"duration_s must be between {MUSIC_MIN_SECONDS} and "
             f"{MUSIC_MAX_SECONDS} (got {duration_s})")
+
+
+def _validate_music_temperature_ng(temperature: float) -> None:
+    if not (MUSIC_MIN_TEMPERATURE <= temperature <= MUSIC_MAX_TEMPERATURE):
+        raise ValueError(
+            f"temperature must be between {MUSIC_MIN_TEMPERATURE} and "
+            f"{MUSIC_MAX_TEMPERATURE} (got {temperature})")
 
 
 def _clean_subprocess_env_ng() -> dict:
@@ -334,18 +355,26 @@ def _run_lyra_subprocess_ng(cmd: list, timeout_s: float, timeout_env_var: str,
 
 
 def _build_request_ng(style: str, lyrics: str, duration_s: float, seed: int,
-                       mode: MusicMode, cfg_scale: Optional[float]) -> dict:
+                       mode: MusicMode, cfg_scale: Optional[float],
+                       temperature: Optional[float] = None) -> dict:
     """seconds -> semantic_sampling.max_tokens, TOKENS_PER_SECOND per
     second of audio (yue2_run.py's own conversion -- the codec's frame
     rate, not a phosphene-specific choice). min_tokens mirrors
-    yue2_run.py's own min(200, max_tokens) floor."""
+    yue2_run.py's own min(200, max_tokens) floor.
+
+    temperature, when given, rides in the same semantic_sampling dict
+    (see MUSIC_DEFAULT_TEMPERATURE) -- it's the model's own sampling
+    temperature, not a separate request field."""
     max_tokens = max(1, round(duration_s * MUSIC_TOKENS_PER_SECOND))
+    semantic_sampling = {"max_tokens": max_tokens, "min_tokens": min(200, max_tokens)}
+    if temperature is not None:
+        semantic_sampling["temperature"] = float(temperature)
     request = {
         "style": style,
         "lyrics": lyrics,
         "cot": mode,
         "seed": seed,
-        "semantic_sampling": {"max_tokens": max_tokens, "min_tokens": min(200, max_tokens)},
+        "semantic_sampling": semantic_sampling,
     }
     if cfg_scale is not None:
         request["cfg_scale"] = float(cfg_scale)
@@ -357,6 +386,8 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
                        config: MusicConfig,
                        mode: MusicMode = "full", instrumental: bool = False,
                        cfg_scale: Optional[float] = None,
+                       temperature: Optional[float] = None,
+                       abc_text: Optional[str] = None,
                        on_log: Optional[Callable[[str], None]] = None,
                        on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
     """One subprocess call: style + lyrics + duration in, one .flac out.
@@ -364,7 +395,18 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
     yue2_run.py enforces -- "give it something to work with"), unless
     instrumental is set, which fills in a bare-section-tags lyrics
     skeleton and an "instrumental, no vocals" style cue instead (see
-    MUSIC_INSTRUMENTAL_LYRICS/STYLE)."""
+    MUSIC_INSTRUMENTAL_LYRICS/STYLE).
+
+    temperature (see MUSIC_DEFAULT_TEMPERATURE) is the "weirdness"
+    knob -- higher wanders further from the model's most-likely tokens.
+    None leaves the model's own default (1.0) in place.
+
+    abc_text, when given, is a caller-supplied ABC score (Music Edit's
+    "render from this score" path) -- `lyra generate --abc FILE` takes
+    it as a real conditioning input, preserving its bytes exactly (see
+    `lyra generate --help`), so it's written out to song_dir untouched
+    before the subprocess call rather than merged into the JSON request
+    like everything else here."""
     style = (style or "").strip()
     lyrics = (lyrics or "").replace("\r\n", "\n").strip("\n")
     if mode not in MUSIC_MODES:
@@ -373,9 +415,11 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
         lyrics = MUSIC_INSTRUMENTAL_LYRICS
         if "instrumental" not in style.lower():
             style = f"{style}, {MUSIC_INSTRUMENTAL_STYLE}" if style else MUSIC_INSTRUMENTAL_STYLE
-    if not style and not lyrics:
-        raise ValueError("Give it something to work with -- style, lyrics, or both.")
+    if not style and not lyrics and abc_text is None:
+        raise ValueError("Give it something to work with -- style, lyrics, or an ABC score.")
     _validate_music_duration_ng(duration_s)
+    if temperature is not None:
+        _validate_music_temperature_ng(temperature)
 
     binary = _resolve_music_binary_ng(config)
     if not binary:
@@ -392,7 +436,7 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
             f"YuE2 VAE not found at {config.vae_dir or MUSIC_VAE_DIR}")
 
     seed = seed if seed is not None else random.randint(0, 2**63 - 1)
-    request = _build_request_ng(style, lyrics, duration_s, seed, mode, cfg_scale)
+    request = _build_request_ng(style, lyrics, duration_s, seed, mode, cfg_scale, temperature)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -413,6 +457,10 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
         "--offline",
         "--output", str(song_dir),
     ]
+    if abc_text is not None:
+        abc_path = output_dir / f"music_{ts}.supplied.abc"
+        abc_path.write_text(abc_text, encoding="utf-8", newline="\n")
+        cmd += ["--abc", str(abc_path)]
 
     if on_log:
         on_log(f"[music] launching {duration_s:.0f}s cap, mode={mode}, "
@@ -457,6 +505,7 @@ def generate_cover_ng(audio_path: str, output_dir: Path, seed: Optional[int],
                        style: str = "", lyrics: str = "",
                        duration_s: Optional[float] = None,
                        cfg_scale: Optional[float] = None,
+                       temperature: Optional[float] = None,
                        transcription_model: str = MUSIC_TRANSCRIPTION_MODEL,
                        base_model: str = MUSIC_BASE_MODEL,
                        on_log: Optional[Callable[[str], None]] = None,
@@ -489,6 +538,8 @@ def generate_cover_ng(audio_path: str, output_dir: Path, seed: Optional[int],
         raise FileNotFoundError(f"source track not found at {audio_path}")
     if duration_s is not None:
         _validate_music_duration_ng(duration_s)
+    if temperature is not None:
+        _validate_music_temperature_ng(temperature)
 
     binary = _resolve_music_binary_ng(config)
     if not binary:
@@ -509,9 +560,15 @@ def generate_cover_ng(audio_path: str, output_dir: Path, seed: Optional[int],
     seed = seed if seed is not None else random.randint(0, 2**63 - 1)
     mode = _cover_mode_for_task_ng(task)
     request: dict = {"style": style, "lyrics": lyrics, "cot": mode, "seed": seed}
+    semantic_sampling: dict = {}
     if duration_s is not None:
         max_tokens = max(1, round(duration_s * MUSIC_TOKENS_PER_SECOND))
-        request["semantic_sampling"] = {"max_tokens": max_tokens, "min_tokens": min(200, max_tokens)}
+        semantic_sampling["max_tokens"] = max_tokens
+        semantic_sampling["min_tokens"] = min(200, max_tokens)
+    if temperature is not None:
+        semantic_sampling["temperature"] = float(temperature)
+    if semantic_sampling:
+        request["semantic_sampling"] = semantic_sampling
     if cfg_scale is not None:
         request["cfg_scale"] = float(cfg_scale)
 

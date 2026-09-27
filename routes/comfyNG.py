@@ -190,14 +190,14 @@ def extract_comfy_server_image_ng():
     uploads -- lets a past output double as its own workflow PNG with no
     download/upload round trip. Reads bytes straight off disk when this
     app shares a filesystem with ComfyUI (same COMFYUI_DIR as
-    _walk_comfy_output_images), falling back to the /view HTTP proxy
+    _walk_comfy_dir_images), falling back to the /view HTTP proxy
     otherwise."""
     filename = request.args.get("filename")
     if not filename:
         return jsonify({"error": "filename is required"}), 400
     subfolder = request.args.get("subfolder", "")
     type_ = request.args.get("type", "output")
-    if type_ not in ("input", "output"):
+    if type_ not in ("input", "output", "temp"):
         return jsonify({"error": f"unsupported type {type_!r}"}), 400
 
     base_dir = os.path.join(COMFYUI_DIR, type_)
@@ -246,29 +246,31 @@ def view_comfy_image_ng():
 _OUTPUT_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
-def _walk_comfy_output_images():
-    """Full recursive read of ComfyUI's own output/ folder straight off
-    disk, newest-modified first -- no HTTP round trip, and no flat-
-    listing limitation either. Only works when this app and ComfyUI
-    share a filesystem (COMFYUI_DIR, see configNG.py) -- true for this
-    deployment (routes/settingsNG.py already assumes as much to launch
-    ComfyUI itself via a subprocess with cwd=COMFYUI_DIR). Returns None
-    if that's not the case, so callers can fall back to the /history
-    approach instead.
+def _walk_comfy_dir_images(folder_name):
+    """Full recursive read of one of ComfyUI's own top-level folders
+    (output/ or temp/) straight off disk, newest-modified first -- no
+    HTTP round trip, and no flat-listing limitation either. Only works
+    when this app and ComfyUI share a filesystem (COMFYUI_DIR, see
+    configNG.py) -- true for this deployment (routes/settingsNG.py
+    already assumes as much to launch ComfyUI itself via a subprocess
+    with cwd=COMFYUI_DIR). Returns None if that's not the case, so
+    callers can fall back to the /history approach instead (output
+    only -- temp has no /history equivalent, see list_comfy_server_
+    images_ng).
 
     Tried and reverted a symlink-in-input/ trick before landing here:
     ComfyUI's own LoadImage.INPUT_TYPES (nodes.py) builds its combo
     from a flat os.listdir(input_dir) filtered to os.path.isfile --
     no recursion, so a symlinked subfolder never shows up there no
     matter what. This route doesn't have that constraint since it
-    reads output/ itself rather than asking ComfyUI's LoadImage combo
-    about it."""
-    output_dir = os.path.join(COMFYUI_DIR, "output")
-    if not os.path.isdir(output_dir):
+    reads the folder itself rather than asking ComfyUI's LoadImage
+    combo about it."""
+    target_dir = os.path.join(COMFYUI_DIR, folder_name)
+    if not os.path.isdir(target_dir):
         return None
 
     entries = []
-    for dirpath, dirnames, filenames in os.walk(output_dir):
+    for dirpath, dirnames, filenames in os.walk(target_dir):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for name in filenames:
             if os.path.splitext(name)[1].lower() not in _OUTPUT_IMAGE_EXTS:
@@ -278,35 +280,76 @@ def _walk_comfy_output_images():
                 mtime = os.path.getmtime(full)
             except OSError:
                 continue
-            rel = os.path.relpath(full, output_dir).replace(os.sep, "/")
+            rel = os.path.relpath(full, target_dir).replace(os.sep, "/")
             entries.append((mtime, rel))
     entries.sort(key=lambda e: e[0], reverse=True)
     return [rel for _, rel in entries]
+
+
+def _split_output_dir_level(rel_paths, subfolder):
+    """Splits a flat list of output-relative paths ('/' separated, as
+    _walk_comfy_dir_images and the /history fallback both produce)
+    into the immediate subfolders and files living directly under
+    `subfolder` ("" for output/ itself) -- one directory level at a
+    time, so browsing a folder doesn't dump every nested file from
+    every other folder into the same gallery."""
+    prefix = f"{subfolder}/" if subfolder else ""
+    folders = []
+    seen_folders = set()
+    files = []
+    for rel in rel_paths:
+        if prefix:
+            if not rel.startswith(prefix):
+                continue
+            remainder = rel[len(prefix):]
+        else:
+            remainder = rel
+        head, _, rest = remainder.partition("/")
+        if rest:
+            if head not in seen_folders:
+                seen_folders.add(head)
+                folders.append(head)
+        else:
+            files.append(rel)
+    return folders, files
 
 
 @comfyNG_bp.route("/api/ng/comfy/server-images")
 def list_comfy_server_images_ng():
     """Filenames already sitting on whatever machine ComfyUI itself runs
     on ("the studio"), which the browser has no local copy of to paste
-    or pick from disk. ?type=input|output (default input) picks which:
+    or pick from disk. ?type=input|output|temp (default input) picks
+    which:
       - input: stuff dropped straight into ComfyUI's input/ folder.
         Reuses the exact combo list ComfyUI's own LoadImage widget
         populates itself from (its /object_info), rather than this app
         reaching into that machine's filesystem itself.
-      - output: stuff ComfyUI itself generated. Read straight off disk
-        (_walk_comfy_output_images) when this app shares a filesystem
+      - output: stuff ComfyUI itself generated and kept (SaveImage).
+      - temp: ComfyUI's scratch folder -- PreviewImage nodes and any
+        SaveImage with save_output=False land here instead of output/,
+        and ComfyUI itself prunes it periodically, so this is "recent
+        previews," not a permanent gallery.
+      Both output and temp: read straight off disk
+        (_walk_comfy_dir_images) when this app shares a filesystem
         with ComfyUI, which is the actually-complete picture (every
-        file really in output/, not just what ComfyUI's own /history
-        still remembers producing); falls back to /history over HTTP
-        if COMFYUI_DIR/output isn't reachable locally. Either way, a
-        pick here hands back ComfyUI's own "name [output]" annotation
-        (folder_paths.get_annotated_filepath), which a LoadImage node
-        resolves straight from the output folder at execution time, no
-        copy into input/ needed.
+        file really in the folder, not just what ComfyUI's own
+        /history still remembers producing); falls back to /history
+        over HTTP if the folder isn't reachable locally (temp doesn't
+        show up in /history at all, so that fallback is output-only in
+        practice). Either way, a pick here hands back ComfyUI's own
+        "name [output]"/"name [temp]" annotation (folder_paths.
+        get_annotated_filepath), which a LoadImage node resolves
+        straight from that folder at execution time, no copy into
+        input/ needed. ?subfolder= (output/temp only, default "")
+        scopes both the disk read and the /history fallback to one
+        directory level -- files directly in that folder, plus the
+        names of its immediate subfolders (returned separately as
+        "folders") for the browser to drill into on click, rather than
+        every nested file across every subfolder dumped in at once.
     """
     base_url = get_comfyui_base_url()
     type_ = request.args.get("type", "input")
-    if type_ not in ("input", "output"):
+    if type_ not in ("input", "output", "temp"):
         return jsonify({"error": f"unsupported type {type_!r}"}), 400
 
     if type_ == "input":
@@ -323,9 +366,15 @@ def list_comfy_server_images_ng():
             return jsonify({"error": "unexpected response shape from ComfyUI's object_info"}), 502
         return jsonify({"images": images})
 
-    from_disk = _walk_comfy_output_images()
+    subfolder = (request.args.get("subfolder") or "").strip("/")
+
+    from_disk = _walk_comfy_dir_images(type_)
     if from_disk is not None:
-        return jsonify({"images": from_disk})
+        folders, files = _split_output_dir_level(from_disk, subfolder)
+        return jsonify({"images": files, "folders": folders, "subfolder": subfolder})
+
+    if type_ == "temp":
+        return jsonify({"error": f"ComfyUI's temp/ folder isn't reachable locally (COMFYUI_DIR)"}), 502
 
     try:
         resp = requests.get(f"{base_url}/history", timeout=10)
@@ -360,7 +409,8 @@ def list_comfy_server_images_ng():
                     seen[key] = ts
 
     images = sorted(seen, key=seen.get, reverse=True)
-    return jsonify({"images": images})
+    folders, files = _split_output_dir_level(images, subfolder)
+    return jsonify({"images": files, "folders": folders, "subfolder": subfolder})
 
 
 @comfyNG_bp.route("/api/ng/comfy/upload-image", methods=["POST"])

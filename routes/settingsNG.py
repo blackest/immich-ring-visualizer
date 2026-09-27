@@ -10,6 +10,8 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from urllib.parse import urlparse
 
 from flask import Blueprint, jsonify, request
@@ -48,6 +50,160 @@ def save_addresses_ng():
         return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
     save_ng_address_settings(body)
     return jsonify({"ok": True, "settings": get_ng_address_settings()})
+
+
+def _probe_url(url, timeout=2.0):
+    """Any HTTP response -- even a 404 -- means the address is alive and
+    reachable; only a connection failure (dead hostname, refused port,
+    timeout) counts as unreachable. This is what actually catches a
+    renamed/stale Tailscale hostname: DNS resolution itself fails, which
+    surfaces here as an error rather than a silent hang somewhere a
+    feature happens to use the address."""
+    t0 = time.time()
+    try:
+        urllib.request.urlopen(url, timeout=timeout)
+        return True, None, round((time.time() - t0) * 1000)
+    except urllib.error.HTTPError:
+        return True, None, round((time.time() - t0) * 1000)
+    except Exception as e:
+        return False, str(e), round((time.time() - t0) * 1000)
+
+
+def _venv_can_import(python_path, modules):
+    """Runs `python -c "import a, b, c"` in the given interpreter and
+    reports ok/error -- catches a venv that exists but is missing a
+    package (e.g. yue2-mlx's optional "transcription" extra never being
+    synced), which a bare path-exists check on the interpreter itself
+    can't see. This is exactly the class of failure that took an entire
+    debugging session to trace by hand before this existed."""
+    if not python_path:
+        return False, "interpreter not found"
+    try:
+        result = subprocess.run(
+            [python_path, "-c", "import " + ", ".join(modules)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return True, None
+        return False, (result.stderr or "").strip().splitlines()[-1] if result.stderr else "import failed"
+    except Exception as e:
+        return False, str(e)
+
+
+@settingsNG_bp.route("/api/ng/settings/models", methods=["GET"])
+def get_models_ng():
+    """Resolved repo/weights paths for LTX, H3 and Music, plus a
+    found/not-found probe per component -- reuses each engine's own
+    already-existing `_resolve_*_ng` validators (which already check
+    real shape, not just existence: right files present, executable
+    bit, expected sub-files) rather than duplicating that logic here.
+    Read-only -- no override wiring yet, this only makes a broken/moved
+    install visible in Settings instead of as a mid-job subprocess
+    traceback."""
+    import h3_engineNG as H3
+    import ltx_engineNG as LTX
+    import music_engineNG as MUSIC
+
+    ltx_config = LTX.LtxConfig()
+    h3_config = H3.H3Config()
+    music_config = MUSIC.MusicConfig()
+
+    def component(label, path, ok):
+        return {"label": label, "path": path, "ok": bool(ok)}
+
+    engines = [
+        {
+            "key": "ltx",
+            "label": "LTX-2.5 (Animate)",
+            "repo_dir": str(LTX.LTX_REPO_DIR),
+            "repo_found": LTX.LTX_REPO_DIR.exists(),
+            "components": [
+                component("Binary", str(LTX.LTX_DEFAULT_BIN),
+                           LTX._resolve_ltx_binary_ng(ltx_config)),
+                component("Python", str(LTX.LTX_DEFAULT_PYTHON),
+                           LTX._resolve_ltx_python_ng()),
+                component("Model weights", str(LTX.LTX_DEFAULT_MODEL),
+                           LTX._resolve_ltx_model_ng(ltx_config)),
+                component("Gemma (generation)", str(LTX.LTX_DEFAULT_GEMMA),
+                           LTX._resolve_ltx_gemma_ng(ltx_config)),
+                component("Gemma (enhance)", str(LTX.LTX_DEFAULT_ENHANCE_GEMMA),
+                           LTX._resolve_ltx_enhance_gemma_ng(ltx_config)),
+            ],
+        },
+        {
+            "key": "h3",
+            "label": "MiniMax-H3",
+            "repo_dir": str(H3.H3_REPO_DIR),
+            "repo_found": H3.H3_REPO_DIR.exists(),
+            "components": [
+                component("Python", str(H3.H3_DEFAULT_PYTHON),
+                           H3._resolve_h3_python_ng(h3_config)),
+                component("Runner script", str(H3.H3_RUNNER),
+                           H3._resolve_h3_runner_ng(h3_config)),
+                component("Compact pack (VAE/text)", str(H3.H3_COMPACT_ROOT),
+                           H3._resolve_h3_compact_root_ng(h3_config)),
+                component("Text encoder config", str(H3.H3_TEXT_CONFIG),
+                           H3._resolve_h3_text_config_ng(h3_config)),
+                component(f"DiT weights ({h3_config.model})",
+                           str(H3.H3_DIT_Q8_DIR if h3_config.model == "h3q8" else H3.H3_DIT_BF16),
+                           H3._resolve_h3_dit_ng(h3_config)),
+            ],
+        },
+        {
+            "key": "music",
+            "label": "YuE2 (Music)",
+            "repo_dir": str(MUSIC.MUSIC_REPO_DIR),
+            "repo_found": MUSIC.MUSIC_REPO_DIR.exists(),
+            "components": [
+                component("Binary", str(MUSIC.MUSIC_DEFAULT_BIN),
+                           MUSIC._resolve_music_binary_ng(music_config)),
+                component("VAE weights", str(MUSIC.MUSIC_VAE_DIR),
+                           MUSIC._resolve_music_vae_dir_ng(music_config)),
+                component(f"Generator weights ({music_config.precision})", str(MUSIC.MUSIC_MODEL_DIR),
+                           MUSIC._resolve_music_model_dir_ng(music_config)),
+            ],
+        },
+    ]
+
+    # Transcription-extra deps (mido/mir-eval/pretty-midi/scipy) -- the
+    # exact class of failure that started this whole feature: the venv
+    # exists and the binary runs, but `lyra cover`'s transcription pass
+    # dies mid-job because `uv sync` was never run with --extra
+    # transcription. Path-exists checks can't see this; only an actual
+    # import in that venv's interpreter can.
+    music_venv_python = str(MUSIC.MUSIC_REPO_DIR / ".venv" / "bin" / "python")
+    ok, err = _venv_can_import(
+        music_venv_python if os.path.isfile(music_venv_python) else None,
+        ["mir_eval.chord", "pretty_midi", "mido"],
+    )
+    engines[2]["components"].append({
+        "label": "Transcription deps (mido/mir-eval/pretty-midi)",
+        "path": music_venv_python,
+        "ok": ok,
+        "error": None if ok else err,
+    })
+
+    return jsonify({"engines": engines})
+
+
+@settingsNG_bp.route("/api/ng/settings/addresses/check", methods=["POST"])
+def check_addresses_ng():
+    """Probe every URL-shaped address setting (those with "probe": True in
+    NG_ADDRESS_SETTINGS) and report reachable/unreachable, right where
+    the address is configured -- instead of as a mysterious failure in
+    whatever feature uses it later. Body may include {key: value} for
+    fields the settings modal has edited but not saved yet, so "Test"
+    checks what's about to be saved rather than only what's on disk."""
+    body = request.get_json(silent=True) or {}
+    results = {}
+    for setting in get_ng_address_settings():
+        if not setting.get("probe"):
+            continue
+        key = setting["key"]
+        value = (body.get(key) or "").strip() or setting["value"]
+        ok, error, ms = _probe_url(value)
+        results[key] = {"ok": ok, "error": error, "ms": ms}
+    return jsonify({"results": results})
 
 
 @settingsNG_bp.route("/api/ng/settings/update-ytdlp", methods=["POST"])

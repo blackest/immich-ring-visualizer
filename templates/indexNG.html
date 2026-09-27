@@ -126,6 +126,9 @@
           <div id="ng-settings-addresses"></div>
           <div class="ng-settings-row">
             <span class="ng-settings-row-desc"></span>
+            <button id="ng-settings-test-addresses" class="ng-btn">
+              Test connections
+            </button>
             <button id="ng-settings-save-addresses" class="ng-btn">Save</button>
           </div>
           <pre
@@ -133,6 +136,15 @@
             class="ng-settings-output"
             style="display: none"
           ></pre>
+
+          <div class="ng-settings-section-title">Models</div>
+          <span class="ng-settings-row-desc ng-settings-section-desc"
+            >Resolved LTX/H3/Music install paths on this machine, and
+            whether each looks real (right files present, venv actually
+            has what a render needs) -- read-only, catches a broken or
+            moved install before a job does.</span
+          >
+          <div id="ng-settings-models"></div>
         </div>
       </div>
     </div>
@@ -940,6 +952,14 @@
               >
                 Output
               </button>
+              <button
+                type="button"
+                id="ng-comfy-images-tab-temp"
+                class="ng-comfy-images-tab"
+                data-image-source="temp"
+              >
+                Temp
+              </button>
             </div>
             <input
               type="text"
@@ -947,6 +967,11 @@
               class="ng-comfy-images-filter"
               placeholder="Filter by filename&hellip;"
             />
+            <div
+              id="ng-comfy-server-images-breadcrumb"
+              class="ng-comfy-images-breadcrumb"
+              style="display: none"
+            ></div>
             <div id="ng-comfy-server-images" class="ng-comfy-workflow-list">
               <p class="ng-placeholder">Loading&hellip;</p>
             </div>
@@ -965,7 +990,24 @@
               id="ng-vg-unavailable"
               class="ng-chat-banner"
               style="display: none"
-            ></div>
+            >
+              <div id="ng-vg-unavailable-text"></div>
+              <!-- Self-service install for LTX -- see ltx_installNG.py /
+                   static/videogenNG.js. -->
+              <button
+                type="button"
+                id="ng-vg-install-btn"
+                class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin-top: 6px; display: none"
+              >
+                Install now (~66 GB)
+              </button>
+              <pre
+                id="ng-vg-install-log"
+                class="ng-vg-mainlog"
+                style="display: none; margin-top: 6px; max-height: 160px"
+              ></pre>
+            </div>
             <button
               type="button"
               id="ng-vg-log-toggle"
@@ -999,7 +1041,36 @@
               id="ng-h3-unavailable"
               class="ng-chat-banner"
               style="display: none"
-            ></div>
+            >
+              <div id="ng-h3-unavailable-text"></div>
+              <!-- H3 stays an explicit opt-in -- ~75 GB and MiniMax's own
+                   Community License (territory restrictions), so this
+                   install button is gated on a ticked checkbox rather
+                   than starting from a bare click. See h3_installNG.py /
+                   static/h3NG.js. -->
+              <label
+                id="ng-h3-license-row"
+                class="ng-checkbox-row"
+                style="display: none; margin-top: 6px"
+              >
+                <input type="checkbox" id="ng-h3-license-cb" />
+                <span id="ng-h3-license-text"></span>
+              </label>
+              <button
+                type="button"
+                id="ng-h3-install-btn"
+                class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin-top: 6px; display: none"
+                disabled
+              >
+                Install now
+              </button>
+              <pre
+                id="ng-h3-install-log"
+                class="ng-vg-mainlog"
+                style="display: none; margin-top: 6px; max-height: 160px"
+              ></pre>
+            </div>
             <div id="ng-h3-queue-head">
               <span>Render queue <span id="ng-h3-queue-count"></span></span>
               <button
@@ -1026,7 +1097,33 @@
               id="ng-music-unavailable"
               class="ng-chat-banner"
               style="display: none"
-            ></div>
+            >
+              <div id="ng-music-unavailable-text"></div>
+              <!-- Self-service install for the YuE2 engine -- shown only
+                   when /status reports installable (an MLX/Apple Silicon
+                   Mac with no existing install found). See
+                   music_installNG.py / static/musicNG.js. -->
+              <button
+                type="button"
+                id="ng-music-install-btn"
+                class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin-top: 6px; display: none"
+              >
+                Install now (~11 GB)
+              </button>
+              <pre
+                id="ng-music-install-log"
+                class="ng-vg-mainlog"
+                style="display: none; margin-top: 6px; max-height: 160px"
+              ></pre>
+            </div>
+            <button
+              type="button"
+              id="ng-music-log-toggle"
+              class="ng-gen-btn ng-gen-btn-quiet"
+            >
+              📜 Job Log
+            </button>
             <div id="ng-music-queue-head">
               <span>Render queue <span id="ng-music-queue-count"></span></span>
               <button
@@ -1043,6 +1140,131 @@
               stage, then press &ldquo;Compose&rdquo;.
             </p>
             <div id="ng-music-queue"></div>
+          </div>
+
+          <!-- Music Edit view's rail pane -- deliberately minimal; every
+               control (BPM/Key, render, ABC load/save) lives in the main
+               stage below since this is a single-item edit workflow, not
+               a queue. The Job Log toggle is the one exception, matching
+               Music's own rail -- both views share the same durable
+               history (music_job_logsNG.py). See static/musiceditNG.js. -->
+          <div id="ng-musicedit-pane" style="display: none">
+            <button
+              type="button"
+              id="ng-musicedit-log-toggle"
+              class="ng-gen-btn ng-gen-btn-quiet"
+            >
+              📜 Job Log
+            </button>
+            <p class="ng-placeholder">
+              Load or paste an ABC score on the main stage, adjust its
+              tempo/key, and render real audio from it.
+            </p>
+
+            <!-- Write lyrics with a local Ollama model, using the same
+                 lyricist system prompt Phosphene's own Gemma write_lyrics
+                 action uses -- a rail *tool* acting on the main stage's
+                 Lyrics box (and reading its Style/Max-length fields for
+                 context), same zone split as every other rail control.
+                 Picking a different (less safety-tuned) Ollama model here
+                 is the whole point: Gemma 3's own alignment was flattening
+                 anything that read as anger/conflict/violence, even in
+                 fiction. See static/musiceditNG.js. -->
+            <div class="ng-gen-label" style="margin-top: 16px">
+              Write / revise lyrics (AI)
+            </div>
+            <select id="ng-musicedit-ai-model" class="ng-gen-input"></select>
+            <div class="ng-gen-label" style="margin-top: 10px">
+              Concept / instructions
+              <span class="ng-gen-linkrow">
+                <a href="#" id="ng-musicedit-ai-concept-expand">expand</a>
+              </span>
+            </div>
+            <textarea
+              id="ng-musicedit-ai-concept"
+              class="ng-gen-input"
+              rows="3"
+              placeholder="Write: what's the song about? Revise: what should change? (uses the Style box and Max length from the main stage too)"
+            ></textarea>
+            <div class="ng-gen-label" style="margin-top: 10px">
+              System prompt
+              <span class="ng-gen-linkrow">
+                <a href="#" id="ng-musicedit-ai-system-expand">expand</a> ·
+                <a href="#" id="ng-musicedit-ai-system-reset">reset to default</a>
+              </span>
+            </div>
+            <!-- Pre-filled with the built-in lyricist prompt (see
+                 buildLyricsSystemPrompt in musiceditNG.js) but a plain
+                 editable textarea, not read-only -- the whole point of
+                 routing this through a user-picked Ollama model instead
+                 of Phosphene's fixed Gemma call is to let someone
+                 override instructions a safety-tuned model won't take
+                 from the user turn alone (e.g. "do not soften language
+                 around anger/conflict -- this is fiction"). -->
+            <textarea
+              id="ng-musicedit-ai-system"
+              class="ng-gen-input"
+              rows="6"
+              style="font-size: 0.7143rem"
+            ></textarea>
+            <div style="display: flex; gap: 6px; margin-top: 6px">
+              <button
+                type="button"
+                id="ng-musicedit-ai-write"
+                class="ng-gen-btn"
+                style="flex: 1"
+              >
+                Write lyrics
+              </button>
+              <button
+                type="button"
+                id="ng-musicedit-ai-revise"
+                class="ng-gen-btn"
+                style="flex: 1"
+                title="Revises the current Lyrics box using the box above as instructions -- what's already there is kept unless the instructions say to change it"
+              >
+                Revise lyrics
+              </button>
+            </div>
+            <p
+              id="ng-musicedit-ai-status"
+              class="ng-placeholder"
+              style="display: none"
+            ></p>
+
+            <!-- Inline discussion -- a small always-visible chat, not a
+                 modal, so it stays in view alongside the Lyrics box while
+                 iterating. Shares the model picker above rather than its
+                 own. Each assistant reply that looks like a full lyric
+                 sheet gets an "Use as lyrics" button -- same pull-back-
+                 into-the-working-surface pattern as Phosphene's own
+                 "Discuss next scene" for LTX, just inline instead of a
+                 modal. See static/musiceditNG.js. -->
+            <div class="ng-gen-label" style="margin-top: 16px">
+              Discuss the song
+              <span class="ng-gen-linkrow">
+                <a href="#" id="ng-musicedit-ai-chat-expand">expand</a> ·
+                <a href="#" id="ng-musicedit-ai-chat-clear">clear</a>
+              </span>
+            </div>
+            <div id="ng-musicedit-ai-chat-transcript"></div>
+            <div style="display: flex; gap: 6px; margin-top: 6px">
+              <textarea
+                id="ng-musicedit-ai-chat-input"
+                class="ng-gen-input"
+                rows="2"
+                style="flex: 1; margin-bottom: 0"
+                placeholder="Ask about the song, brainstorm a line, question a choice..."
+              ></textarea>
+              <button
+                type="button"
+                id="ng-musicedit-ai-chat-send"
+                class="ng-gen-btn"
+                style="width: auto"
+              >
+                Send
+              </button>
+            </div>
           </div>
         </aside>
         <main id="ng-main">
@@ -2344,7 +2566,7 @@
                  replaces #ng-vg-compose while open. See job_logsNG.py /
                  the /api/ng/videogen/logs* routes. -->
             <div id="ng-vg-log-view" style="display: none">
-              <div id="ng-vg-log-head">
+              <div class="ng-vg-log-head">
                 <button
                   type="button"
                   id="ng-vg-log-back"
@@ -2353,7 +2575,7 @@
                   &larr; Back
                 </button>
                 <span>Job Log</span>
-                <div id="ng-vg-log-tabs">
+                <div class="ng-vg-log-tabs">
                   <button
                     type="button"
                     id="ng-vg-log-tab-recent"
@@ -2573,10 +2795,14 @@
                   Cover an existing track (transcribe its melody/chords,
                   render your style/lyrics over them)</label
                 >
-                <div id="ng-music-cover-file-wrap" style="display: none">
+                <div
+                  id="ng-music-cover-file-wrap"
+                  class="ng-dropzone"
+                  style="display: none"
+                >
                   <div class="ng-gen-label">Source track</div>
                   <p id="ng-music-cover-file-empty" class="ng-placeholder">
-                    No track picked yet.
+                    No track picked yet. Drag an audio file here, or:
                   </p>
                   <p
                     id="ng-music-cover-file-name"
@@ -2585,7 +2811,7 @@
                   <input
                     id="ng-music-cover-file"
                     type="file"
-                    accept="audio/*"
+                    accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.aiff"
                     style="display: none"
                   />
                   <button
@@ -2663,12 +2889,13 @@
                     </div>
                   </div>
                   <div>
-                    <label
-                      class="ng-gen-label"
-                      for="ng-music-lyrics"
-                      style="margin-top: 0"
-                      >Lyrics</label
-                    >
+                    <div class="ng-gen-label" style="margin-top: 0">
+                      Lyrics
+                      <span class="ng-gen-linkrow">
+                        <a href="#" id="ng-music-lyrics-select-all">select all</a> ·
+                        <a href="#" id="ng-music-lyrics-expand">expand</a>
+                      </span>
+                    </div>
                     <textarea
                       id="ng-music-lyrics"
                       class="ng-gen-input"
@@ -2718,6 +2945,24 @@
                         <option value="bf16">bf16 (full precision)</option>
                       </select>
                     </div>
+                    <div style="margin-top: 8px">
+                      <label
+                        class="ng-gen-label"
+                        for="ng-music-temperature"
+                        style="margin-top: 0"
+                        >Weirdness
+                        <span id="ng-music-temperature-val">1.00</span></label
+                      >
+                      <input
+                        id="ng-music-temperature"
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.05"
+                        value="1"
+                        style="width: 100%"
+                      />
+                    </div>
                     <div
                       class="ng-gen-label"
                       style="
@@ -2729,8 +2974,26 @@
                       Max length is a ceiling, not a requested length -- the
                       song follows the lyrics and stops on its own if
                       shorter. Roughly real time to render at 8-bit.
+                      Weirdness is the model's own sampling temperature --
+                      1.00 is its default, higher wanders further from its
+                      most-likely notes/lyrics.
                     </div>
                   </div>
+                </div>
+
+                <!-- Shown after "→ Use in Music" on the Music Edit page
+                     hands over an edited ABC score -- Compose's next
+                     submission includes it as a real conditioning input
+                     (abc field, see routes/musicNG.py's /generate) on
+                     top of the style/lyrics above. See
+                     window.MusicNG.useAbcScore / static/musiceditNG.js. -->
+                <div
+                  id="ng-music-abc-banner"
+                  class="ng-music-abc-banner"
+                  style="display: none"
+                >
+                  <span id="ng-music-abc-banner-text"></span>
+                  <a href="#" id="ng-music-abc-banner-clear">clear</a>
                 </div>
 
                 <div class="ng-gen-action-bar">
@@ -2751,40 +3014,89 @@
                 ></div>
               </div>
 
-              <!-- Standalone ABC load/save/view tools -- independent of the
-                   composer above, works on any ABC file, generated here or
-                   not. See static/musicNG.js's abcTools* functions, which
-                   share their render/MIDI/print core with the queue rows'
-                   own ABC buttons. -->
-              <div
-                id="ng-music-abc-tools"
-                class="ng-gen-canvas"
-                style="margin-top: 16px"
-              >
-                <div class="ng-gen-label" style="margin-top: 0">
-                  Sheet music file
+              <!-- Standalone ABC load/save/view tools used to live here --
+                   moved to their own "Music Edit" task (#ng-musicedit-main,
+                   static/musiceditNG.js), which also adds structured BPM/
+                   Key controls and a real render-from-this-score path. -->
+
+              <!-- Durable job-log history -- separate from the ephemeral
+                   render queue in the rail. Toggled by #ng-music-log-toggle,
+                   replaces #ng-music-compose while open. See
+                   music_job_logsNG.py / the /api/ng/music/logs* routes.
+                   Reuses Animate's own .ng-vg-log-* CSS -- purely structural
+                   classes, nothing videogen-specific about their styling. -->
+              <div id="ng-music-log-view" style="display: none">
+                <div class="ng-vg-log-head">
+                  <button
+                    type="button"
+                    id="ng-music-log-back"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                  >
+                    &larr; Back
+                  </button>
+                  <span>Job Log</span>
+                  <div class="ng-vg-log-tabs">
+                    <button
+                      type="button"
+                      id="ng-music-log-tab-recent"
+                      class="ng-gen-btn ng-gen-btn-quiet ng-vg-log-tab-active"
+                    >
+                      Recent
+                    </button>
+                    <button
+                      type="button"
+                      id="ng-music-log-tab-archive"
+                      class="ng-gen-btn ng-gen-btn-quiet"
+                    >
+                      Archive
+                    </button>
+                  </div>
                 </div>
+                <div id="ng-music-log-breadcrumb" style="display: none"></div>
                 <p
-                  class="ng-gen-label"
-                  style="
-                    margin-top: 4px;
-                    text-transform: none;
-                    letter-spacing: 0;
-                  "
+                  id="ng-music-log-empty"
+                  class="ng-placeholder"
+                  style="display: none"
                 >
-                  Load an existing ABC file to view, print, or export it as
-                  MIDI. Edit the text directly and save your changes back to
-                  disk.
+                  Nothing logged here yet.
                 </p>
-                <p id="ng-music-abc-file-empty" class="ng-placeholder">
-                  No file loaded.
+                <div id="ng-music-log-list"></div>
+              </div>
+            </div>
+
+          <!-- Music Edit view's main stage -- ABC load/edit/save/render
+               tools moved wholesale from Music's old #ng-music-abc-tools,
+               plus structured BPM/Key controls and a real render-from-
+               this-score path (POST /api/ng/music/generate's abc field
+               -> generate_music_ng's --abc). See static/musiceditNG.js. -->
+          <div id="ng-musicedit-main" style="display: none">
+            <div id="ng-musicedit-editor">
+            <div id="ng-musicedit-compose" class="ng-gen-canvas">
+              <div class="ng-gen-label" style="margin-top: 0">
+                Sheet music file
+              </div>
+              <p
+                class="ng-gen-label"
+                style="
+                  margin-top: 4px;
+                  text-transform: none;
+                  letter-spacing: 0;
+                "
+              >
+                Load an existing ABC file, edit it, then render real audio
+                from it below -- or just export it as MIDI/PDF without
+                rendering.
+              </p>
+              <div id="ng-musicedit-file-wrap" class="ng-dropzone">
+                <p id="ng-musicedit-file-empty" class="ng-placeholder">
+                  No file loaded. Drag an .abc file here, or:
                 </p>
                 <p
-                  id="ng-music-abc-file-name"
+                  id="ng-musicedit-file-name"
                   style="display: none; word-break: break-all"
                 ></p>
                 <input
-                  id="ng-music-abc-file"
+                  id="ng-musicedit-file"
                   type="file"
                   accept=".abc,text/plain"
                   style="display: none"
@@ -2792,7 +3104,7 @@
                 <div style="display: flex; gap: 8px; flex-wrap: wrap">
                   <button
                     type="button"
-                    id="ng-music-abc-file-btn"
+                    id="ng-musicedit-file-btn"
                     class="ng-gen-btn ng-gen-btn-quiet"
                     style="width: auto"
                   >
@@ -2800,81 +3112,313 @@
                   </button>
                   <button
                     type="button"
-                    id="ng-music-abc-save-btn"
+                    id="ng-musicedit-save-btn"
                     class="ng-gen-btn ng-gen-btn-quiet"
                     style="width: auto"
                   >
                     Save ABC file
                   </button>
                 </div>
-                <textarea
-                  id="ng-music-abc-text"
-                  class="ng-gen-input"
-                  rows="10"
-                  style="margin-top: 8px; font-family: monospace"
-                  placeholder="X:1&#10;T:Untitled&#10;M:4/4&#10;L:1/8&#10;K:C&#10;CDEF GABc|"
-                ></textarea>
-                <div
-                  style="
-                    display: flex;
-                    gap: 8px;
-                    flex-wrap: wrap;
-                    margin-top: 8px;
-                  "
+              </div>
+              <div class="ng-gen-label" style="margin-top: 8px">
+                Score
+                <span class="ng-gen-linkrow">
+                  <a href="#" id="ng-musicedit-select-all">select all</a>
+                </span>
+              </div>
+              <textarea
+                id="ng-musicedit-text"
+                class="ng-gen-input"
+                rows="10"
+                style="margin-top: 8px; font-family: monospace"
+                placeholder="X:1&#10;T:Untitled&#10;M:4/4&#10;L:1/8&#10;Q:1/4=120&#10;K:C&#10;CDEF GABc|"
+              ></textarea>
+
+              <div style="display: flex; gap: 8px; margin-top: 8px">
+                <div style="flex: 1">
+                  <label
+                    class="ng-gen-label"
+                    for="ng-musicedit-bpm"
+                    style="margin-top: 0"
+                    >Tempo (BPM)</label
+                  >
+                  <input
+                    id="ng-musicedit-bpm"
+                    type="number"
+                    class="ng-gen-input"
+                    style="margin-bottom: 0"
+                    min="20"
+                    max="400"
+                    placeholder="120"
+                  />
+                </div>
+                <div style="flex: 1">
+                  <label
+                    class="ng-gen-label"
+                    for="ng-musicedit-key"
+                    style="margin-top: 0"
+                    >Key</label
+                  >
+                  <input
+                    id="ng-musicedit-key"
+                    type="text"
+                    class="ng-gen-input"
+                    style="margin-bottom: 0"
+                    placeholder="C"
+                  />
+                </div>
+              </div>
+              <div
+                class="ng-gen-label"
+                style="margin-top: 4px; text-transform: none; letter-spacing: 0"
+              >
+                Loading a file fills these in from its own Q:/K: header
+                lines; editing either rewrites that line in the score
+                above.
+              </div>
+
+              <div
+                style="
+                  display: flex;
+                  gap: 8px;
+                  flex-wrap: wrap;
+                  margin-top: 8px;
+                "
+              >
+                <button
+                  type="button"
+                  id="ng-musicedit-staff-toggle"
+                  class="ng-gen-btn ng-gen-btn-quiet"
+                  style="width: auto"
                 >
+                  Show sheet music
+                </button>
+                <button
+                  type="button"
+                  id="ng-musicedit-tab-toggle"
+                  class="ng-gen-btn ng-gen-btn-quiet"
+                  style="width: auto"
+                >
+                  Show guitar tab
+                </button>
+                <button
+                  type="button"
+                  id="ng-musicedit-midi-btn"
+                  class="ng-gen-btn ng-gen-btn-quiet"
+                  style="width: auto"
+                >
+                  Download MIDI
+                </button>
+                <button
+                  type="button"
+                  id="ng-musicedit-pdf-btn"
+                  class="ng-gen-btn ng-gen-btn-quiet"
+                  style="width: auto"
+                >
+                  Print sheet music (PDF)
+                </button>
+                <button
+                  type="button"
+                  id="ng-musicedit-tab-pdf-btn"
+                  class="ng-gen-btn ng-gen-btn-quiet"
+                  style="width: auto"
+                >
+                  Print guitar tab (PDF)
+                </button>
+              </div>
+              <div
+                id="ng-musicedit-staff-wrap"
+                class="ng-music-abc-staff"
+                style="display: none"
+              ></div>
+              <div
+                id="ng-musicedit-tab-wrap"
+                class="ng-music-abc-staff"
+                style="display: none"
+              ></div>
+            </div>
+
+            <div
+              id="ng-musicedit-render"
+              class="ng-gen-canvas"
+              style="margin-top: 16px"
+            >
+              <div class="ng-gen-label" style="margin-top: 0">
+                Render audio from this score
+              </div>
+              <p
+                class="ng-gen-label"
+                style="
+                  margin-top: 4px;
+                  text-transform: none;
+                  letter-spacing: 0;
+                "
+              >
+                Sends the score above as a real conditioning input (`lyra
+                generate --abc`), not just a preview -- the model actually
+                renders over it.
+              </p>
+              <textarea
+                id="ng-musicedit-style"
+                class="ng-gen-input"
+                rows="2"
+                placeholder="Style (optional) -- genre, instruments, singer, language..."
+              ></textarea>
+              <div class="ng-gen-label" style="margin-top: 8px">
+                Lyrics
+                <span class="ng-gen-linkrow">
+                  <a href="#" id="ng-musicedit-lyrics-select-all">select all</a> ·
+                  <a href="#" id="ng-musicedit-lyrics-expand">expand</a>
+                </span>
+              </div>
+              <textarea
+                id="ng-musicedit-lyrics"
+                class="ng-gen-input"
+                rows="8"
+                placeholder="[Verse]&#10;The station lights are fading&#10;Your footsteps find the street&#10;&#10;[Chorus]&#10;Carry the morning home"
+              ></textarea>
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: flex-end;
+                  margin-top: 8px;
+                "
+              >
+                <div style="flex: 1">
+                  <label
+                    class="ng-gen-label"
+                    for="ng-musicedit-duration"
+                    style="margin-top: 0"
+                    >Max length
+                    <span id="ng-musicedit-duration-val">4:00</span></label
+                  >
+                  <input
+                    id="ng-musicedit-duration"
+                    type="range"
+                    min="30"
+                    max="900"
+                    step="15"
+                    value="240"
+                    style="width: 100%"
+                  />
+                </div>
+                <input
+                  id="ng-musicedit-seed"
+                  type="number"
+                  class="ng-gen-input"
+                  style="width: 120px; margin-bottom: 0"
+                  placeholder="Seed (random)"
+                />
+              </div>
+              <div style="margin-top: 8px">
+                <label
+                  class="ng-gen-label"
+                  for="ng-musicedit-precision"
+                  style="margin-top: 0"
+                  >Precision</label
+                >
+                <select
+                  id="ng-musicedit-precision"
+                  class="ng-gen-input"
+                  style="margin-bottom: 0"
+                >
+                  <option value="8bit">8-bit (recommended)</option>
+                  <option value="bf16">bf16 (full precision)</option>
+                </select>
+              </div>
+              <div style="margin-top: 8px">
+                <label
+                  class="ng-gen-label"
+                  for="ng-musicedit-temperature"
+                  style="margin-top: 0"
+                  >Weirdness
+                  <span id="ng-musicedit-temperature-val">1.00</span></label
+                >
+                <input
+                  id="ng-musicedit-temperature"
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  value="1"
+                  style="width: 100%"
+                />
+              </div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px">
+                <button
+                  type="button"
+                  id="ng-musicedit-render-btn"
+                  class="ng-gen-btn"
+                  style="flex: 1; min-width: 200px"
+                >
+                  Render audio from this score
+                </button>
+                <button
+                  type="button"
+                  id="ng-musicedit-use-in-music-btn"
+                  class="ng-gen-btn ng-gen-btn-quiet"
+                  style="width: auto"
+                  title="Sends this score, style and lyrics to the Music page's own Compose form -- use its queue/cover/Job Log tools instead of this page's single-shot render."
+                >
+                  → Use in Music
+                </button>
+              </div>
+              <div id="ng-musicedit-status" class="ng-gen-status"></div>
+              <audio
+                id="ng-musicedit-audio"
+                controls
+                style="display: none; width: 100%; margin-top: 8px"
+              ></audio>
+            </div>
+            </div>
+
+            <!-- Durable job-log history, shared with the Music page --
+                 both views' renders land in the same music_job_logsNG.py
+                 store, so Music Edit gets its own read-only browser onto
+                 it too instead of forcing a task-switch to see it.
+                 Toggled by #ng-musicedit-log-toggle, replaces
+                 #ng-musicedit-editor while open. Twin of
+                 #ng-music-log-view/#ng-vg-log-view -- see
+                 static/musiceditNG.js. -->
+            <div id="ng-musicedit-log-view" style="display: none">
+              <div class="ng-vg-log-head">
+                <button
+                  type="button"
+                  id="ng-musicedit-log-back"
+                  class="ng-gen-btn ng-gen-btn-quiet"
+                >
+                  &larr; Back
+                </button>
+                <span>Job Log</span>
+                <div class="ng-vg-log-tabs">
                   <button
                     type="button"
-                    id="ng-music-abc-staff-toggle"
-                    class="ng-gen-btn ng-gen-btn-quiet"
-                    style="width: auto"
+                    id="ng-musicedit-log-tab-recent"
+                    class="ng-gen-btn ng-gen-btn-quiet ng-vg-log-tab-active"
                   >
-                    Show sheet music
+                    Recent
                   </button>
                   <button
                     type="button"
-                    id="ng-music-abc-tab-toggle"
+                    id="ng-musicedit-log-tab-archive"
                     class="ng-gen-btn ng-gen-btn-quiet"
-                    style="width: auto"
                   >
-                    Show guitar tab
-                  </button>
-                  <button
-                    type="button"
-                    id="ng-music-abc-midi-btn"
-                    class="ng-gen-btn ng-gen-btn-quiet"
-                    style="width: auto"
-                  >
-                    Download MIDI
-                  </button>
-                  <button
-                    type="button"
-                    id="ng-music-abc-pdf-btn"
-                    class="ng-gen-btn ng-gen-btn-quiet"
-                    style="width: auto"
-                  >
-                    Print sheet music (PDF)
-                  </button>
-                  <button
-                    type="button"
-                    id="ng-music-abc-tab-pdf-btn"
-                    class="ng-gen-btn ng-gen-btn-quiet"
-                    style="width: auto"
-                  >
-                    Print guitar tab (PDF)
+                    Archive
                   </button>
                 </div>
-                <div
-                  id="ng-music-abc-staff-wrap"
-                  class="ng-music-abc-staff"
-                  style="display: none"
-                ></div>
-                <div
-                  id="ng-music-abc-tab-wrap"
-                  class="ng-music-abc-staff"
-                  style="display: none"
-                ></div>
               </div>
+              <div id="ng-musicedit-log-breadcrumb" style="display: none"></div>
+              <p
+                id="ng-musicedit-log-empty"
+                class="ng-placeholder"
+                style="display: none"
+              >
+                Nothing logged here yet.
+              </p>
+              <div id="ng-musicedit-log-list"></div>
             </div>
+          </div>
           <aside id="ng-sidebar" style="display: none">
             <div id="ng-sidebar-current">
               <img id="ng-sidebar-current-img" src="" alt="" />
@@ -3077,6 +3621,7 @@
         <button class="ng-task-btn" data-task="videogen">Animate</button>
         <button class="ng-task-btn" data-task="h3">H3</button>
         <button class="ng-task-btn" data-task="music">Music</button>
+        <button class="ng-task-btn" data-task="musicedit">Music Edit</button>
         <button class="ng-task-btn" data-task="chat">Chat</button>
         <button class="ng-task-btn" data-task="rachel">Rachel</button>
         <button class="ng-task-btn" data-task="hdmulti">Hd-Multi</button>
@@ -3136,6 +3681,7 @@
          score to an inline SVG staff. See static/musicNG.js. -->
     <script src="{{ url_for('static', filename='vendor/abcjs-basic-min.js') }}"></script>
     <script src="{{ url_for('static', filename='musicNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='musiceditNG.js') }}"></script>
     <script src="{{ url_for('static', filename='hdmultiNG.js') }}"></script>
     <script src="{{ url_for('static', filename='comfyNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>

@@ -21,12 +21,12 @@
  * first click of its "Show sheet music" toggle, not eagerly for every
  * completed job.
  *
- * Below the composer, a separate ABC tools panel (#ng-music-abc-tools)
- * lets you load any .abc file from disk, edit it in place, and save it
- * back out -- independent of the job queue. It shares its render/MIDI/
- * PDF core with the queue rows (toggleAbcRender/downloadAbcAsMidi/
- * printAbcAsPdf all take a getText() callback now, fed either from a
- * fetch of item.scoreUrl or straight from the panel's own textarea).
+ * toggleAbcRender/downloadAbcAsMidi/printAbcAsPdf all take a getText()
+ * callback rather than assuming a queue row, so they're exported on
+ * window.MusicNG (see the bottom of this file) for the standalone
+ * "Music Edit" task (static/musiceditNG.js) to reuse for its own
+ * load/edit/save ABC panel -- that used to live here as
+ * #ng-music-abc-tools, split out per the "music page is overloaded" call.
  *
  * Loaded after h3NG.js and before bootstrapWiringNG.js (which fires the
  * first ProjectManager.render(), which calls MusicNG.sync()).
@@ -45,7 +45,22 @@
   var pollTimer = null;
   var rowCache = {};
   var currentCoverBlob = null; // File picked for Cover mode's source track
-  var loadedAbcName = null; // filename of the last file loaded into the ABC tools panel
+
+  // Set by useAbcScore() (called from Music Edit's "→ Use in Music"
+  // button, see window.MusicNG export at the bottom of this file) --
+  // an edited ABC score waiting to ride along on the next plain
+  // Compose submit as a real conditioning input (body.abc, see
+  // routes/musicNG.py's /generate). Persists across submits, same as
+  // the style/lyrics textareas, until cleared via the banner's "clear"
+  // link or a fresh useAbcScore() call.
+  var pendingAbc = null;
+  var pendingAbcName = null;
+
+  // ---- Job Log panel state (see "Job Log panel" section below) ----
+  var logMode = "recent"; // "recent" | "years" | "months" | "days"
+  var logYear = null;
+  var logMonth = null;
+  var logNotesTimers = {}; // job_id -> debounce timer for the notes PATCH
 
   // Length bounds -- match music_engineNG.py's MUSIC_MIN/MAX_SECONDS;
   // refreshed from /status once reachable so the two never drift apart.
@@ -58,6 +73,9 @@
     els.main = document.getElementById("ng-music-main");
     els.controlsPane = document.getElementById("ng-controls-pane");
     els.unavailable = document.getElementById("ng-music-unavailable");
+    els.unavailableText = document.getElementById("ng-music-unavailable-text");
+    els.installBtn = document.getElementById("ng-music-install-btn");
+    els.installLog = document.getElementById("ng-music-install-log");
 
     els.queueCount = document.getElementById("ng-music-queue-count");
     els.queueEmpty = document.getElementById("ng-music-queue-empty");
@@ -68,12 +86,16 @@
     els.instrumentalRow = document.getElementById("ng-music-instrumental-row");
     els.style = document.getElementById("ng-music-style");
     els.lyrics = document.getElementById("ng-music-lyrics");
+    els.lyricsExpand = document.getElementById("ng-music-lyrics-expand");
+    els.lyricsSelectAll = document.getElementById("ng-music-lyrics-select-all");
     els.mode = document.getElementById("ng-music-mode");
     els.modeRow = document.getElementById("ng-music-mode-row");
     els.duration = document.getElementById("ng-music-duration");
     els.durationVal = document.getElementById("ng-music-duration-val");
     els.seed = document.getElementById("ng-music-seed");
     els.precision = document.getElementById("ng-music-precision");
+    els.temperature = document.getElementById("ng-music-temperature");
+    els.temperatureVal = document.getElementById("ng-music-temperature-val");
 
     els.coverToggle = document.getElementById("ng-music-cover-toggle");
     els.coverFileWrap = document.getElementById("ng-music-cover-file-wrap");
@@ -88,19 +110,19 @@
     els.status = document.getElementById("ng-music-status");
     els.mainLog = document.getElementById("ng-music-log");
 
-    els.abcFile = document.getElementById("ng-music-abc-file");
-    els.abcFileBtn = document.getElementById("ng-music-abc-file-btn");
-    els.abcFileEmpty = document.getElementById("ng-music-abc-file-empty");
-    els.abcFileName = document.getElementById("ng-music-abc-file-name");
-    els.abcSaveBtn = document.getElementById("ng-music-abc-save-btn");
-    els.abcText = document.getElementById("ng-music-abc-text");
-    els.abcStaffToggle = document.getElementById("ng-music-abc-staff-toggle");
-    els.abcTabToggle = document.getElementById("ng-music-abc-tab-toggle");
-    els.abcMidiBtn = document.getElementById("ng-music-abc-midi-btn");
-    els.abcPdfBtn = document.getElementById("ng-music-abc-pdf-btn");
-    els.abcTabPdfBtn = document.getElementById("ng-music-abc-tab-pdf-btn");
-    els.abcStaffWrap = document.getElementById("ng-music-abc-staff-wrap");
-    els.abcTabWrap = document.getElementById("ng-music-abc-tab-wrap");
+    els.abcBanner = document.getElementById("ng-music-abc-banner");
+    els.abcBannerText = document.getElementById("ng-music-abc-banner-text");
+    els.abcBannerClear = document.getElementById("ng-music-abc-banner-clear");
+
+    els.compose = document.getElementById("ng-music-compose");
+    els.logToggle = document.getElementById("ng-music-log-toggle");
+    els.logView = document.getElementById("ng-music-log-view");
+    els.logBack = document.getElementById("ng-music-log-back");
+    els.logTabRecent = document.getElementById("ng-music-log-tab-recent");
+    els.logTabArchive = document.getElementById("ng-music-log-tab-archive");
+    els.logBreadcrumb = document.getElementById("ng-music-log-breadcrumb");
+    els.logEmpty = document.getElementById("ng-music-log-empty");
+    els.logList = document.getElementById("ng-music-log-list");
   }
 
   function setStatus(msg) {
@@ -154,18 +176,117 @@
     if (els.coverFileEmpty) els.coverFileEmpty.style.display = "none";
   }
 
+  // iOS's file-picker sheet is unreliable at filtering by accept= (see
+  // the accept= broadening on this same input) -- dragging a file in
+  // from Files/Photos sidesteps that filtering step entirely. Setting
+  // the hidden <input>'s .files to the dropped FileList lets the
+  // existing change-driven handler do the rest, same as a real pick.
+  function wireDropzone(zone, input, onFiles) {
+    if (!zone || !input) return;
+    ["dragenter", "dragover"].forEach(function (evt) {
+      zone.addEventListener(evt, function (e) {
+        e.preventDefault();
+        zone.classList.add("ng-dropzone-active");
+      });
+    });
+    ["dragleave", "dragend", "drop"].forEach(function (evt) {
+      zone.addEventListener(evt, function () {
+        zone.classList.remove("ng-dropzone-active");
+      });
+    });
+    zone.addEventListener("drop", function (e) {
+      e.preventDefault();
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) {
+        input.files = files;
+        onFiles();
+      }
+    });
+  }
+
   function setGenerationDisabled(disabled, health) {
     generationDisabled = disabled;
     if (els.generateBtn) els.generateBtn.disabled = disabled;
     if (els.unavailable) {
       els.unavailable.style.display = disabled ? "" : "none";
-      if (disabled) {
-        els.unavailable.textContent =
+      if (disabled && els.unavailableText) {
+        els.unavailableText.textContent =
           "YuE2 pipeline not reachable (venv/generator/vae missing at " +
           ((health && health.repo_dir) || "?") +
           "). Queuing is disabled until it's fixed.";
       }
+      if (els.installBtn) {
+        els.installBtn.style.display = (disabled && health && health.installable) ? "" : "none";
+        if (!disabled || !(health && health.installable)) {
+          els.installBtn.disabled = false;
+          els.installBtn.textContent = "Install now (~11 GB)";
+        }
+      }
     }
+  }
+
+  // ---- self-service install (see music_installNG.py / engine_installNG.py) ----
+  var installPollTimer = null;
+
+  function pollInstallJob(jobId) {
+    fetch(API + "/install/" + jobId)
+      .then(function (r) { return r.json(); })
+      .then(function (job) {
+        if (!job || !job.status) return;
+        if (els.installLog) {
+          els.installLog.style.display = "";
+          els.installLog.textContent = (job.log_tail || []).join("\n");
+          els.installLog.scrollTop = els.installLog.scrollHeight;
+        }
+        if (job.status === "queued" || job.status === "installing") {
+          if (els.installBtn) {
+            els.installBtn.textContent = "Installing" + (job.step ? " (" + job.step + ")…" : "…");
+          }
+          return;
+        }
+        clearInterval(installPollTimer);
+        installPollTimer = null;
+        if (job.status === "completed") {
+          if (els.installBtn) {
+            els.installBtn.disabled = true;
+            els.installBtn.textContent = "Installed — restart Ring Visualizer to use it";
+          }
+          setStatus("YuE2 installed. Restart the app to pick it up.");
+        } else {
+          if (els.installBtn) {
+            els.installBtn.disabled = false;
+            els.installBtn.textContent = "Install now (~11 GB)";
+          }
+          setStatus("Install failed: " + (job.error || "unknown error"));
+        }
+      })
+      .catch(function () { /* keep polling -- a transient fetch error isn't fatal */ });
+  }
+
+  function startInstall() {
+    if (!els.installBtn) return;
+    els.installBtn.disabled = true;
+    els.installBtn.textContent = "Starting…";
+    fetch(API + "/install", { method: "POST" })
+      .then(function (res) {
+        return res.json().then(function (payload) { return { ok: res.ok, payload: payload }; });
+      })
+      .then(function (r) {
+        if (r.ok && r.payload && r.payload.job_id) {
+          if (installPollTimer) clearInterval(installPollTimer);
+          installPollTimer = setInterval(function () { pollInstallJob(r.payload.job_id); }, 2500);
+          pollInstallJob(r.payload.job_id);
+        } else {
+          els.installBtn.disabled = false;
+          els.installBtn.textContent = "Install now (~11 GB)";
+          setStatus("Could not start install: " + ((r.payload && r.payload.error) || "unknown error"));
+        }
+      })
+      .catch(function (e) {
+        els.installBtn.disabled = false;
+        els.installBtn.textContent = "Install now (~11 GB)";
+        setStatus("Could not start install: " + e.message);
+      });
   }
 
   function ensureStatusChecked() {
@@ -232,6 +353,8 @@
       instrumental: instrumental, precision: precision,
     };
     if (seed !== null && !isNaN(seed)) body.seed = seed;
+    if (els.temperature) body.temperature = parseFloat(els.temperature.value);
+    if (pendingAbc) body.abc = pendingAbc;
 
     fetch(API + "/generate", {
       method: "POST",
@@ -304,6 +427,7 @@
     form.append("duration_s", String(durationS));
     form.append("precision", precision);
     if (seed !== null && !isNaN(seed)) form.append("seed", String(seed));
+    if (els.temperature) form.append("temperature", els.temperature.value);
 
     fetch(API + "/cover", { method: "POST", body: form })
       .then(function (res) {
@@ -406,6 +530,70 @@
     });
   }
 
+  function updateAbcBanner() {
+    if (!els.abcBanner) return;
+    if (!pendingAbc) {
+      els.abcBanner.style.display = "none";
+      return;
+    }
+    els.abcBanner.style.display = "";
+    if (els.abcBannerText) {
+      els.abcBannerText.textContent = "Using edited score “" + (pendingAbcName || "score") +
+        "” as this Compose's conditioning input.";
+    }
+  }
+
+  function clearAbcScore() {
+    pendingAbc = null;
+    pendingAbcName = null;
+    updateAbcBanner();
+  }
+
+  // Called from Music Edit's "→ Use in Music" button (see
+  // static/musiceditNG.js) -- the reverse of sendScoreToMusicEdit below.
+  // Same page, no navigation: just stash the score for the next plain
+  // Compose submit, fill in style/lyrics if Music Edit had any, and
+  // switch the active task so the user lands here with it ready.
+  function useAbcScore(abcText, filenameBase, style, lyrics) {
+    refreshEls();
+    if (!abcText || !abcText.trim()) return;
+    pendingAbc = abcText;
+    pendingAbcName = filenameBase || "score";
+    if (style) els.style.value = style;
+    if (lyrics) els.lyrics.value = lyrics;
+    if (isCoverMode() && els.coverToggle) {
+      els.coverToggle.checked = false;
+      onCoverToggleChange();
+    }
+    updateAbcBanner();
+    setStatus("Loaded score from Music Edit -- Compose will render over it.");
+  }
+
+  // One page, all tasks' DOM already present -- no navigation, no
+  // query-param/localStorage handoff needed, just fetch the score, hand
+  // it to Music Edit's own loader, then switch the active task so the
+  // user lands there with it already loaded.
+  function sendScoreToMusicEdit(scoreUrl, filenameBase, btn) {
+    var origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Loading...";
+    fetchAbcText(scoreUrl)
+      .then(function (text) {
+        if (!window.MusicEditNG || !window.MusicEditNG.loadAbcText) {
+          throw new Error("Music Edit isn't available");
+        }
+        window.MusicEditNG.loadAbcText(text, filenameBase);
+        if (window.ProjectManager) window.ProjectManager.setTask("musicedit");
+      })
+      .catch(function (e) {
+        setStatus("Could not load score into Music Edit: " + e.message);
+      })
+      .then(function () {
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  }
+
   // clickListener is optional -- only the ABC tools panel passes one
   // (see onAbcNoteClick below); queue rows have no textarea to jump to,
   // so they render read-only. Confirmed live against the vendored
@@ -459,6 +647,22 @@
   // actual point here -- editable, re-scoreable, yours, same as the
   // ABC text download above, just in the format every music tool
   // already opens.
+  // iOS Safari doesn't reliably honor the `download` attribute on a
+  // `data:` URI -- when it doesn't, it hands the tap off to Files/another
+  // app instead of downloading in-page. A blob: URL (same-origin, no
+  // navigation) is what saveAbcFile() below already uses successfully,
+  // so MIDI export decodes ABCJS's data-URI into a Blob first.
+  function dataUriToBlob(dataUri) {
+    var comma = dataUri.indexOf(",");
+    var meta = dataUri.slice(0, comma);
+    var mimeMatch = /data:([^;]+)/.exec(meta);
+    var mime = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+    var raw = /;base64/.test(meta) ? atob(dataUri.slice(comma + 1)) : decodeURIComponent(dataUri.slice(comma + 1));
+    var bytes = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  }
+
   function downloadAbcAsMidi(btn, filenameBase, getText) {
     if (!window.ABCJS || !window.ABCJS.synth || !window.ABCJS.synth.getMidiFile) {
       setStatus("MIDI export not available (renderer failed to load).");
@@ -471,12 +675,15 @@
       .then(function (abcText) {
         var midiUris = window.ABCJS.synth.getMidiFile(abcText, { midiOutputType: "encoded" });
         if (!midiUris || !midiUris[0]) throw new Error("no MIDI data produced");
+        var blob = dataUriToBlob(midiUris[0]);
+        var url = URL.createObjectURL(blob);
         var a = document.createElement("a");
-        a.href = midiUris[0];
+        a.href = url;
         a.download = filenameBase + ".mid";
         document.body.appendChild(a);
         a.click();
         a.remove();
+        URL.revokeObjectURL(url);
       })
       .catch(function (e) {
         setStatus("Could not export MIDI: " + e.message);
@@ -727,6 +934,18 @@
         scoreDl.style.marginTop = "4px";
         row.appendChild(scoreDl);
 
+        var editDl = document.createElement("button");
+        editDl.type = "button";
+        editDl.className = "ng-btn";
+        editDl.textContent = "→ Edit score in Music Edit";
+        editDl.title = "Loads this score into Music Edit so you can adjust tempo/key and render over it.";
+        editDl.style.gridColumn = "1 / -1";
+        editDl.style.marginTop = "4px";
+        editDl.addEventListener("click", function () {
+          sendScoreToMusicEdit(item.scoreUrl, "music-" + item.jobId, editDl);
+        });
+        row.appendChild(editDl);
+
         var midiDl = document.createElement("button");
         midiDl.type = "button";
         midiDl.className = "ng-btn";
@@ -845,92 +1064,10 @@
     els.mainLog.scrollTop = els.mainLog.scrollHeight;
   }
 
-  // ---- ABC tools panel -- load/edit/save/render a plain ABC file,
-  // independent of the AI job queue above. Shares its render/MIDI/PDF
-  // core with the queue rows via toggleAbcRender/downloadAbcAsMidi/
-  // printAbcAsPdf, just fed from the textarea instead of a fetched URL.
-  function abcToolsText() {
-    return els.abcText ? els.abcText.value : "";
-  }
-
-  function abcToolsGetText() {
-    return Promise.resolve(abcToolsText());
-  }
-
-  function abcToolsFilenameBase() {
-    return (loadedAbcName || "music").replace(/\.abc$/i, "");
-  }
-
-  // Clears the cached staff/tab render so the next toggle click re-
-  // renders from the current textarea contents instead of reusing a
-  // stale render from before a file load or an edit.
-  function resetAbcToolsRenders() {
-    [els.abcStaffWrap, els.abcTabWrap].forEach(function (wrap) {
-      if (!wrap) return;
-      wrap.dataset.loaded = "";
-      wrap.style.display = "none";
-    });
-    if (els.abcStaffToggle) els.abcStaffToggle.textContent = "Show sheet music";
-    if (els.abcTabToggle) els.abcTabToggle.textContent = "Show guitar tab";
-  }
-
-  function onAbcFileChosen() {
-    var f = els.abcFile.files && els.abcFile.files[0];
-    if (!f) return;
-    var reader = new FileReader();
-    reader.onload = function () {
-      if (els.abcText) els.abcText.value = String(reader.result || "");
-      loadedAbcName = f.name;
-      if (els.abcFileName) {
-        els.abcFileName.textContent = f.name;
-        els.abcFileName.style.display = "";
-      }
-      if (els.abcFileEmpty) els.abcFileEmpty.style.display = "none";
-      resetAbcToolsRenders();
-      setStatus("Loaded " + f.name + ".");
-    };
-    reader.onerror = function () {
-      setStatus("Could not read file: " + (reader.error && reader.error.message));
-    };
-    reader.readAsText(f);
-  }
-
-  // abcelem.startChar/endChar are character offsets into the ABC
-  // string that was actually rendered -- confirmed live against the
-  // vendored abcjs build (clicking a notehead selected the right
-  // substring in a paired textarea). Selecting rather than just moving
-  // the caret makes the hit visible without hunting for a blinking
-  // cursor in a wall of ABC syntax.
-  function onAbcNoteClick(abcelem) {
-    if (!els.abcText || !abcelem) return;
-    var start = abcelem.startChar;
-    var end = abcelem.endChar;
-    if (typeof start !== "number" || typeof end !== "number" || end <= start) return;
-    els.abcText.focus();
-    els.abcText.setSelectionRange(start, end);
-    var before = els.abcText.value.slice(0, start);
-    var lineNum = before.split("\n").length;
-    var lineHeight = parseFloat(getComputedStyle(els.abcText).lineHeight) || 16;
-    els.abcText.scrollTop = Math.max(0, (lineNum - 3) * lineHeight);
-  }
-
-  function saveAbcFile() {
-    var text = abcToolsText();
-    if (!text.trim()) {
-      setStatus("Nothing to save -- load or type ABC first.");
-      return;
-    }
-    var blob = new Blob([text], { type: "text/plain" });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = abcToolsFilenameBase() + ".abc";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    setStatus("Saved " + a.download + ".");
-  }
+  // ABC load/edit/save/render tools used to live here as a standalone
+  // panel -- moved to static/musiceditNG.js (the "Music Edit" task),
+  // which reuses toggleAbcRender/downloadAbcAsMidi/printAbcAsPdf above
+  // via window.MusicNG, same as the queue rows below still do.
 
   function init() {
     if (inited) return;
@@ -942,44 +1079,52 @@
     if (els.coverToggle) els.coverToggle.addEventListener("change", onCoverToggleChange);
     if (els.coverFileBtn) els.coverFileBtn.addEventListener("click", function () { els.coverFile.click(); });
     if (els.coverFile) els.coverFile.addEventListener("change", onCoverFile);
-
-    if (els.abcFileBtn) els.abcFileBtn.addEventListener("click", function () { els.abcFile.click(); });
-    if (els.abcFile) els.abcFile.addEventListener("change", onAbcFileChosen);
-    if (els.abcSaveBtn) els.abcSaveBtn.addEventListener("click", saveAbcFile);
-    if (els.abcText) els.abcText.addEventListener("input", resetAbcToolsRenders);
-    if (els.abcStaffToggle) {
-      els.abcStaffToggle.addEventListener("click", function () {
-        toggleAbcRender(els.abcStaffWrap, els.abcStaffToggle, "staff", abcToolsGetText, onAbcNoteClick);
-      });
-    }
-    if (els.abcTabToggle) {
-      els.abcTabToggle.addEventListener("click", function () {
-        toggleAbcRender(els.abcTabWrap, els.abcTabToggle, "tab", abcToolsGetText, onAbcNoteClick);
-      });
-    }
-    if (els.abcMidiBtn) {
-      els.abcMidiBtn.addEventListener("click", function () {
-        downloadAbcAsMidi(els.abcMidiBtn, abcToolsFilenameBase(), abcToolsGetText);
-      });
-    }
-    if (els.abcPdfBtn) {
-      els.abcPdfBtn.addEventListener("click", function () {
-        printAbcAsPdf(els.abcPdfBtn, abcToolsFilenameBase(), "staff", abcToolsGetText);
-      });
-    }
-    if (els.abcTabPdfBtn) {
-      els.abcTabPdfBtn.addEventListener("click", function () {
-        printAbcAsPdf(els.abcTabPdfBtn, abcToolsFilenameBase(), "tab", abcToolsGetText);
-      });
-    }
+    wireDropzone(els.coverFileWrap, els.coverFile, onCoverFile);
 
     els.duration.addEventListener("input", function () {
       els.durationVal.textContent = formatDuration(els.duration.value);
     });
+    if (els.temperature && els.temperatureVal) {
+      els.temperature.addEventListener("input", function () {
+        els.temperatureVal.textContent = parseFloat(els.temperature.value).toFixed(2);
+      });
+    }
     if (els.precision) {
       els.precision.addEventListener("change", function () {
         statusChecked = false; // re-check reachability for the newly picked precision
         ensureStatusChecked();
+      });
+    }
+
+    if (els.logToggle) els.logToggle.addEventListener("click", toggleLogView);
+    if (els.logBack) els.logBack.addEventListener("click", closeLogView);
+    if (els.logTabRecent) els.logTabRecent.addEventListener("click", function () { setLogTab("recent"); });
+    if (els.logTabArchive) els.logTabArchive.addEventListener("click", function () { setLogTab("years"); });
+
+    if (els.installBtn) els.installBtn.addEventListener("click", startInstall);
+
+    if (els.abcBannerClear) {
+      els.abcBannerClear.addEventListener("click", function (e) {
+        e.preventDefault();
+        clearAbcScore();
+      });
+    }
+    updateAbcBanner();
+
+    if (els.lyricsExpand) {
+      els.lyricsExpand.addEventListener("click", function (e) {
+        e.preventDefault();
+        var expanded = els.lyrics.classList.toggle("ng-textarea-expanded");
+        els.lyricsExpand.textContent = expanded ? "collapse" : "expand";
+      });
+    }
+    // iOS's drag-handle text selection is fiddly enough that a plain
+    // "select all" beats asking the user to drag handles by touch.
+    if (els.lyricsSelectAll) {
+      els.lyricsSelectAll.addEventListener("click", function (e) {
+        e.preventDefault();
+        els.lyrics.focus();
+        els.lyrics.select();
       });
     }
 
@@ -990,6 +1135,364 @@
       });
       renderQueue();
     });
+  }
+
+  // ---- "Job Log" panel ----
+  // A durable history of finished Music renders (music_job_logsNG.py),
+  // separate from the ephemeral render queue in the rail -- the queue
+  // evicts (and deletes) a job's files once 20 newer jobs have finished,
+  // so this is the only place a song's style/lyrics/seed ("recipe") can
+  // still be recovered afterwards. Replaces #ng-music-compose while
+  // open; "Recent" shows the current month, "Archive" drills down
+  // year -> month -> a day-entries grid using the same card component.
+  // Twin of videogenNG.js's own Job Log panel.
+
+  function toggleLogView() {
+    if (!els.logView || !els.compose) return;
+    var opening = els.logView.style.display === "none";
+    if (opening) {
+      els.compose.style.display = "none";
+      els.logView.style.display = "";
+      setLogTab("recent");
+    } else {
+      closeLogView();
+    }
+  }
+
+  function closeLogView() {
+    if (!els.logView || !els.compose) return;
+    els.logView.style.display = "none";
+    els.compose.style.display = "";
+  }
+
+  function setLogTab(mode) {
+    logMode = mode;
+    logYear = null;
+    logMonth = null;
+    if (els.logTabRecent) els.logTabRecent.classList.toggle("ng-vg-log-tab-active", mode === "recent");
+    if (els.logTabArchive) els.logTabArchive.classList.toggle("ng-vg-log-tab-active", mode !== "recent");
+    if (mode === "recent") {
+      fetchLogRecent();
+    } else {
+      fetchLogArchiveYears();
+    }
+  }
+
+  function renderLogBreadcrumb() {
+    if (!els.logBreadcrumb) return;
+    if (logMode === "recent" || logMode === "years") {
+      els.logBreadcrumb.style.display = "none";
+      els.logBreadcrumb.innerHTML = "";
+      return;
+    }
+    els.logBreadcrumb.style.display = "";
+    els.logBreadcrumb.innerHTML = "";
+    var crumbs = [{ label: "Archive", fn: function () { fetchLogArchiveYears(); } }];
+    if (logYear) {
+      crumbs.push({ label: logYear, fn: function () { fetchLogArchiveMonths(logYear); } });
+    }
+    if (logMonth) {
+      crumbs.push({ label: logYear + "-" + logMonth, fn: null });
+    }
+    crumbs.forEach(function (c, i) {
+      if (i > 0) els.logBreadcrumb.appendChild(document.createTextNode(" / "));
+      if (c.fn) {
+        var a = document.createElement("a");
+        a.href = "#";
+        a.textContent = c.label;
+        a.addEventListener("click", function (e) { e.preventDefault(); c.fn(); });
+        els.logBreadcrumb.appendChild(a);
+      } else {
+        var span = document.createElement("span");
+        span.textContent = c.label;
+        els.logBreadcrumb.appendChild(span);
+      }
+    });
+  }
+
+  function fetchLogRecent() {
+    logMode = "recent";
+    renderLogBreadcrumb();
+    if (els.logList) els.logList.innerHTML = "Loading&hellip;";
+    fetch(API + "/logs")
+      .then(function (res) { return res.json(); })
+      .then(function (payload) {
+        renderLogEntries((payload && payload.entries) || []);
+      })
+      .catch(function () {
+        if (els.logList) els.logList.textContent = "Couldn't load the job log.";
+      });
+  }
+
+  function fetchLogArchiveYears() {
+    logMode = "years";
+    logYear = null;
+    logMonth = null;
+    renderLogBreadcrumb();
+    if (els.logList) els.logList.innerHTML = "Loading&hellip;";
+    fetch(API + "/logs/archive")
+      .then(function (res) { return res.json(); })
+      .then(function (payload) {
+        renderLogButtons((payload && payload.years) || [], "No archived years yet.", function (year) {
+          fetchLogArchiveMonths(year);
+        });
+      })
+      .catch(function () {
+        if (els.logList) els.logList.textContent = "Couldn't load the archive.";
+      });
+  }
+
+  function fetchLogArchiveMonths(year) {
+    logMode = "months";
+    logYear = year;
+    logMonth = null;
+    renderLogBreadcrumb();
+    if (els.logList) els.logList.innerHTML = "Loading&hellip;";
+    fetch(API + "/logs/archive/" + encodeURIComponent(year))
+      .then(function (res) { return res.json(); })
+      .then(function (payload) {
+        renderLogButtons((payload && payload.months) || [], "No archived months in " + year + ".", function (month) {
+          fetchLogArchiveDays(year, month);
+        });
+      })
+      .catch(function () {
+        if (els.logList) els.logList.textContent = "Couldn't load that year.";
+      });
+  }
+
+  function fetchLogArchiveDays(year, month) {
+    logMode = "days";
+    logYear = year;
+    logMonth = month;
+    renderLogBreadcrumb();
+    if (els.logList) els.logList.innerHTML = "Loading&hellip;";
+    fetch(API + "/logs/archive/" + encodeURIComponent(year) + "/" + encodeURIComponent(month))
+      .then(function (res) { return res.json(); })
+      .then(function (payload) {
+        renderLogEntries((payload && payload.entries) || []);
+      })
+      .catch(function () {
+        if (els.logList) els.logList.textContent = "Couldn't load that month.";
+      });
+  }
+
+  function renderLogButtons(items, emptyMsg, onPick) {
+    if (!els.logList) return;
+    els.logList.innerHTML = "";
+    if (els.logEmpty) els.logEmpty.style.display = items.length ? "none" : "";
+    if (els.logEmpty) els.logEmpty.textContent = emptyMsg;
+    var grid = document.createElement("div");
+    grid.className = "ng-vg-log-grid";
+    items.forEach(function (item) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ng-gen-btn ng-gen-btn-quiet";
+      btn.textContent = item;
+      btn.addEventListener("click", function () { onPick(item); });
+      grid.appendChild(btn);
+    });
+    els.logList.appendChild(grid);
+  }
+
+  function renderLogEntries(entries) {
+    if (!els.logList) return;
+    els.logList.innerHTML = "";
+    if (els.logEmpty) {
+      els.logEmpty.textContent = "Nothing logged here yet.";
+      els.logEmpty.style.display = entries.length ? "none" : "";
+    }
+
+    var byDate = {};
+    var order = [];
+    entries.forEach(function (e) {
+      if (!byDate[e.date]) {
+        byDate[e.date] = [];
+        order.push(e.date);
+      }
+      byDate[e.date].push(e);
+    });
+
+    order.forEach(function (date) {
+      var heading = document.createElement("h4");
+      heading.className = "ng-vg-log-day-heading";
+      heading.textContent = date;
+      els.logList.appendChild(heading);
+
+      var grid = document.createElement("div");
+      grid.className = "ng-vg-log-grid";
+      byDate[date].forEach(function (entry) {
+        grid.appendChild(buildLogCard(entry));
+      });
+      els.logList.appendChild(grid);
+    });
+  }
+
+  function useLogEntry(entry) {
+    els.style.value = entry.style || "";
+    els.lyrics.value = entry.lyrics || "";
+    if (els.seed) els.seed.value = entry.seed != null ? entry.seed : "";
+    if (els.precision && entry.precision) els.precision.value = entry.precision;
+    if (els.temperature && els.temperatureVal && entry.temperature != null) {
+      els.temperature.value = entry.temperature;
+      els.temperatureVal.textContent = parseFloat(entry.temperature).toFixed(2);
+    }
+    if (typeof entry.duration_s === "number" && els.duration) {
+      els.duration.value = entry.duration_s;
+      if (els.durationVal) els.durationVal.textContent = formatDuration(els.duration.value);
+    }
+
+    if (entry.is_cover) {
+      if (els.coverToggle && !els.coverToggle.checked) {
+        els.coverToggle.checked = true;
+        onCoverToggleChange();
+      }
+      if (els.task && entry.task) els.task.value = entry.task;
+      closeLogView();
+      setStatus("Loaded style/lyrics/seed from the job log -- this was a cover, so pick the source track again before composing.");
+      return;
+    }
+
+    if (els.coverToggle && els.coverToggle.checked) {
+      els.coverToggle.checked = false;
+      onCoverToggleChange();
+    }
+    if (els.mode && entry.mode) els.mode.value = entry.mode;
+    if (els.instrumental) els.instrumental.checked = !!entry.instrumental;
+    closeLogView();
+    setStatus("Loaded style/lyrics/seed from the job log.");
+  }
+
+  function deleteLogEntry(entry, card, btn) {
+    if (!confirm("Delete this job log entry? This deletes its audio/score files permanently.")) return;
+    btn.disabled = true;
+    btn.textContent = "Deleting…";
+    fetch(API + "/logs/" + encodeURIComponent(entry.date) + "/" + encodeURIComponent(entry.job_id), {
+      method: "DELETE",
+    })
+      .then(function (res) { return res.json().then(function (p) { return { ok: res.ok, payload: p }; }); })
+      .then(function (r) {
+        if (r.ok) {
+          card.remove();
+        } else {
+          btn.disabled = false;
+          btn.textContent = "🗑 Delete";
+          setStatus("Could not delete: " + ((r.payload && r.payload.error) || "unknown error"));
+        }
+      })
+      .catch(function (e) {
+        btn.disabled = false;
+        btn.textContent = "🗑 Delete";
+        setStatus("Could not delete: " + e.message);
+      });
+  }
+
+  function saveLogNotes(entry, notes) {
+    fetch(API + "/logs/" + encodeURIComponent(entry.date) + "/" + encodeURIComponent(entry.job_id) + "/notes", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: notes }),
+    }).catch(function () { /* best-effort -- notes stay in the textarea either way */ });
+  }
+
+  function buildLogCard(entry) {
+    var card = document.createElement("div");
+    card.className = "ng-vg-log-card";
+
+    var status = document.createElement("span");
+    status.className = "ng-vg-log-status ng-vg-log-status-" + entry.status;
+    status.textContent = entry.status;
+    card.appendChild(status);
+
+    if (entry.style) {
+      var style = document.createElement("div");
+      style.className = "ng-vg-log-prompt";
+      style.textContent = entry.style;
+      card.appendChild(style);
+    }
+    if (entry.lyrics) {
+      var lyrics = document.createElement("div");
+      lyrics.className = "ng-vg-log-prompt";
+      lyrics.style.whiteSpace = "pre-wrap";
+      lyrics.textContent = entry.lyrics;
+      card.appendChild(lyrics);
+    }
+
+    var meta = document.createElement("div");
+    meta.className = "ng-vg-log-meta";
+    var when = entry.finished_at ? new Date(entry.finished_at * 1000).toLocaleTimeString() : "";
+    meta.textContent = (entry.is_cover ? "cover" + (entry.task ? " (" + entry.task + ")" : "") : (entry.mode || "full") + (entry.instrumental ? ", instrumental" : "")) +
+      (entry.duration_s != null ? ", " + Math.round(entry.audio_seconds || entry.duration_s) + "s" : "") +
+      (entry.resolved_seed != null ? ", seed " + entry.resolved_seed : "") +
+      (entry.precision ? ", " + entry.precision : "") +
+      (entry.temperature != null ? ", temp " + entry.temperature : "") +
+      (when ? ", " + when : "");
+    card.appendChild(meta);
+
+    if (entry.error) {
+      var err = document.createElement("div");
+      err.className = "ng-vg-log-error";
+      err.textContent = entry.error;
+      card.appendChild(err);
+    }
+
+    if (entry.has_audio) {
+      var audio = document.createElement("audio");
+      audio.src = API + "/logs/" + encodeURIComponent(entry.date) + "/" + encodeURIComponent(entry.job_id) + "/audio";
+      audio.controls = true;
+      card.appendChild(audio);
+    }
+
+    var actions = document.createElement("div");
+    actions.className = "ng-vg-log-actions";
+    var useBtn = document.createElement("button");
+    useBtn.type = "button";
+    useBtn.className = "ng-gen-btn ng-gen-btn-quiet";
+    useBtn.textContent = "↺ Use this";
+    useBtn.addEventListener("click", function () { useLogEntry(entry); });
+    actions.appendChild(useBtn);
+    if (entry.has_score) {
+      var scoreLink = document.createElement("a");
+      var scoreUrl = API + "/logs/" + encodeURIComponent(entry.date) + "/" + encodeURIComponent(entry.job_id) + "/score";
+      scoreLink.href = scoreUrl;
+      scoreLink.download = "music-" + entry.job_id + ".abc";
+      scoreLink.className = "ng-gen-btn ng-gen-btn-quiet";
+      scoreLink.textContent = "Score (.abc)";
+      actions.appendChild(scoreLink);
+
+      var editLink = document.createElement("button");
+      editLink.type = "button";
+      editLink.className = "ng-gen-btn ng-gen-btn-quiet";
+      editLink.textContent = "→ Edit score";
+      editLink.title = "Loads this score into Music Edit so you can adjust tempo/key and render over it.";
+      editLink.addEventListener("click", function () {
+        sendScoreToMusicEdit(scoreUrl, "music-" + entry.job_id, editLink);
+      });
+      actions.appendChild(editLink);
+    }
+    var deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "ng-gen-btn ng-gen-btn-quiet";
+    deleteBtn.textContent = "🗑 Delete";
+    deleteBtn.addEventListener("click", function () { deleteLogEntry(entry, card, deleteBtn); });
+    actions.appendChild(deleteBtn);
+    card.appendChild(actions);
+
+    var notes = document.createElement("textarea");
+    notes.className = "ng-vg-log-notes";
+    notes.rows = 2;
+    notes.placeholder = "Notes...";
+    notes.value = entry.notes || "";
+    notes.addEventListener("click", function (e) { e.stopPropagation(); });
+    notes.addEventListener("input", function () {
+      var key = entry.date + "/" + entry.job_id;
+      if (logNotesTimers[key]) clearTimeout(logNotesTimers[key]);
+      logNotesTimers[key] = setTimeout(function () {
+        saveLogNotes(entry, notes.value);
+      }, 800);
+    });
+    card.appendChild(notes);
+
+    return card;
   }
 
   // ---- called from ProjectManager.render() every tick ----
@@ -1007,5 +1510,16 @@
     renderQueue();
   }
 
-  window.MusicNG = { sync: sync };
+  // toggleAbcRender/downloadAbcAsMidi/printAbcAsPdf are fully generic
+  // (wrap/btn/getText callbacks, no hardcoded elements) -- musiceditNG.js
+  // reuses them for its own textarea instead of duplicating this core.
+  // useAbcScore is musiceditNG.js's "→ Use in Music" handoff, the
+  // reverse of this file's own sendScoreToMusicEdit.
+  window.MusicNG = {
+    sync: sync,
+    toggleAbcRender: toggleAbcRender,
+    downloadAbcAsMidi: downloadAbcAsMidi,
+    printAbcAsPdf: printAbcAsPdf,
+    useAbcScore: useAbcScore,
+  };
 })();

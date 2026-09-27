@@ -48,7 +48,9 @@
     els.serverImages = $("ng-comfy-server-images");
     els.imagesTabInput = $("ng-comfy-images-tab-input");
     els.imagesTabOutput = $("ng-comfy-images-tab-output");
+    els.imagesTabTemp = $("ng-comfy-images-tab-temp");
     els.serverImagesFilter = $("ng-comfy-server-images-filter");
+    els.serverImagesBreadcrumb = $("ng-comfy-server-images-breadcrumb");
     els.serverImagesPager = $("ng-comfy-server-images-pager");
     els.serverImagesPrev = $("ng-comfy-server-images-prev");
     els.serverImagesNext = $("ng-comfy-server-images-next");
@@ -385,8 +387,17 @@
   // pick from disk. Loaded once at init, same as the saved-workflow
   // library -- the input folder isn't scoped to whichever workflow is
   // currently loaded, so there's nothing to re-fetch on Generate/extract.
-  var serverImagesType = "input"; // "input" | "output", see setServerImagesType
-  var serverImagesAll = []; // full filename list for serverImagesType, fetched once
+  var serverImagesType = "input"; // "input" | "output" | "temp", see setServerImagesType
+  var serverImagesAll = []; // filename list for the current type+subfolder, fetched once
+  var serverImagesFolders = []; // immediate subfolder names at serverImagesSubfolder (output/temp only)
+  var serverImagesSubfolder = ""; // "" = folder root; drills one level at a time, see openServerImagesFolder
+
+  // input/ has no subfolder concept (ComfyUI's own LoadImage combo is a
+  // flat os.listdir, see _walk_comfy_dir_images's docstring) -- only
+  // output/ and temp/ get browsed a directory level at a time.
+  function serverImagesTypeHasFolders() {
+    return serverImagesType === "output" || serverImagesType === "temp";
+  }
   var serverImagesFilter = ""; // lowercased substring, see getFilteredServerImages
   var serverImagesPage = 0; // 0-indexed, into the filtered list
   var SERVER_IMAGES_PAGE_SIZE = 10;
@@ -409,7 +420,11 @@
     loading.textContent = "Loading…";
     els.serverImages.appendChild(loading);
 
-    fetch("/api/ng/comfy/server-images?type=" + serverImagesType)
+    var url = "/api/ng/comfy/server-images?type=" + serverImagesType;
+    if (serverImagesTypeHasFolders() && serverImagesSubfolder) {
+      url += "&subfolder=" + encodeURIComponent(serverImagesSubfolder);
+    }
+    fetch(url)
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data.error) {
@@ -421,7 +436,9 @@
           return;
         }
         serverImagesAll = data.images || [];
+        serverImagesFolders = data.folders || [];
         serverImagesPage = 0;
+        renderServerImagesBreadcrumb();
         renderServerImagesPage();
       })
       .catch(function (e) {
@@ -433,16 +450,63 @@
       });
   }
 
-  // Switches the gallery between ComfyUI's input/ and output/ folders
-  // (routes/comfyNG.py's list_comfy_server_images_ng) -- input/ for
-  // stuff dropped there directly, output/ for stuff ComfyUI itself
-  // generated (previous renders you want to feed back in as a ref).
+  // Switches the gallery between ComfyUI's input/, output/, and temp/
+  // folders (routes/comfyNG.py's list_comfy_server_images_ng) -- input/
+  // for stuff dropped there directly, output/ for stuff ComfyUI kept
+  // (SaveImage), temp/ for its scratch previews (PreviewImage).
   function setServerImagesType(type) {
     if (type === serverImagesType) return;
     serverImagesType = type;
+    serverImagesSubfolder = "";
     if (els.imagesTabInput) els.imagesTabInput.classList.toggle("active", type === "input");
     if (els.imagesTabOutput) els.imagesTabOutput.classList.toggle("active", type === "output");
+    if (els.imagesTabTemp) els.imagesTabTemp.classList.toggle("active", type === "temp");
     loadServerImages();
+  }
+
+  // Drills into (or, via "") back up to the root of) one directory
+  // level -- see routes/comfyNG.py's ?subfolder= param. Re-fetches
+  // since the server only ever hands back one level at a time now.
+  function openServerImagesFolder(subfolder) {
+    serverImagesSubfolder = subfolder;
+    loadServerImages();
+  }
+
+  // Clickable "output / foldername" (or "temp / foldername") trail
+  // above the gallery so a drilled-in folder can be backed out of one
+  // level at a time, plus a jump straight back to the root.
+  function renderServerImagesBreadcrumb() {
+    if (!els.serverImagesBreadcrumb) return;
+    els.serverImagesBreadcrumb.innerHTML = "";
+    if (!serverImagesTypeHasFolders() || !serverImagesSubfolder) {
+      els.serverImagesBreadcrumb.style.display = "none";
+      return;
+    }
+    els.serverImagesBreadcrumb.style.display = "";
+
+    function addSegment(label, subfolder, isCurrent) {
+      if (els.serverImagesBreadcrumb.children.length) {
+        els.serverImagesBreadcrumb.appendChild(document.createTextNode(" / "));
+      }
+      if (isCurrent) {
+        var span = document.createElement("span");
+        span.textContent = label;
+        els.serverImagesBreadcrumb.appendChild(span);
+        return;
+      }
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ng-comfy-images-breadcrumb-link";
+      btn.textContent = label;
+      btn.addEventListener("click", function () { openServerImagesFolder(subfolder); });
+      els.serverImagesBreadcrumb.appendChild(btn);
+    }
+
+    addSegment(serverImagesType, "", false);
+    var parts = serverImagesSubfolder.split("/");
+    parts.forEach(function (part, i) {
+      addSegment(part, parts.slice(0, i + 1).join("/"), i === parts.length - 1);
+    });
   }
 
   // The filename list itself (serverImagesAll) is cheap even at ~1000
@@ -477,13 +541,41 @@
   // already just the current page's slice -- see renderServerImagesPage.
   function renderServerImages(images) {
     els.serverImages.innerHTML = "";
+
+    // Subfolders at the current level always show, regardless of the
+    // filename filter/paging applied to `images` -- picking one just
+    // drills in (openServerImagesFolder), it never itself gets filtered
+    // out or paged away.
+    serverImagesFolders.forEach(function (folderName) {
+      var card = document.createElement("div");
+      card.className = "ng-comfy-workflow-card ng-comfy-images-folder-card";
+      card.title = "Open " + folderName;
+
+      var icon = document.createElement("div");
+      icon.className = "ng-comfy-images-folder-icon";
+      icon.textContent = "📁"; // folder emoji
+      card.appendChild(icon);
+
+      var label = document.createElement("div");
+      label.className = "ng-comfy-workflow-name";
+      label.textContent = folderName;
+      card.appendChild(label);
+
+      card.addEventListener("click", function () {
+        openServerImagesFolder(serverImagesSubfolder ? serverImagesSubfolder + "/" + folderName : folderName);
+      });
+      els.serverImages.appendChild(card);
+    });
+
     if (!images.length) {
-      var p = document.createElement("p");
-      p.className = "ng-placeholder";
-      p.textContent = serverImagesFilter
-        ? "No images match \"" + serverImagesFilter + "\"."
-        : "No images in ComfyUI's " + serverImagesType + " folder.";
-      els.serverImages.appendChild(p);
+      if (!serverImagesFolders.length) {
+        var p = document.createElement("p");
+        p.className = "ng-placeholder";
+        p.textContent = serverImagesFilter
+          ? "No images match \"" + serverImagesFilter + "\"."
+          : "No images in ComfyUI's " + serverImagesType + " folder.";
+        els.serverImages.appendChild(p);
+      }
       return;
     }
     var type = serverImagesType;
@@ -528,12 +620,12 @@
       alert('Click "Pick from server list" on an image field first, then choose one here.');
       return;
     }
-    // Anything other than input/ needs ComfyUI's own "name [output]"
-    // annotation (folder_paths.get_annotated_filepath) so a LoadImage
-    // node resolves it from the right folder at execution time --
-    // input/ files stay a bare filename, same as ComfyUI's own widget
-    // would set.
-    var value = type === "output" ? filename + " [output]" : filename;
+    // Anything other than input/ needs ComfyUI's own "name [output]"/
+    // "name [temp]" annotation (folder_paths.get_annotated_filepath) so
+    // a LoadImage node resolves it from the right folder at execution
+    // time -- input/ files stay a bare filename, same as ComfyUI's own
+    // widget would set.
+    var value = (type === "output" || type === "temp") ? filename + " [" + type + "]" : filename;
     activeImageField._applyServerFilename(value);
     setActiveImageField(null, null);
   }
@@ -902,6 +994,7 @@
     els.generateBtn.addEventListener("click", startGenerate);
     if (els.imagesTabInput) els.imagesTabInput.addEventListener("click", function () { setServerImagesType("input"); });
     if (els.imagesTabOutput) els.imagesTabOutput.addEventListener("click", function () { setServerImagesType("output"); });
+    if (els.imagesTabTemp) els.imagesTabTemp.addEventListener("click", function () { setServerImagesType("temp"); });
     if (els.serverImagesPrev) {
       els.serverImagesPrev.addEventListener("click", function () {
         if (serverImagesPage === 0) return;

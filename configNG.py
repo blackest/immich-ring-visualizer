@@ -4,7 +4,11 @@ in APP_ARCHITECTURE_NOTES.md."""
 
 import json
 import os
+import shutil
+import subprocess
 import tempfile
+import time
+from urllib.parse import urlsplit, urlunsplit
 
 IMMICH_BASE_URL = "http://localhost:2283"
 
@@ -50,6 +54,12 @@ H3GEN_DIR = os.path.join(EXPORT_DIR, "_h3gen")
 # buffer (see music_engineNG.py for why this is a separate venv/engine).
 MUSICGEN_DIR = os.path.join(EXPORT_DIR, "_musicgen")
 
+# Durable Music job history (music_job_logsNG.py) -- twin of JOB_LOG_DIR
+# above for the music ring buffer: permanent record of style/lyrics/seed
+# so a "recipe" survives past the 20-job ring-buffer eviction that would
+# otherwise delete it along with the rest of MUSICGEN_DIR's job_dir.
+MUSIC_JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_music_job_logsNG")
+
 # Hd-Multi view (routes/hdmultiNG.py) -- one-off HiDream edit/multi-ref
 # generations (1-3 reference images + a prompt -> one result image).
 # Same "flat, persistent, keyed by job id" shape as VIDEOGEN_DIR above,
@@ -91,9 +101,11 @@ NG_ADDRESS_SETTINGS = [
     {
         "key": "ollama_base_url",
         "env": "RINGVIZ_OLLAMA_URL",
-        "default": "http://macstudio-2.tail74ab30.ts.net:11434",
+        "default": "http://macstudio-2-1.tail74ab30.ts.net:11434",
         "label": "Ollama URL",
         "description": "Local Ollama daemon powering the Chat view.",
+        "probe": True,
+        "tailscale_device": "MacStudio (2)",
     },
     {
         "key": "hermes_base_url",
@@ -101,6 +113,8 @@ NG_ADDRESS_SETTINGS = [
         "default": "http://m1mini-4.tail74ab30.ts.net:8642",
         "label": "Hermes gateway URL",
         "description": "Hermes agent gateway (OpenAI-compatible /v1) powering the Rachel view.",
+        "probe": True,
+        "tailscale_device": "m1mini (4)",
     },
     {
         "key": "hermes_api_key",
@@ -134,9 +148,10 @@ NG_ADDRESS_SETTINGS = [
     {
         "key": "tailscale_hostname",
         "env": "RINGVIZ_TAILSCALE_HOST",
-        "default": "macstudio-2.tail74ab30.ts.net",
+        "default": "macstudio-2-1.tail74ab30.ts.net",
         "label": "Tailscale hostname",
         "description": "This machine's tailnet name, used to build the Suno Vault URL.",
+        "tailscale_device": "MacStudio (2)",
     },
     {
         "key": "comfyui_base_url",
@@ -144,6 +159,7 @@ NG_ADDRESS_SETTINGS = [
         "default": "http://192.168.3.54:8182",
         "label": "ComfyUI URL",
         "description": "ComfyUI server powering the ComfyUI view (extract a workflow from a PNG, edit its parameters, run it).",
+        "probe": True,
     },
 ]
 
@@ -156,6 +172,86 @@ def _load_ng_settings():
         return {}
 
 
+_TAILSCALE_BIN_CANDIDATES = (
+    "tailscale",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+)
+
+# `tailscale status --json` per-device HostName -> DNSName, cached briefly
+# in-process. HostName ("MacStudio (2)") is the stable OS-level machine
+# name; DNSName ("macstudio-2-1.tail74ab30.ts.net.") is what Tailscale
+# actually hands out on the tailnet, and it gets a numeric suffix appended
+# whenever a device reconnects and collides with an existing name --
+# which is exactly what silently broke the Ollama URL default once. A TTL
+# cache avoids a subprocess call on every settings read while still
+# picking up a rename within one page load.
+_TAILSCALE_CACHE_TTL = 20
+_tailscale_cache = {"ts": 0.0, "devices": None}
+
+
+def _tailscale_bin():
+    for candidate in _TAILSCALE_BIN_CANDIDATES:
+        if os.sep in candidate:
+            if os.path.exists(candidate):
+                return candidate
+        else:
+            found = shutil.which(candidate)
+            if found:
+                return found
+    return None
+
+
+def _tailscale_devices():
+    """{HostName: current DNSName} for this machine and every peer.
+    Returns {} on any failure (tailscaled not running, CLI missing,
+    timeout) rather than raising -- every caller already has a hardcoded
+    default to fall back to, so a live-lookup failure should be silent,
+    not a request-breaking exception."""
+    now = time.time()
+    cached = _tailscale_cache["devices"]
+    if cached is not None and now - _tailscale_cache["ts"] < _TAILSCALE_CACHE_TTL:
+        return cached
+    devices = {}
+    try:
+        bin_path = _tailscale_bin()
+        if bin_path:
+            out = subprocess.run(
+                [bin_path, "status", "--json"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if out.returncode == 0:
+                data = json.loads(out.stdout)
+                nodes = [data.get("Self") or {}, *(data.get("Peer") or {}).values()]
+                for node in nodes:
+                    host_name = node.get("HostName")
+                    dns_name = (node.get("DNSName") or "").rstrip(".")
+                    if host_name and dns_name:
+                        devices[host_name] = dns_name
+    except Exception:
+        devices = {}
+    _tailscale_cache["ts"] = now
+    _tailscale_cache["devices"] = devices
+    return devices
+
+
+def _resolve_tailscale_value(spec):
+    """Swap the hardcoded default's host for that device's CURRENT tailnet
+    DNS name (same scheme/port/path as the default) -- None if the spec
+    doesn't name a device, or that device isn't in the live status."""
+    device = spec.get("tailscale_device")
+    if not device:
+        return None
+    dns_name = _tailscale_devices().get(device)
+    if not dns_name:
+        return None
+    default = spec["default"]
+    if "://" not in default:
+        return dns_name
+    parts = urlsplit(default)
+    netloc = f"{dns_name}:{parts.port}" if parts.port else dns_name
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def _ng_setting(key):
     spec = next(s for s in NG_ADDRESS_SETTINGS if s["key"] == key)
     env_val = os.environ.get(spec["env"])
@@ -164,20 +260,23 @@ def _ng_setting(key):
     saved = _load_ng_settings().get(key)
     if saved:
         return saved
-    return spec["default"]
+    return _resolve_tailscale_value(spec) or spec["default"]
 
 
 def get_ng_address_settings():
-    """Effective value + source ("env"/"saved"/"default") for each editable
-    address, for the settings UI."""
+    """Effective value + source ("env"/"saved"/"tailscale"/"default") for
+    each editable address, for the settings UI."""
     saved = _load_ng_settings()
     out = []
     for spec in NG_ADDRESS_SETTINGS:
         env_val = os.environ.get(spec["env"])
+        live = None if env_val or saved.get(spec["key"]) else _resolve_tailscale_value(spec)
         if env_val:
             source, value = "env", env_val
         elif saved.get(spec["key"]):
             source, value = "saved", saved[spec["key"]]
+        elif live:
+            source, value = "tailscale", live
         else:
             source, value = "default", spec["default"]
         out.append({**spec, "value": value, "source": source})

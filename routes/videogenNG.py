@@ -14,8 +14,10 @@ import subprocess
 
 from flask import Blueprint, jsonify, request, send_file
 
+import engine_installNG
 import job_logsNG
 import ltx_engineNG
+import ltx_installNG
 import video_jobsNG as video_jobs
 from ltx_loraNG import list_ltx_loras_ng, resolve_ltx_lora_path_ng
 from video_analysisNG import find_cache_frame_ng
@@ -70,6 +72,7 @@ def videogen_status_ng():
     Also carries the render-size/fps bounds so the frontend's inputs
     don't hardcode them separately."""
     health = ltx_engineNG.ltx_health_ng()
+    installable, install_blocked_reason = engine_installNG.mac_apple_silicon_ok()
     return jsonify({
         "reachable": health["ready"],
         **health,
@@ -81,7 +84,34 @@ def videogen_status_ng():
         "max_dim": ltx_engineNG.LTX_MAX_DIM,
         "min_fps": ltx_engineNG.LTX_MIN_FPS,
         "max_fps": ltx_engineNG.LTX_MAX_FPS,
+        "installable": installable and not health["ready"],
+        "install_blocked_reason": None if health["ready"] else install_blocked_reason,
     })
+
+
+@videogenNG_bp.route("/api/ng/videogen/install", methods=["POST"])
+def videogen_install_ng():
+    """Kicks off the background install job (clone+pin -> venv -> deps ->
+    weights, see ltx_installNG.py) for the LTX engine. Same "needs a
+    restart to actually pick it up" caveat as music_install_ng -- LTX_REPO_DIR/
+    LTX_WEIGHTS_ROOT are resolved once at import time."""
+    try:
+        job = engine_installNG.start_install_job("ltx", ltx_installNG.build_steps())
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({
+        "ok": True,
+        "job_id": job.job_id,
+        "poll_url": f"/api/ng/videogen/install/{job.job_id}",
+    }), 202
+
+
+@videogenNG_bp.route("/api/ng/videogen/install/<job_id>", methods=["GET"])
+def videogen_install_status_ng(job_id):
+    try:
+        return jsonify(engine_installNG.install_job_status(job_id))
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
 
 
 @videogenNG_bp.route("/api/ng/videogen/loras", methods=["GET"])
@@ -406,3 +436,11 @@ def videogen_log_update_notes_ng(date, job_id):
     if entry is None:
         return jsonify({"error": "no such log entry"}), 404
     return jsonify({"ok": True, "entry": entry})
+
+
+@videogenNG_bp.route("/api/ng/videogen/logs/<date>/<job_id>", methods=["DELETE"])
+def videogen_log_delete_ng(date, job_id):
+    ok = job_logsNG.delete_log_ng(date, job_id)
+    if not ok:
+        return jsonify({"error": "no such log entry"}), 404
+    return jsonify({"ok": True})

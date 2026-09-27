@@ -13,7 +13,9 @@ import os
 
 from flask import Blueprint, jsonify, request, send_file
 
+import engine_installNG
 import h3_engineNG
+import h3_installNG
 import h3_jobsNG as h3_jobs
 from video_analysisNG import find_cache_frame_ng
 
@@ -57,6 +59,9 @@ def h3_status_ng():
     if model not in ("h3", "h3q8"):
         return jsonify({"error": f"model must be 'h3' or 'h3q8' (got {model!r})"}), 400
     health = h3_engineNG.h3_health_ng(model)
+    platform_ok, platform_reason = engine_installNG.mac_apple_silicon_ok()
+    ram_ok, ram_reason = h3_installNG.ram_ok()
+    installable = platform_ok and ram_ok and not health["ready"]
     return jsonify({
         "reachable": health["ready"],
         **health,
@@ -70,7 +75,49 @@ def h3_status_ng():
         "max_dim": h3_engineNG.H3_MAX_DIM,
         "min_duration_s": h3_engineNG.H3_MIN_DURATION_S,
         "max_duration_s": h3_engineNG.H3_MAX_DURATION_S,
+        # H3 is an explicit opt-in (see h3_installNG.py's own docstring):
+        # ~75 GB, a 36 GB RAM floor, and MiniMax's own Community License
+        # (territory restrictions) -- the frontend must show that notice
+        # and get a ticked checkbox before /install will even start.
+        "installable": installable,
+        "install_blocked_reason": None if health["ready"] else (platform_reason or ram_reason),
+        "license_name": "MiniMax Community License",
+        "license_note": "Territory restrictions apply -- see the license before installing.",
+        "install_size_gb": 75,
     })
+
+
+@h3NG_bp.route("/api/ng/h3/install", methods=["POST"])
+def h3_install_ng():
+    """Kicks off the background install job (clone+pin -> venv -> deps ->
+    weights -> local Q8 build, see h3_installNG.py). Requires
+    confirm_license: true in the JSON body -- H3 stays an explicit opt-in,
+    never started from a bare click the way Music/LTX's buttons are.
+    Same "needs a restart to actually pick it up" caveat as the other
+    engines' /install routes."""
+    body = request.get_json(silent=True) or {}
+    if not body.get("confirm_license"):
+        return jsonify({"error": "confirm_license must be true to install H3"}), 400
+    ram_ok, ram_reason = h3_installNG.ram_ok()
+    if not ram_ok:
+        return jsonify({"error": ram_reason}), 400
+    try:
+        job = engine_installNG.start_install_job("h3", h3_installNG.build_steps())
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({
+        "ok": True,
+        "job_id": job.job_id,
+        "poll_url": f"/api/ng/h3/install/{job.job_id}",
+    }), 202
+
+
+@h3NG_bp.route("/api/ng/h3/install/<job_id>", methods=["GET"])
+def h3_install_status_ng(job_id):
+    try:
+        return jsonify(engine_installNG.install_job_status(job_id))
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
 
 
 @h3NG_bp.route("/api/ng/h3/generate", methods=["POST"])

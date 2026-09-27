@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 import music_engineNG as music
+import music_job_logsNG
 from configNG import MUSICGEN_DIR
 
 _MAX_JOBS_KEPT = 20  # ring-buffer cap, same reasoning as h3_jobsNG/video_jobsNG
@@ -46,6 +47,11 @@ class MusicJobNG:
     mode: music.MusicMode = "full"
     instrumental: bool = False
     cfg_scale: Optional[float] = None
+    temperature: Optional[float] = None
+    # Plain-generate-only, like mode/instrumental above -- a caller-
+    # supplied ABC score (Music Edit's "render from this score"),
+    # passed to generate_music_ng's own abc_text param.
+    abc_text: Optional[str] = None
     precision: music.MusicPrecision = music.MUSIC_DEFAULT_PRECISION
     # Cover job fields -- source_audio_path set means "this is a cover,
     # not a plain generate" (see start_music_job_ng/_worker_loop). task
@@ -110,6 +116,7 @@ def _worker_loop() -> None:
             job.error_type = "MusicJobCancelled"
             continue
         job.dispatched_at = time.time()
+        result = None
         try:
             if job.source_audio_path is not None:
                 result = music.generate_cover_ng(
@@ -117,6 +124,7 @@ def _worker_loop() -> None:
                     config=music.MusicConfig(precision=job.precision),
                     task=job.task, style=job.style, lyrics=job.lyrics,
                     duration_s=job.duration_s, cfg_scale=job.cfg_scale,
+                    temperature=job.temperature,
                     on_log=job.append_log,
                     on_proc_start=lambda p: setattr(job, "_proc", p))
             else:
@@ -125,6 +133,7 @@ def _worker_loop() -> None:
                     output_dir=job.job_dir, seed=job.seed,
                     config=music.MusicConfig(precision=job.precision),
                     mode=job.mode, instrumental=job.instrumental, cfg_scale=job.cfg_scale,
+                    temperature=job.temperature, abc_text=job.abc_text,
                     on_log=job.append_log,
                     on_proc_start=lambda p: setattr(job, "_proc", p))
             job.score_path = result.get("score_path")
@@ -135,6 +144,10 @@ def _worker_loop() -> None:
             job.error_type = type(e).__name__
         finally:
             job.finished_at = time.time()
+            try:
+                music_job_logsNG.record_job_ng(job, result)
+            except Exception:
+                pass  # the durable log must never take the render pipeline down
 
 
 def _ensure_worker_started() -> None:
@@ -155,6 +168,8 @@ def start_music_job_ng(style: str, lyrics: str, duration_s: Optional[float] = No
                         mode: music.MusicMode = "full",
                         instrumental: bool = False,
                         cfg_scale: Optional[float] = None,
+                        temperature: Optional[float] = None,
+                        abc_text: Optional[str] = None,
                         precision: music.MusicPrecision = music.MUSIC_DEFAULT_PRECISION,
                         audio_bytes: Optional[bytes] = None, audio_ext: str = "",
                         task: str = music.MUSIC_DEFAULT_COVER_TASK) -> MusicJobNG:
@@ -174,8 +189,11 @@ def start_music_job_ng(style: str, lyrics: str, duration_s: Optional[float] = No
     its own default before calling this)."""
     style = (style or "").strip()
     lyrics = (lyrics or "").replace("\r\n", "\n").strip("\n")
+    abc_text = (abc_text or "").replace("\r\n", "\n").strip("\n") or None
     is_cover = audio_bytes is not None
     if is_cover:
+        if abc_text is not None:
+            raise ValueError("a supplied ABC score isn't supported for cover jobs")
         if task not in music.MUSIC_COVER_TASKS:
             raise ValueError(f"task must be one of {music.MUSIC_COVER_TASKS} (got {task!r})")
         if duration_s is not None:
@@ -183,11 +201,13 @@ def start_music_job_ng(style: str, lyrics: str, duration_s: Optional[float] = No
     else:
         if mode not in music.MUSIC_MODES:
             raise ValueError(f"mode must be one of {music.MUSIC_MODES} (got {mode!r})")
-        if not instrumental and not style and not lyrics:
-            raise ValueError("Give it something to work with -- style, lyrics, or both.")
+        if not instrumental and not style and not lyrics and abc_text is None:
+            raise ValueError("Give it something to work with -- style, lyrics, or an ABC score.")
         if duration_s is None:
             raise ValueError("duration_s is required for a plain generate job")
         music._validate_music_duration_ng(duration_s)
+    if temperature is not None:
+        music._validate_music_temperature_ng(temperature)
 
     _ensure_worker_started()
     job_id = uuid.uuid4().hex[:12]
@@ -203,7 +223,8 @@ def start_music_job_ng(style: str, lyrics: str, duration_s: Optional[float] = No
 
     job = MusicJobNG(job_id=job_id, style=style, lyrics=lyrics, duration_s=duration_s,
                       seed=seed, job_dir=job_dir, mode=mode, instrumental=instrumental,
-                      cfg_scale=cfg_scale, precision=precision,
+                      cfg_scale=cfg_scale, temperature=temperature, abc_text=abc_text,
+                      precision=precision,
                       source_audio_path=source_audio_path, task=task)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
@@ -259,6 +280,8 @@ def job_status_ng(job_id: str) -> dict:
         "duration_s": job.duration_s,
         "mode": job.mode,
         "instrumental": job.instrumental,
+        "cfg_scale": job.cfg_scale,
+        "temperature": job.temperature,
         "precision": job.precision,
         "is_cover": is_cover,
         "task": job.task if is_cover else None,

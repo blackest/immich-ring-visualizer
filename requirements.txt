@@ -7,3 +7,4 @@ insightface
 onnxruntime
 av>=18.1.0
 Pillow
+huggingface_hub

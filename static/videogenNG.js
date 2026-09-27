@@ -105,6 +105,9 @@
     els.main = document.getElementById("ng-videogen-main");
     els.controlsPane = document.getElementById("ng-controls-pane");
     els.unavailable = document.getElementById("ng-vg-unavailable");
+    els.unavailableText = document.getElementById("ng-vg-unavailable-text");
+    els.installBtn = document.getElementById("ng-vg-install-btn");
+    els.installLog = document.getElementById("ng-vg-install-log");
 
     els.queueHead = document.getElementById("ng-vg-queue-head");
     els.queueCount = document.getElementById("ng-vg-queue-count");
@@ -309,13 +312,84 @@
     if (els.generateBtn) els.generateBtn.disabled = disabled;
     if (els.unavailable) {
       els.unavailable.style.display = disabled ? "" : "none";
-      if (disabled) {
-        els.unavailable.textContent =
+      if (disabled && els.unavailableText) {
+        els.unavailableText.textContent =
           "LTX pipeline not reachable (binary/model/gemma missing at " +
           ((health && health.repo_dir) || "?") +
           "). Queuing is disabled until it's fixed.";
       }
+      if (els.installBtn) {
+        els.installBtn.style.display = (disabled && health && health.installable) ? "" : "none";
+        if (!disabled || !(health && health.installable)) {
+          els.installBtn.disabled = false;
+          els.installBtn.textContent = "Install now (~66 GB)";
+        }
+      }
     }
+  }
+
+  // ---- self-service install (see ltx_installNG.py / engine_installNG.py) ----
+  var installPollTimer = null;
+
+  function pollInstallJob(jobId) {
+    fetch(API + "/install/" + jobId)
+      .then(function (r) { return r.json(); })
+      .then(function (job) {
+        if (!job || !job.status) return;
+        if (els.installLog) {
+          els.installLog.style.display = "";
+          els.installLog.textContent = (job.log_tail || []).join("\n");
+          els.installLog.scrollTop = els.installLog.scrollHeight;
+        }
+        if (job.status === "queued" || job.status === "installing") {
+          if (els.installBtn) {
+            els.installBtn.textContent = "Installing" + (job.step ? " (" + job.step + ")…" : "…");
+          }
+          return;
+        }
+        clearInterval(installPollTimer);
+        installPollTimer = null;
+        if (job.status === "completed") {
+          if (els.installBtn) {
+            els.installBtn.disabled = true;
+            els.installBtn.textContent = "Installed — restart Ring Visualizer to use it";
+          }
+          setStatus("LTX installed. Restart the app to pick it up.");
+        } else {
+          if (els.installBtn) {
+            els.installBtn.disabled = false;
+            els.installBtn.textContent = "Install now (~66 GB)";
+          }
+          setStatus("Install failed: " + (job.error || "unknown error"));
+        }
+      })
+      .catch(function () { /* keep polling -- a transient fetch error isn't fatal */ });
+  }
+
+  function startInstall() {
+    if (!els.installBtn) return;
+    els.installBtn.disabled = true;
+    els.installBtn.textContent = "Starting…";
+    fetch(API + "/install", { method: "POST" })
+      .then(function (res) {
+        return res.json().then(function (payload) { return { ok: res.ok, payload: payload }; });
+      })
+      .then(function (r) {
+        if (r.ok && r.payload && r.payload.job_id) {
+          if (installPollTimer) clearInterval(installPollTimer);
+          installPollTimer = setInterval(function () { pollInstallJob(r.payload.job_id); }, 2500);
+          pollInstallJob(r.payload.job_id);
+        } else {
+          els.installBtn.disabled = false;
+          els.installBtn.textContent = "Install now (~66 GB)";
+          setStatus("Could not start install: " + ((r.payload && r.payload.error) || "unknown error"));
+        }
+      })
+      .catch(function (e) {
+        els.installBtn.disabled = false;
+        els.installBtn.textContent = "Install now (~66 GB)";
+        setStatus("Could not start install: " + e.message);
+      });
   }
 
   function ensureStatusChecked() {
@@ -1234,6 +1308,30 @@
     setStatus("Loaded prompt/duration from the job log -- pick a reference image before generating.");
   }
 
+  function deleteLogEntry(entry, card, btn) {
+    if (!confirm("Delete this job log entry? This deletes its reference image/video permanently.")) return;
+    btn.disabled = true;
+    btn.textContent = "Deleting…";
+    fetch(API + "/logs/" + encodeURIComponent(entry.date) + "/" + encodeURIComponent(entry.job_id), {
+      method: "DELETE",
+    })
+      .then(function (res) { return res.json().then(function (p) { return { ok: res.ok, payload: p }; }); })
+      .then(function (r) {
+        if (r.ok) {
+          card.remove();
+        } else {
+          btn.disabled = false;
+          btn.textContent = "🗑 Delete";
+          setStatus("Could not delete: " + ((r.payload && r.payload.error) || "unknown error"));
+        }
+      })
+      .catch(function (e) {
+        btn.disabled = false;
+        btn.textContent = "🗑 Delete";
+        setStatus("Could not delete: " + e.message);
+      });
+  }
+
   function saveLogNotes(entry, notes) {
     fetch(API + "/logs/" + encodeURIComponent(entry.date) + "/" + encodeURIComponent(entry.job_id) + "/notes", {
       method: "PATCH",
@@ -1295,6 +1393,12 @@
     useBtn.textContent = "↺ Use this";
     useBtn.addEventListener("click", function () { useLogEntry(entry); });
     actions.appendChild(useBtn);
+    var deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "ng-gen-btn ng-gen-btn-quiet";
+    deleteBtn.textContent = "🗑 Delete";
+    deleteBtn.addEventListener("click", function () { deleteLogEntry(entry, card, deleteBtn); });
+    actions.appendChild(deleteBtn);
     card.appendChild(actions);
 
     var notes = document.createElement("textarea");
@@ -1662,6 +1766,8 @@
     refreshEls();
     if (!els.pane) return;
     inited = true;
+
+    if (els.installBtn) els.installBtn.addEventListener("click", startInstall);
 
     els.refFileBtn.addEventListener("click", function () { els.refFile.click(); });
     els.refFile.addEventListener("change", onDiskFile);

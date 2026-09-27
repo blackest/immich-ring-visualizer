@@ -28,11 +28,14 @@
   const comfyOutputEl = document.getElementById("ng-settings-comfyui-output");
   const addressesEl = document.getElementById("ng-settings-addresses");
   const saveAddressesBtn = document.getElementById("ng-settings-save-addresses");
+  const testAddressesBtn = document.getElementById("ng-settings-test-addresses");
   const addressesOutputEl = document.getElementById("ng-settings-addresses-output");
+  const modelsEl = document.getElementById("ng-settings-models");
 
   const SOURCE_LABEL = {
     env: "env var",
     saved: "saved",
+    tailscale: "auto-detected",
     default: "default",
   };
 
@@ -47,8 +50,20 @@
     const source = document.createElement("span");
     source.className = "ng-settings-field-source";
     source.textContent = SOURCE_LABEL[setting.source] || setting.source;
+
+    const meta = document.createElement("span");
+    meta.className = "ng-settings-field-meta";
+    meta.appendChild(source);
+    if (setting.probe) {
+      const status = document.createElement("span");
+      status.className = "ng-settings-field-status";
+      status.dataset.statusKey = setting.key;
+      status.textContent = "checking...";
+      meta.appendChild(status);
+    }
+
     head.appendChild(label);
-    head.appendChild(source);
+    head.appendChild(meta);
 
     const desc = document.createElement("span");
     desc.className = "ng-settings-row-desc";
@@ -81,14 +96,113 @@
       (data.settings || []).forEach((setting) => {
         addressesEl.appendChild(renderAddressField(setting));
       });
+      probeAddresses();
     } catch (e) {
       addressesEl.textContent = "Failed to load: " + e.message;
+    }
+  }
+
+  // Probes every "probe": true address (Ollama/Hermes/ComfyUI URLs -- not
+  // the bare Tailscale hostname or the Hermes key/model/session fields)
+  // with whatever's currently in its input, saved or not, and marks it
+  // reachable/unreachable right on the field. This is what catches a
+  // renamed Tailscale device or a server that's down BEFORE it shows up
+  // as a mysterious failure in Chat/Rachel/ComfyUI later.
+  async function probeAddresses() {
+    const body = {};
+    addressesEl.querySelectorAll("input[data-setting-key]").forEach((input) => {
+      body[input.dataset.settingKey] = input.value;
+    });
+    addressesEl.querySelectorAll(".ng-settings-field-status").forEach((el) => {
+      el.textContent = "checking...";
+      el.className = "ng-settings-field-status";
+    });
+    try {
+      const res = await fetch("/api/ng/settings/addresses/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      Object.entries(data.results || {}).forEach(([key, r]) => {
+        const statusEl = addressesEl.querySelector(`[data-status-key="${key}"]`);
+        if (!statusEl) return;
+        if (r.ok) {
+          statusEl.textContent = "reachable (" + r.ms + "ms)";
+          statusEl.className = "ng-settings-field-status ok";
+          statusEl.title = "";
+        } else {
+          statusEl.textContent = "unreachable";
+          statusEl.className = "ng-settings-field-status fail";
+          statusEl.title = r.error || "";
+        }
+      });
+    } catch (e) {
+      addressesEl.querySelectorAll(".ng-settings-field-status").forEach((el) => {
+        el.textContent = "check failed";
+        el.className = "ng-settings-field-status fail";
+      });
+    }
+  }
+
+  function renderModelEngine(engine) {
+    const wrap = document.createElement("div");
+    wrap.className = "ng-settings-field";
+
+    const head = document.createElement("div");
+    head.className = "ng-settings-field-head";
+    const label = document.createElement("strong");
+    label.textContent = engine.label;
+    const repoStatus = document.createElement("span");
+    repoStatus.className = "ng-settings-field-status " + (engine.repo_found ? "ok" : "fail");
+    repoStatus.textContent = engine.repo_found ? "repo found" : "repo not found";
+    head.appendChild(label);
+    head.appendChild(repoStatus);
+
+    const repoPath = document.createElement("span");
+    repoPath.className = "ng-settings-row-desc";
+    repoPath.textContent = engine.repo_dir;
+
+    const list = document.createElement("div");
+    list.className = "ng-settings-model-components";
+    engine.components.forEach((c) => {
+      const row = document.createElement("div");
+      row.className = "ng-settings-model-row";
+      const dot = document.createElement("span");
+      dot.className = "ng-settings-field-status " + (c.ok ? "ok" : "fail");
+      dot.textContent = c.ok ? "✓" : "✗";
+      const text = document.createElement("span");
+      text.textContent = c.label + " -- " + c.path;
+      if (!c.ok && c.error) text.title = c.error;
+      row.appendChild(dot);
+      row.appendChild(text);
+      list.appendChild(row);
+    });
+
+    wrap.appendChild(head);
+    wrap.appendChild(repoPath);
+    wrap.appendChild(list);
+    return wrap;
+  }
+
+  async function loadModels() {
+    modelsEl.textContent = "Loading...";
+    try {
+      const res = await fetch("/api/ng/settings/models");
+      const data = await res.json();
+      modelsEl.textContent = "";
+      (data.engines || []).forEach((engine) => {
+        modelsEl.appendChild(renderModelEngine(engine));
+      });
+    } catch (e) {
+      modelsEl.textContent = "Failed to load: " + e.message;
     }
   }
 
   function openModal() {
     overlay.style.display = "flex";
     loadAddresses();
+    loadModels();
   }
 
   function closeModal() {
@@ -206,6 +320,7 @@
         (data.settings || []).forEach((setting) => {
           addressesEl.appendChild(renderAddressField(setting));
         });
+        probeAddresses();
       } else {
         addressesOutputEl.textContent = "Failed: " + (data.error || "unknown error");
       }
@@ -214,6 +329,17 @@
     } finally {
       saveAddressesBtn.disabled = false;
       saveAddressesBtn.textContent = "Save";
+    }
+  });
+
+  testAddressesBtn.addEventListener("click", async () => {
+    testAddressesBtn.disabled = true;
+    testAddressesBtn.textContent = "Testing...";
+    try {
+      await probeAddresses();
+    } finally {
+      testAddressesBtn.disabled = false;
+      testAddressesBtn.textContent = "Test connections";
     }
   });
 })();

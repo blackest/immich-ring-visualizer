@@ -64,8 +64,7 @@ def _resolve_h3_repo_dir_ng() -> Path:
     home = Path.home()
     for cand in (home / "minimax-h3-mlx",
                  home / "AI" / "minimax-h3-mlx",
-                 Path("/Volumes/AI/minimax-h3-mlx"),
-                 Path("/Volumes/AI/Pinkio/api/phosphene.git/minimax-h3-mlx")):
+                 Path("/Volumes/AI/minimax-h3-mlx")):
         if cand.exists():
             return cand
     return home / "minimax-h3-mlx"

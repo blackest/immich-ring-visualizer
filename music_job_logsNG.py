@@ -1,21 +1,23 @@
-"""Durable, never-pruned history of Animate (video_jobsNG.py) renders.
+"""Durable, never-pruned history of Music (music_jobsNG.py) renders.
 
-video_jobsNG.py itself is deliberately NOT persistent -- its _JOBS dict is
-a ring buffer capped at 20 entries, and evicting a job deletes its whole
-job_dir (reference image + rendered mp4). That's fine for "what's still
-rendering right now" but useless for "what did I generate last week."
+Twin of job_logsNG.py (Animate's own durable job history) -- same day-
+folder-then-year/month-archive layout, same reasoning: music_jobsNG.py's
+_JOBS dict is a ring buffer capped at 20 entries, and evicting a job
+deletes its whole job_dir (audio.flac + score.abc + request.json). That's
+fine for "what's still rendering right now" but means the one thing a
+song generation can't be recovered without -- the exact style/lyrics/seed
+that produced it -- is gone for good once a job ages out.
 
-This module is the separate, permanent record: record_job_ng() is called
-once per finished job (video_jobsNG.py's worker thread, right when a job
-finishes -- before it can ever be evicted) and copies what matters into
-JOB_LOG_DIR, laid out Lightroom-style so it never needs to delete anything
-yet stays cheap to browse:
+record_job_ng() is called once per finished job (music_jobsNG.py's worker
+thread, right when a job finishes -- before it can ever be evicted) and
+copies what matters into MUSIC_JOB_LOG_DIR, laid out the same way as
+job_logsNG.py:
 
-    JOB_LOG_DIR/
+    MUSIC_JOB_LOG_DIR/
       2026-09-13/          <- current month's days: flat, top-level
         <job_id>.json
-        <job_id>_ref.<ext>
-        <job_id>.mp4
+        <job_id>.flac
+        <job_id>.abc       <- only when the job produced a score
       2026-09-12/
       ...
       2026/                <- archive: past months rolled up here
@@ -42,7 +44,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from configNG import JOB_LOG_DIR
+from configNG import MUSIC_JOB_LOG_DIR
 
 _DAY_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _YEAR_RE = re.compile(r"^\d{4}$")
@@ -55,7 +57,7 @@ def _current_month() -> str:
 
 
 def _archive_past_months() -> None:
-    root = Path(JOB_LOG_DIR)
+    root = Path(MUSIC_JOB_LOG_DIR)
     if not root.is_dir():
         return
     current_month = _current_month()
@@ -79,11 +81,11 @@ def _resolve_day_dir(date_str: str) -> Optional[Path]:
     m = _DAY_RE.match(date_str or "")
     if not m:
         return None
-    top = Path(JOB_LOG_DIR) / date_str
+    top = Path(MUSIC_JOB_LOG_DIR) / date_str
     if top.is_dir():
         return top
     year, month, day = m.group(1), m.group(2), m.group(3)
-    archived = Path(JOB_LOG_DIR) / year / month / day
+    archived = Path(MUSIC_JOB_LOG_DIR) / year / month / day
     return archived if archived.is_dir() else None
 
 
@@ -101,7 +103,7 @@ def _load_entries(day_dir: Path, date_str: str) -> list:
 
 
 def record_job_ng(job, result: Optional[dict]) -> None:
-    """Called once from video_jobsNG.py's worker thread right after a job
+    """Called once from music_jobsNG.py's worker loop right after a job
     finishes (success or failure). Never raises -- callers wrap this in
     their own try/except anyway, but staying defensive here means a bad
     day never takes the render pipeline down with it."""
@@ -113,42 +115,45 @@ def record_job_ng(job, result: Optional[dict]) -> None:
 
         finished_at = job.finished_at or time.time()
         date_str = time.strftime("%Y-%m-%d", time.localtime(finished_at))
-        day_dir = Path(JOB_LOG_DIR) / date_str
+        day_dir = Path(MUSIC_JOB_LOG_DIR) / date_str
         day_dir.mkdir(parents=True, exist_ok=True)
 
-        has_ref = False
-        if job.has_image:
-            src_ref = next(Path(job.job_dir).glob("ref.*"), None)
-            if src_ref is not None:
-                shutil.copyfile(src_ref, day_dir / f"{job.job_id}_ref{src_ref.suffix.lower()}")
-                has_ref = True
+        has_audio = False
+        if job.audio_path and Path(job.audio_path).is_file():
+            shutil.copyfile(job.audio_path, day_dir / f"{job.job_id}.flac")
+            has_audio = True
 
-        has_video = False
-        if job.mp4_path and Path(job.mp4_path).is_file():
-            shutil.copyfile(job.mp4_path, day_dir / f"{job.job_id}.mp4")
-            has_video = True
+        has_score = False
+        if job.score_path and Path(job.score_path).is_file():
+            shutil.copyfile(job.score_path, day_dir / f"{job.job_id}.abc")
+            has_score = True
 
+        is_cover = job.source_audio_path is not None
         status = "failed" if job.error else ("cancelled" if job.cancelled else "completed")
         meta = {
-            "schema": "ringviz/videogen_job_log@1",
+            "schema": "ringviz/music_job_log@1",
             "job_id": job.job_id,
             "status": status,
-            "prompt": job.prompt,
+            "style": job.style,
+            "lyrics": job.lyrics,
             "duration_s": job.duration_s,
             "seed": job.seed,
             "resolved_seed": (result or {}).get("seed"),
-            "width": job.width,
-            "height": job.height,
-            "frame_rate": job.frame_rate,
-            "lora_path": job.lora_path,
-            "lora_strength": job.lora_strength if job.lora_path else None,
+            "mode": job.mode,
+            "instrumental": job.instrumental,
+            "cfg_scale": job.cfg_scale,
+            "temperature": job.temperature,
+            "precision": job.precision,
+            "is_cover": is_cover,
+            "task": job.task if is_cover else None,
+            "audio_seconds": job.audio_seconds,
             "error": job.error,
             "error_type": job.error_type,
             "queued_at": job.queued_at,
             "dispatched_at": job.dispatched_at,
             "finished_at": finished_at,
-            "has_ref": has_ref,
-            "has_video": has_video,
+            "has_audio": has_audio,
+            "has_score": has_score,
             "notes": "",
         }
         json_path = day_dir / f"{job.job_id}.json"
@@ -161,7 +166,7 @@ def record_job_ng(job, result: Optional[dict]) -> None:
 
 def list_recent_logs_ng() -> list:
     _archive_past_months()
-    root = Path(JOB_LOG_DIR)
+    root = Path(MUSIC_JOB_LOG_DIR)
     if not root.is_dir():
         return []
     entries = []
@@ -173,7 +178,7 @@ def list_recent_logs_ng() -> list:
 
 
 def list_archive_years_ng() -> list:
-    root = Path(JOB_LOG_DIR)
+    root = Path(MUSIC_JOB_LOG_DIR)
     if not root.is_dir():
         return []
     years = [p.name for p in root.iterdir() if p.is_dir() and _YEAR_RE.match(p.name)]
@@ -183,7 +188,7 @@ def list_archive_years_ng() -> list:
 def list_archive_months_ng(year: str) -> list:
     if not _YEAR_RE.match(year or ""):
         return []
-    year_dir = Path(JOB_LOG_DIR) / year
+    year_dir = Path(MUSIC_JOB_LOG_DIR) / year
     if not year_dir.is_dir():
         return []
     months = [p.name for p in year_dir.iterdir() if p.is_dir() and _MONTH_RE.match(p.name)]
@@ -193,7 +198,7 @@ def list_archive_months_ng(year: str) -> list:
 def list_archive_day_entries_ng(year: str, month: str) -> list:
     if not _YEAR_RE.match(year or "") or not _MONTH_RE.match(month or ""):
         return []
-    month_dir = Path(JOB_LOG_DIR) / year / month
+    month_dir = Path(MUSIC_JOB_LOG_DIR) / year / month
     if not month_dir.is_dir():
         return []
     entries = []
@@ -243,31 +248,32 @@ def update_log_notes_ng(date_str: str, job_id: str, notes: str) -> Optional[dict
     return data
 
 
-def log_ref_path_ng(date_str: str, job_id: str) -> Optional[Path]:
+def log_audio_path_ng(date_str: str, job_id: str) -> Optional[Path]:
     if not _JOB_ID_RE.match(job_id or ""):
         return None
     day_dir = _resolve_day_dir(date_str)
     if day_dir is None:
         return None
-    return next(day_dir.glob(f"{job_id}_ref.*"), None)
+    p = day_dir / f"{job_id}.flac"
+    return p if p.is_file() else None
 
 
-def log_video_path_ng(date_str: str, job_id: str) -> Optional[Path]:
+def log_score_path_ng(date_str: str, job_id: str) -> Optional[Path]:
     if not _JOB_ID_RE.match(job_id or ""):
         return None
     day_dir = _resolve_day_dir(date_str)
     if day_dir is None:
         return None
-    p = day_dir / f"{job_id}.mp4"
+    p = day_dir / f"{job_id}.abc"
     return p if p.is_file() else None
 
 
 def delete_log_ng(date_str: str, job_id: str) -> bool:
-    """Removes one entry and its sidecar files (ref image + mp4) for
-    good -- the one deliberate exception to this module's "nothing is
-    ever deleted" retention policy above, and only ever reachable from
-    the Job Log UI's own delete button (a user clearing out e.g. a
-    failed job), never automatic pruning."""
+    """Removes one entry and its sidecar files (audio + score) for good --
+    the one deliberate exception to this module's "nothing is ever
+    deleted" retention policy above, and only ever reachable from the Job
+    Log UI's own delete button (a user clearing out e.g. a failed job),
+    never automatic pruning."""
     if not _JOB_ID_RE.match(job_id or ""):
         return False
     day_dir = _resolve_day_dir(date_str)
@@ -276,6 +282,6 @@ def delete_log_ng(date_str: str, job_id: str) -> bool:
     json_path = day_dir / f"{job_id}.json"
     if not json_path.is_file():
         return False
-    for p in list(day_dir.glob(f"{job_id}.*")) + list(day_dir.glob(f"{job_id}_*.*")):
+    for p in day_dir.glob(f"{job_id}.*"):
         p.unlink(missing_ok=True)
     return True

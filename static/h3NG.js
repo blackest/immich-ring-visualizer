@@ -48,6 +48,12 @@
     els.main = document.getElementById("ng-h3-main");
     els.controlsPane = document.getElementById("ng-controls-pane");
     els.unavailable = document.getElementById("ng-h3-unavailable");
+    els.unavailableText = document.getElementById("ng-h3-unavailable-text");
+    els.licenseRow = document.getElementById("ng-h3-license-row");
+    els.licenseCb = document.getElementById("ng-h3-license-cb");
+    els.licenseText = document.getElementById("ng-h3-license-text");
+    els.installBtn = document.getElementById("ng-h3-install-btn");
+    els.installLog = document.getElementById("ng-h3-install-log");
 
     els.queueCount = document.getElementById("ng-h3-queue-count");
     els.queueEmpty = document.getElementById("ng-h3-queue-empty");
@@ -188,13 +194,107 @@
     if (els.generateBtn) els.generateBtn.disabled = disabled;
     if (els.unavailable) {
       els.unavailable.style.display = disabled ? "" : "none";
-      if (disabled) {
-        els.unavailable.textContent =
+      if (disabled && els.unavailableText) {
+        els.unavailableText.textContent =
           "H3 pipeline not reachable (venv/DiT/compact-pack missing at " +
           ((health && health.repo_dir) || "?") +
           "). Queuing is disabled until it's fixed.";
       }
+      var showInstall = !!(disabled && health && health.installable);
+      if (els.licenseRow) {
+        els.licenseRow.style.display = showInstall ? "" : "none";
+        if (showInstall && els.licenseText) {
+          els.licenseText.textContent =
+            "I accept the " + (health.license_name || "engine license") +
+            " (" + (health.license_note || "") + ") and want to download " +
+            "~" + (health.install_size_gb || "?") + " GB.";
+        }
+      }
+      if (els.installBtn) {
+        els.installBtn.style.display = showInstall ? "" : "none";
+        if (!showInstall) {
+          els.installBtn.disabled = true;
+          els.installBtn.textContent = "Install now";
+          if (els.licenseCb) els.licenseCb.checked = false;
+        } else {
+          els.installBtn.disabled = !(els.licenseCb && els.licenseCb.checked);
+        }
+      }
     }
+  }
+
+  // ---- self-service install (see h3_installNG.py / engine_installNG.py) ----
+  // Explicit opt-in: the button stays disabled until the license checkbox
+  // is ticked (see setGenerationDisabled above and onLicenseCbChange below).
+  var installPollTimer = null;
+
+  function onLicenseCbChange() {
+    if (els.installBtn) els.installBtn.disabled = !(els.licenseCb && els.licenseCb.checked);
+  }
+
+  function pollInstallJob(jobId) {
+    fetch(API + "/install/" + jobId)
+      .then(function (r) { return r.json(); })
+      .then(function (job) {
+        if (!job || !job.status) return;
+        if (els.installLog) {
+          els.installLog.style.display = "";
+          els.installLog.textContent = (job.log_tail || []).join("\n");
+          els.installLog.scrollTop = els.installLog.scrollHeight;
+        }
+        if (job.status === "queued" || job.status === "installing") {
+          if (els.installBtn) {
+            els.installBtn.textContent = "Installing" + (job.step ? " (" + job.step + ")…" : "…");
+          }
+          return;
+        }
+        clearInterval(installPollTimer);
+        installPollTimer = null;
+        if (job.status === "completed") {
+          if (els.installBtn) {
+            els.installBtn.disabled = true;
+            els.installBtn.textContent = "Installed — restart Ring Visualizer to use it";
+          }
+          setStatus("H3 installed. Restart the app to pick it up.");
+        } else {
+          if (els.installBtn) {
+            els.installBtn.disabled = !(els.licenseCb && els.licenseCb.checked);
+            els.installBtn.textContent = "Install now";
+          }
+          setStatus("Install failed: " + (job.error || "unknown error"));
+        }
+      })
+      .catch(function () { /* keep polling -- a transient fetch error isn't fatal */ });
+  }
+
+  function startInstall() {
+    if (!els.installBtn || !els.licenseCb || !els.licenseCb.checked) return;
+    els.installBtn.disabled = true;
+    els.installBtn.textContent = "Starting…";
+    fetch(API + "/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm_license: true }),
+    })
+      .then(function (res) {
+        return res.json().then(function (payload) { return { ok: res.ok, payload: payload }; });
+      })
+      .then(function (r) {
+        if (r.ok && r.payload && r.payload.job_id) {
+          if (installPollTimer) clearInterval(installPollTimer);
+          installPollTimer = setInterval(function () { pollInstallJob(r.payload.job_id); }, 2500);
+          pollInstallJob(r.payload.job_id);
+        } else {
+          els.installBtn.disabled = false;
+          els.installBtn.textContent = "Install now";
+          setStatus("Could not start install: " + ((r.payload && r.payload.error) || "unknown error"));
+        }
+      })
+      .catch(function (e) {
+        els.installBtn.disabled = false;
+        els.installBtn.textContent = "Install now";
+        setStatus("Could not start install: " + e.message);
+      });
   }
 
   function ensureStatusChecked() {
@@ -466,6 +566,9 @@
     refreshEls();
     if (!els.pane) return;
     inited = true;
+
+    if (els.installBtn) els.installBtn.addEventListener("click", startInstall);
+    if (els.licenseCb) els.licenseCb.addEventListener("change", onLicenseCbChange);
 
     els.refFileBtn.addEventListener("click", function () { els.refFile.click(); });
     els.refFile.addEventListener("change", onDiskFile);
