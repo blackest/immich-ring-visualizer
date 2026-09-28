@@ -191,6 +191,191 @@
     return text + (/\n$/.test(text) ? "" : "\n") + newLine + "\n";
   }
 
+  // ---- real key-change transposition ----
+  // Just rewriting the K: line (the old onKeyChange) relabelled the
+  // score without touching a single note -- the model then got a
+  // score whose declared key and actual notes/chords disagreed, which
+  // is what produced John's "feels like two performances layered on
+  // top of each other" render. This resolves every written note
+  // against the CURRENT key's signature (falling back to any
+  // accidental already active earlier in the same bar), shifts it by
+  // the semitone distance to the new key, then re-spells it against
+  // the NEW key's signature -- emitting an explicit accidental only
+  // when the new signature doesn't already imply the right pitch.
+  // Quoted chord symbols ("D#m7"-style) are shifted the same way by
+  // their root; a quoted string that isn't chord-shaped (e.g. a
+  // section label some other tool wrote) is left untouched. Doesn't
+  // handle double sharps/flats (^^, __) -- none of this app's own
+  // (LLM-composed) scores use them.
+
+  var NOTE_LETTER_SEMITONE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  var SHARP_ORDER = ["F", "C", "G", "D", "A", "E", "B"];
+  var FLAT_ORDER = ["B", "E", "A", "D", "G", "C", "F"];
+  // Pitch class -> major key's accidental count/type, picking the
+  // conventional (fewest-accidental) spelling; pitch class 6 (F#/Gb)
+  // defaults to 6 sharps, the more common of the two enharmonic spellings.
+  var MAJOR_KEY_BY_PC = {
+    0: { sharps: 0 }, 7: { sharps: 1 }, 2: { sharps: 2 }, 9: { sharps: 3 },
+    4: { sharps: 4 }, 11: { sharps: 5 }, 6: { sharps: 6 },
+    1: { flats: 5 }, 8: { flats: 4 }, 3: { flats: 3 }, 10: { flats: 2 }, 5: { flats: 1 },
+  };
+  var CHROMATIC_SHARP_SPELLING = [
+    { letter: "C", acc: 0 }, { letter: "C", acc: 1 }, { letter: "D", acc: 0 }, { letter: "D", acc: 1 },
+    { letter: "E", acc: 0 }, { letter: "F", acc: 0 }, { letter: "F", acc: 1 }, { letter: "G", acc: 0 },
+    { letter: "G", acc: 1 }, { letter: "A", acc: 0 }, { letter: "A", acc: 1 }, { letter: "B", acc: 0 },
+  ];
+  var CHROMATIC_FLAT_SPELLING = [
+    { letter: "C", acc: 0 }, { letter: "D", acc: -1 }, { letter: "D", acc: 0 }, { letter: "E", acc: -1 },
+    { letter: "E", acc: 0 }, { letter: "F", acc: 0 }, { letter: "G", acc: -1 }, { letter: "G", acc: 0 },
+    { letter: "A", acc: -1 }, { letter: "A", acc: 0 }, { letter: "B", acc: -1 }, { letter: "B", acc: 0 },
+  ];
+  // Common chord-quality shorthand plus an optional /bass note -- enough
+  // to cover every chord this app's own generations actually use; a
+  // quoted string that doesn't match this (a stray text label) is
+  // passed through untouched rather than guessed at.
+  var CHORD_RE = /^([A-G])(#|b)?((?:maj|min|m|dim|aug|sus|add)?[0-9]*(?:sus[0-9])?)(?:\/([A-G])(#|b)?)?$/i;
+
+  function parseKeyTonic(keyStr) {
+    var m = /^\s*([A-Ga-g])\s*(#|b)?/.exec(keyStr || "");
+    if (!m) return null;
+    var pc = NOTE_LETTER_SEMITONE[m[1].toUpperCase()];
+    if (m[2] === "#") pc += 1;
+    if (m[2] === "b") pc -= 1;
+    pc = ((pc % 12) + 12) % 12;
+    var isMinor = /^m(?!aj)/i.test((keyStr || "").slice(m[0].length).trim());
+    return { pc: pc, isMinor: isMinor };
+  }
+
+  function relativeMajorPc(tonicPc, isMinor) {
+    return isMinor ? (tonicPc + 3) % 12 : tonicPc;
+  }
+
+  function keySignatureFor(keyStr) {
+    var tonic = parseKeyTonic(keyStr);
+    if (!tonic) return {};
+    var spec = MAJOR_KEY_BY_PC[relativeMajorPc(tonic.pc, tonic.isMinor)] || { sharps: 0 };
+    var sig = {};
+    if (spec.sharps) { for (var i = 0; i < spec.sharps; i++) sig[SHARP_ORDER[i]] = 1; }
+    else if (spec.flats) { for (var j = 0; j < spec.flats; j++) sig[FLAT_ORDER[j]] = -1; }
+    return sig;
+  }
+
+  // Smallest-distance semitone shift between two pitch classes (range
+  // -5..6) -- e.g. D# to E is +1, not +13 or -11, so a key "change"
+  // doesn't accidentally throw the melody into a different octave/register.
+  function semitoneShift(oldPc, newPc) {
+    var diff = ((newPc - oldPc) % 12 + 12) % 12;
+    if (diff > 6) diff -= 12;
+    return diff;
+  }
+
+  function resolvePitchToAbsolute(letter, explicitAcc, keySig, barAccidentals, octaveIndex) {
+    var upper = letter.toUpperCase();
+    var barKey = upper + ":" + octaveIndex;
+    var acc;
+    if (explicitAcc !== null) {
+      acc = explicitAcc;
+      barAccidentals[barKey] = acc;
+    } else if (Object.prototype.hasOwnProperty.call(barAccidentals, barKey)) {
+      acc = barAccidentals[barKey];
+    } else {
+      acc = keySig[upper] || 0;
+    }
+    return octaveIndex * 12 + NOTE_LETTER_SEMITONE[upper] + acc;
+  }
+
+  function spellPitch(absolutePitch, newKeySig, useSharps, barAccidentals) {
+    var octaveIndex = Math.floor(absolutePitch / 12);
+    var pc = ((absolutePitch % 12) + 12) % 12;
+    var spelling = (useSharps ? CHROMATIC_SHARP_SPELLING : CHROMATIC_FLAT_SPELLING)[pc];
+    var letter = spelling.letter, acc = spelling.acc;
+    var barKey = letter + ":" + octaveIndex;
+    var impliedByBar = Object.prototype.hasOwnProperty.call(barAccidentals, barKey)
+      ? barAccidentals[barKey] : (newKeySig[letter] || 0);
+    var mark = "";
+    if (acc !== impliedByBar) {
+      mark = acc === 0 ? "=" : acc === 1 ? "^" : "_";
+      barAccidentals[barKey] = acc;
+    }
+    return { letter: letter, mark: mark, octaveIndex: octaveIndex };
+  }
+
+  function transposeNoteToken(token, shift, oldKeySig, newKeySig, useSharps, barOld, barNew) {
+    var m = /^(\^\^|__|\^|_|=)?([A-Ga-g])((?:'+|,+)?)$/.exec(token);
+    if (!m) return token;
+    var accMark = m[1], letter = m[2], octMarks = m[3] || "";
+    var explicitAcc = accMark === "^^" ? 2 : accMark === "^" ? 1 :
+      accMark === "__" ? -2 : accMark === "_" ? -1 : accMark === "=" ? 0 : null;
+    var base = letter === letter.toLowerCase() ? 1 : 0;
+    var apostrophes = (octMarks.match(/'/g) || []).length;
+    var commas = (octMarks.match(/,/g) || []).length;
+    var octaveIndex = base + apostrophes - commas;
+    var absolute = resolvePitchToAbsolute(letter, explicitAcc, oldKeySig, barOld, octaveIndex);
+    var spelled = spellPitch(absolute + shift, newKeySig, useSharps, barNew);
+    var newLetter = spelled.octaveIndex >= 1 ? spelled.letter.toLowerCase() : spelled.letter.toUpperCase();
+    var newOctMarks = spelled.octaveIndex >= 2 ? "'".repeat(spelled.octaveIndex - 1)
+      : spelled.octaveIndex <= -1 ? ",".repeat(-spelled.octaveIndex) : "";
+    return spelled.mark + newLetter + newOctMarks;
+  }
+
+  function transposeChordSymbolToken(quotedToken, shift, useSharps) {
+    var inner = quotedToken.slice(1, -1);
+    var cm = CHORD_RE.exec(inner);
+    if (!cm) return quotedToken;
+    var table = useSharps ? CHROMATIC_SHARP_SPELLING : CHROMATIC_FLAT_SPELLING;
+    var rootPc = NOTE_LETTER_SEMITONE[cm[1].toUpperCase()] + (cm[2] === "#" ? 1 : cm[2] === "b" ? -1 : 0);
+    var rootSpelling = table[((rootPc + shift) % 12 + 12) % 12];
+    var out = rootSpelling.letter + (rootSpelling.acc === 1 ? "#" : rootSpelling.acc === -1 ? "b" : "") + (cm[3] || "");
+    if (cm[4]) {
+      var bassPc = NOTE_LETTER_SEMITONE[cm[4].toUpperCase()] + (cm[5] === "#" ? 1 : cm[5] === "b" ? -1 : 0);
+      var bassSpelling = table[((bassPc + shift) % 12 + 12) % 12];
+      out += "/" + bassSpelling.letter + (bassSpelling.acc === 1 ? "#" : bassSpelling.acc === -1 ? "b" : "");
+    }
+    return "\"" + out + "\"";
+  }
+
+  // Tokenizes on quoted strings and note letters, passing everything
+  // else (bar lines, rests, durations, ties, decorations...) through
+  // unchanged; a bar character anywhere in the skipped text between
+  // tokens resets the per-bar accidental memory, same as real ABC.
+  function transposeContentLine(line, shift, oldKeySig, newKeySig, useSharps) {
+    var out = "", lastEnd = 0, barOld = {}, barNew = {};
+    var re = /("(?:[^"\\]|\\.)*")|((?:\^\^|__|\^|_|=)?[A-Ga-g](?:'+|,+)?)/g;
+    var m;
+    while ((m = re.exec(line))) {
+      var skipped = line.slice(lastEnd, m.index);
+      if (skipped.indexOf("|") !== -1) { barOld = {}; barNew = {}; }
+      out += skipped;
+      out += m[1] !== undefined
+        ? transposeChordSymbolToken(m[1], shift, useSharps)
+        : transposeNoteToken(m[2], shift, oldKeySig, newKeySig, useSharps, barOld, barNew);
+      lastEnd = re.lastIndex;
+    }
+    return out + line.slice(lastEnd);
+  }
+
+  function transposeAbcToKey(text, newKeyRaw) {
+    var newKey = (newKeyRaw || "").trim();
+    if (!newKey) return text;
+    var oldKeyRaw = parseAbcHeader(text).key || "C";
+    var oldTonic = parseKeyTonic(oldKeyRaw) || { pc: 0, isMinor: false };
+    var newTonic = parseKeyTonic(newKey) || { pc: 0, isMinor: false };
+    if (oldTonic.pc === newTonic.pc && oldTonic.isMinor === newTonic.isMinor) {
+      return rewriteKey(text, newKey);
+    }
+    var shift = semitoneShift(oldTonic.pc, newTonic.pc);
+    var oldKeySig = keySignatureFor(oldKeyRaw);
+    var newKeySig = keySignatureFor(newKey);
+    var newSpec = MAJOR_KEY_BY_PC[relativeMajorPc(newTonic.pc, newTonic.isMinor)] || { sharps: 0 };
+    var useSharps = !newSpec.flats;
+
+    var lines = text.replace(/\r\n/g, "\n").split("\n").map(function (line) {
+      if (/^[A-Za-z]:/.test(line) || /^\s*%/.test(line)) return line;
+      return transposeContentLine(line, shift, oldKeySig, newKeySig, useSharps);
+    });
+    return rewriteKey(lines.join("\n"), newKey);
+  }
+
   function onBpmChange() {
     if (!els.text || !els.bpm) return;
     els.text.value = rewriteTempo(els.text.value, (els.bpm.value || "").trim());
@@ -199,7 +384,7 @@
 
   function onKeyChange() {
     if (!els.text || !els.key) return;
-    els.text.value = rewriteKey(els.text.value, (els.key.value || "").trim());
+    els.text.value = transposeAbcToKey(els.text.value, (els.key.value || "").trim());
     resetRenders();
   }
 

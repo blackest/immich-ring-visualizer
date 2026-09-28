@@ -2295,16 +2295,35 @@ textarea.ng-gen-input.ng-textarea-expanded {
   max-height: 60vh;
 }
 
+/* Rail pane itself needs its own scroll, same as #ng-generate-pane/
+   #ng-chat-pane/#ng-rachel-pane/#ng-comfy-pane -- #ng-leftrail's
+   overflow:hidden means without this, content taller than the rail
+   (e.g. the chat-input box below the transcript) gets clipped off
+   screen instead of scrolling into view. */
+#ng-musicedit-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  display: flex;
+  flex-direction: column;
+}
+
 #ng-musicedit-ai-chat-transcript {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 160px;
+  height: 160px;
+  min-height: 80px;
+  max-height: 60vh;
   overflow-y: auto;
+  overflow-x: hidden;
+  resize: vertical;
   padding: 6px 2px;
 }
 #ng-musicedit-ai-chat-transcript.ng-textarea-expanded {
-  max-height: 60vh;
+  height: 60vh;
 }
 #ng-musicedit-ai-chat-transcript .ng-chat-msg {
   max-width: 96%;

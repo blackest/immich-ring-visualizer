@@ -657,7 +657,12 @@
     var meta = dataUri.slice(0, comma);
     var mimeMatch = /data:([^;]+)/.exec(meta);
     var mime = mimeMatch ? mimeMatch[1] : "application/octet-stream";
-    var raw = /;base64/.test(meta) ? atob(dataUri.slice(comma + 1)) : decodeURIComponent(dataUri.slice(comma + 1));
+    // ABCJS's "encoded" MIDI output is percent-escaped raw bytes, not
+    // UTF-8 text -- decodeURIComponent validates %XX sequences as UTF-8
+    // and throws "URI malformed" on the very first non-ASCII MIDI byte.
+    // unescape() has no such validation: it maps each %XX straight to
+    // its byte value, which is exactly what a %XX-per-byte encoding needs.
+    var raw = /;base64/.test(meta) ? atob(dataUri.slice(comma + 1)) : unescape(dataUri.slice(comma + 1));
     var bytes = new Uint8Array(raw.length);
     for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
     return new Blob([bytes], { type: mime });
