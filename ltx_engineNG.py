@@ -331,7 +331,8 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
                f"at {width}x{height}, {frame_rate}fps, seed={seed}")
 
     with _LTX_SUBPROCESS_LOCK:
-        _unload_gemma_server_ng(on_log=on_log)
+        from model_offloadNG import offload_resident_models_ng
+        offload_resident_models_ng(on_log=on_log)
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

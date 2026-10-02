@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 import h3_engineNG as h3
+import h3_job_logsNG
 from configNG import H3GEN_DIR
 
 _MAX_JOBS_KEPT = 20  # ring-buffer cap, same reasoning as video_jobsNG
@@ -42,6 +43,7 @@ class H3JobNG:
     width: int = h3.H3_WIDTH
     height: int = h3.H3_HEIGHT
     steps: int = h3.H3_STEPS
+    turbo: bool = False  # 4-step distilled LoRA -- forces steps to H3_TURBO_STEPS
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
@@ -57,8 +59,8 @@ class H3JobNG:
     def append_log(self, line: str) -> None:
         with self._log_lock:
             self.log_lines.append(line)
-            if len(self.log_lines) > 200:
-                self.log_lines = self.log_lines[-200:]
+            if len(self.log_lines) > 2000:  # durable log copies this whole list
+                self.log_lines = self.log_lines[-2000:]
 
     def log_tail(self, n: int = 40) -> list:
         with self._log_lock:
@@ -108,6 +110,7 @@ def _worker_loop() -> None:
                 duration_s=job.duration_s, output_dir=job.job_dir,
                 seed=job.seed, config=h3.H3Config(**cfg_kwargs),
                 width=job.width, height=job.height, steps=job.steps,
+                turbo=job.turbo,
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.mp4_path = result["mp4_path"]
@@ -116,6 +119,10 @@ def _worker_loop() -> None:
             job.error_type = type(e).__name__
         finally:
             job.finished_at = time.time()
+            try:
+                h3_job_logsNG.record_job_ng(job)
+            except Exception:
+                pass  # the durable log must never take the render pipeline down
 
 
 def _ensure_worker_started() -> None:
@@ -132,7 +139,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      duration_s: float, seed: Optional[int] = None,
                      model: h3.H3Model = "h3q8",
                      width: Optional[int] = None, height: Optional[int] = None,
-                     steps: Optional[int] = None,
+                     steps: Optional[int] = None, turbo: bool = False,
                      timeout_s: Optional[float] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
@@ -144,11 +151,22 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         raise ValueError("prompt is required")
     if model not in ("h3", "h3q8"):
         raise ValueError(f"model must be 'h3' or 'h3q8' (got {model!r})")
+    if turbo and model != "h3":
+        # Same guard generate_h3_video_ng enforces -- checked here too so
+        # this fails the POST synchronously (400) instead of wasting a
+        # queued job slot on something the worker will reject anyway.
+        raise ValueError(
+            "turbo requires model='h3' (bf16) -- the turbo LoRA silently "
+            "fails to apply against the quantized 'h3q8' DiT")
     h3._validate_h3_duration_ng(duration_s)
 
     width = h3.H3_WIDTH if width is None else int(width)
     height = h3.H3_HEIGHT if height is None else int(height)
-    steps = h3.H3_STEPS if steps is None else int(steps)
+    # Same override generate_h3_video_ng itself applies -- computed here
+    # too so job.steps (and the status API) reports the step count that
+    # will actually run, not whatever default was requested before turbo
+    # was known.
+    steps = h3.H3_TURBO_STEPS if turbo else (h3.H3_STEPS if steps is None else int(steps))
     h3._validate_h3_dims_ng(width, height)
 
     has_image = image_bytes is not None
@@ -163,7 +181,8 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
 
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
-                  width=width, height=height, steps=steps, timeout_s=timeout_s)
+                  width=width, height=height, steps=steps, turbo=turbo,
+                  timeout_s=timeout_s)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()
@@ -218,6 +237,7 @@ def job_status_ng(job_id: str) -> dict:
         "width": job.width,
         "height": job.height,
         "steps": job.steps,
+        "turbo": job.turbo,
         "error": job.error,
         "error_type": job.error_type,
         "queued_at": job.queued_at,

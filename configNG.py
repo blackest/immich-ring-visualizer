@@ -49,6 +49,12 @@ JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_job_logsNG")
 # buffer (see h3_engineNG.py for why H3/H3Q8 are one engine, not two).
 H3GEN_DIR = os.path.join(EXPORT_DIR, "_h3gen")
 
+# Durable H3 job history (h3_job_logsNG.py) -- twin of JOB_LOG_DIR above
+# for the H3 ring buffer: permanent record of prompt/seed/settings, the
+# finished mp4 and the full log, which survives both the 20-job eviction
+# and a server restart.
+H3_JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_h3_job_logsNG")
+
 # Music view (routes/musicNG.py, music_jobsNG.py) -- YuE2 style+lyrics-
 # to-song renders, a peer of Animate/H3's queues above with its own ring
 # buffer (see music_engineNG.py for why this is a separate venv/engine).

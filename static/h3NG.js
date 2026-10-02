@@ -6,13 +6,15 @@
  * videogenNG.js's queue-based shape -- same FIFO render queue, same
  * reference-image paste/drop/drag UX -- trimmed of what H3 doesn't
  * have server-side yet: no /enhance, /discuss, /chat (LTX's own
- * Gemma-side features), no LoRA dropdown, no durable Job Log view, no
+ * Gemma-side features), no LoRA dropdown, no
  * raw width/height/fps controls (steps fixed at h3_engineNG.H3_STEPS
  * for now). A `model` dropdown (h3 vs h3q8) replaces the model split
  * -- see h3_engineNG.py's docstring for why those are one engine, not
  * two -- and a `quality` dropdown (h3_engineNG.H3_QUALITIES, sent as
  * the named tier, resolved to width/height server-side) replaces
  * picking a canvas size directly.
+ *
+ * The durable Job Log panel lives in h3LogNG.js (calls loadRecipe below).
  *
  * Loaded after videogenNG.js and before bootstrapWiringNG.js (which
  * fires the first ProjectManager.render(), which calls H3NG.sync()).
@@ -32,7 +34,7 @@
   // -- see videogenNG.js's setReference for the full reasoning (this is
   // the same trick, just for H3's keyframe).
   var currentRefFrameId = null;
-  var queue = []; // [{localId, jobId, status, refPreviewUrl, prompt, durationS, seed, model, error, videoUrl, logTail}]
+  var queue = []; // [{localId, jobId, status, refPreviewUrl, prompt, durationS, seed, model, quality, turbo, error, videoUrl, logTail}]
   var localSeq = 0;
   var pollTimer = null;
   var rowCache = {};
@@ -75,6 +77,8 @@
     els.seed = document.getElementById("ng-h3-seed");
     els.model = document.getElementById("ng-h3-model");
     els.quality = document.getElementById("ng-h3-quality");
+    els.turboRow = document.getElementById("ng-h3-turbo-row");
+    els.turbo = document.getElementById("ng-h3-turbo");
 
     els.generateBtn = document.getElementById("ng-h3-generate-btn");
     els.status = document.getElementById("ng-h3-status");
@@ -312,6 +316,14 @@
             els.duration.max = durationBounds.max;
           }
         }
+        var turboOk = !!(h && h.turbo_ok);
+        if (els.turbo) els.turbo.disabled = !turboOk;
+        if (els.turboRow) {
+          els.turboRow.title = turboOk
+            ? ""
+            : "turbo LoRA files not found on this machine";
+          els.turboRow.classList.toggle("ng-vg-ref-col-disabled", !turboOk);
+        }
       })
       .catch(function () {
         statusChecked = false; // let a later sync retry
@@ -335,6 +347,7 @@
     var seed = seedRaw === "" ? null : parseInt(seedRaw, 10);
     var model = els.model ? els.model.value : "h3q8";
     var quality = els.quality ? els.quality.value : "high";
+    var turbo = !!(els.turbo && !els.turbo.disabled && els.turbo.checked);
 
     var localId = "h" + ++localSeq;
     var item = {
@@ -347,6 +360,7 @@
       seed: seed,
       model: model,
       quality: quality,
+      turbo: turbo,
       error: null,
       videoUrl: null,
       logTail: [],
@@ -367,6 +381,7 @@
     form.append("duration_s", String(durationS));
     form.append("model", model);
     form.append("quality", quality);
+    if (turbo) form.append("turbo", "true");
     if (seed !== null && !isNaN(seed)) form.append("seed", String(seed));
 
     fetch(API + "/generate", { method: "POST", body: form })
@@ -590,6 +605,27 @@
         ensureStatusChecked();
       });
     }
+    if (els.turbo && els.model) {
+      // Turbo's LoRA only applies correctly against the bf16 DiT --
+      // against h3q8 (quantized) every non-adaLN module silently fails
+      // its shape check and the adapter does nothing (see
+      // h3_engineNG.py's generate_h3_video_ng). Force+lock model to
+      // "h3" while turbo is on rather than let that combination be
+      // picked and quietly do the wrong thing.
+      var modelBeforeTurbo = null;
+      els.turbo.addEventListener("change", function () {
+        if (els.turbo.checked) {
+          modelBeforeTurbo = els.model.value;
+          els.model.value = "h3";
+          els.model.disabled = true;
+          statusChecked = false;
+          ensureStatusChecked();
+        } else {
+          els.model.disabled = false;
+          if (modelBeforeTurbo) els.model.value = modelBeforeTurbo;
+        }
+      });
+    }
 
     els.generateBtn.addEventListener("click", generateVideo);
     els.queueClear.addEventListener("click", function () {
@@ -598,6 +634,53 @@
       });
       renderQueue();
     });
+  }
+
+  // Quality tiers by canvas size -- mirrors h3_engineNG.H3_QUALITIES so a
+  // Job Log entry (which stores width/height, not the tier name) can
+  // re-select the right dropdown option.
+  var QUALITY_BY_DIMS = {
+    "640x384": "draft", "768x448": "standard",
+    "1024x576": "high", "1344x768": "native",
+  };
+
+  // Called by h3LogNG.js's "Use this": refills the compose form from a
+  // durable Job Log entry (h3_job_logsNG.py). refUrl is the entry's saved
+  // keyframe (null = it was a text-to-video job).
+  function loadRecipe(entry, refUrl) {
+    refreshEls();
+    if (!els.prompt) return;
+    els.prompt.value = entry.prompt || "";
+    if (els.seed) els.seed.value = entry.seed != null ? entry.seed : "";
+    if (typeof entry.duration_s === "number" && els.duration) {
+      els.duration.value = entry.duration_s;
+      if (els.durationVal) els.durationVal.textContent = parseFloat(els.duration.value).toFixed(1) + "s";
+    }
+    var tier = QUALITY_BY_DIMS[entry.width + "x" + entry.height];
+    if (tier && els.quality) els.quality.value = tier;
+    // Model before turbo: ticking turbo locks the model dropdown to "h3".
+    if (els.turbo && els.turbo.checked && !entry.turbo) {
+      els.turbo.checked = false;
+      els.turbo.dispatchEvent(new Event("change"));
+    }
+    if (els.model && entry.model && !entry.turbo) els.model.value = entry.model;
+    if (entry.turbo && els.turbo && !els.turbo.disabled && !els.turbo.checked) {
+      els.turbo.checked = true;
+      els.turbo.dispatchEvent(new Event("change"));
+    }
+    if (els.modeT2v) {
+      els.modeT2v.checked = !refUrl;
+      onModeChange();
+    }
+    setStatus("Loaded prompt/seed/settings from the job log.");
+    if (!refUrl) return;
+    fetch(refUrl)
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+      .then(function (blob) { setReference(blob); })
+      .catch(function (e) {
+        if (els.modeT2v) { els.modeT2v.checked = true; onModeChange(); }
+        setStatus("Loaded settings, but the saved keyframe wouldn't load: " + e.message);
+      });
   }
 
   // ---- called from ProjectManager.render() every tick ----
@@ -615,5 +698,5 @@
     renderQueue();
   }
 
-  window.H3NG = { sync: sync };
+  window.H3NG = { sync: sync, loadRecipe: loadRecipe };
 })();

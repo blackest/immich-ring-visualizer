@@ -1071,6 +1071,13 @@
                 style="display: none; margin-top: 6px; max-height: 160px"
               ></pre>
             </div>
+            <button
+              type="button"
+              id="ng-h3-log-toggle"
+              class="ng-gen-btn ng-gen-btn-quiet"
+            >
+              📜 Job Log
+            </button>
             <div id="ng-h3-queue-head">
               <span>Render queue <span id="ng-h3-queue-count"></span></span>
               <button
@@ -2750,6 +2757,11 @@
                         </select>
                       </div>
                     </div>
+                    <label class="ng-checkbox-row" id="ng-h3-turbo-row"
+                      ><input type="checkbox" id="ng-h3-turbo" /> Turbo
+                      (4-step, ~3-4x faster, some quality
+                      tradeoff)</label
+                    >
                     <div
                       class="ng-gen-label"
                       style="
@@ -2758,9 +2770,10 @@
                         letter-spacing: 0;
                       "
                     >
-                      Renders at 1024&times;576, 16:9. H3 has no fast
-                      draft tier yet -- expect a long render, longer than
-                      Animate's LTX renders at the same canvas.
+                      Renders past ~5s automatically chain into multiple
+                      windows stitched together -- expect a long render at
+                      full (non-turbo) quality, especially above the
+                      "draft" canvas.
                     </div>
                   </div>
                 </div>
@@ -2781,6 +2794,49 @@
                   class="ng-vg-mainlog"
                   style="display: none"
                 ></div>
+              </div>
+
+              <!-- Durable job-log history -- separate from the ephemeral
+                   render queue in the rail. Toggled by #ng-h3-log-toggle,
+                   replaces #ng-h3-compose while open. See h3_job_logsNG.py
+                   / the /api/ng/h3/logs* routes / static/h3LogNG.js.
+                   Reuses Animate's .ng-vg-log-* CSS, same as Music. -->
+              <div id="ng-h3-log-view" style="display: none">
+                <div class="ng-vg-log-head">
+                  <button
+                    type="button"
+                    id="ng-h3-log-back"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                  >
+                    &larr; Back
+                  </button>
+                  <span>Job Log</span>
+                  <div class="ng-vg-log-tabs">
+                    <button
+                      type="button"
+                      id="ng-h3-log-tab-recent"
+                      class="ng-gen-btn ng-gen-btn-quiet ng-vg-log-tab-active"
+                    >
+                      Recent
+                    </button>
+                    <button
+                      type="button"
+                      id="ng-h3-log-tab-archive"
+                      class="ng-gen-btn ng-gen-btn-quiet"
+                    >
+                      Archive
+                    </button>
+                  </div>
+                </div>
+                <div id="ng-h3-log-breadcrumb" style="display: none"></div>
+                <p
+                  id="ng-h3-log-empty"
+                  class="ng-placeholder"
+                  style="display: none"
+                >
+                  Nothing logged here yet.
+                </p>
+                <div id="ng-h3-log-list"></div>
               </div>
             </div>
 
@@ -3676,6 +3732,7 @@
     <script src="{{ url_for('static', filename='rachelNG.js') }}"></script>
     <script src="{{ url_for('static', filename='videogenNG.js') }}"></script>
     <script src="{{ url_for('static', filename='h3NG.js') }}"></script>
+    <script src="{{ url_for('static', filename='h3LogNG.js') }}"></script>
     <!-- Vendored (not CDN, same convention as every other static file
          here), MIT-licensed -- renders a cover job's transcribed ABC
          score to an inline SVG staff. See static/musicNG.js. -->

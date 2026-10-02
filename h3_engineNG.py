@@ -24,17 +24,38 @@ tier above "high" -- if that turns out to need longer than the shared
 timeout, raise it per-call via RINGVIZ_H3_TIMEOUT_S rather than baking
 a bigger default in for every tier.
 
-Deliberately out of scope here (keep this file small -- add a sibling
-module later if any of these turn out to be needed, don't grow this
-one): chained multi-window clips (--chain-windows), live preview,
-draft/TAE decode, step-cache, turbo-LoRA auto-apply, prompt-cache
-reuse. Optional LoRA pass-through (generate_staged.py's own repeatable
---lora PATH[:SCALE]) is in scope in the same thin way ltx_engineNG.py
-does it, once something resolves a UI name to a path -- not wired yet.
+Chained multi-window clips (--chain-windows) ARE in scope, as of the
+minimax-h3-mlx pull that landed 69ec486 ("Chain 5-second windows into
+clips the dense path cannot reach") -- a duration beyond one window
+(H3_CHAIN_WINDOW_S) is rendered as N windows, each conditioned on the
+previous window's last decoded frame (the runner's own --first-frame
+path, reused), then stitched into one mp4 by the runner itself. See
+_h3_chain_plan_ng.
+
+The turbo LoRA (larryvrh/MiniMax-H3-Turbo-Lora, Apache-2.0, a 4-step
+distillation adapter -- see H3_TURBO_LORA_PATH) IS also wired, as an
+opt-in `turbo=True` on generate_h3_video_ng: forces --steps 4 and adds
+--lora/--lora-adaln, cutting each window's denoise from ~15 steps to
+4 for roughly a 3-4x speedup, at the real quality cost the runner's
+own README is explicit about (4 steps without the adapter is
+"unresolved", not broken -- the adapter is what makes 4 usable, not a
+free identical-quality shortcut). Both required files were already
+present on disk under H3_MODELS_ROOT/turbo-lora/ -- nothing to fetch.
+
+Deliberately still NOT wired: --chain-prompts (a different prompt per
+window -- phosphene derives that from a shot's "settle" state, which
+this app's plain prompt box has no equivalent of, so every window
+gets the same prompt, the runner's own documented fallback), live
+preview, draft/TAE decode, step-cache, prompt-cache reuse. Non-turbo
+LoRA pass-through (generate_staged.py's own repeatable --lora
+PATH[:SCALE] for an arbitrary adapter) is in scope in the same thin
+way ltx_engineNG.py does it, once something resolves a UI name to a
+path -- not wired yet.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import subprocess
@@ -97,6 +118,16 @@ H3_COMPACT_ROOT = H3_MODELS_ROOT / "ddalcu-q8"
 H3_COMPACT_FILES = ("text_encoder.safetensors", "video_vae.safetensors", "audio_vae.safetensors")
 H3_TEXT_CONFIG = H3_MODELS_ROOT / "upstream-meta" / "FL2VA" / "text_encoder" / "config.json"
 
+# larryvrh/MiniMax-H3-Turbo-Lora (Apache-2.0), the 4-step distillation
+# adapter -- see generate_staged.py's README "Turbo LoRA: 4-step
+# sampling" section for the two loader traps (qkv row permutation,
+# adaLN absorption) this file relies on the runner having already
+# fixed. --lora-adaln needs the second file (the upstream
+# time_embedder the pruned checkpoint dropped), not the DiT itself.
+H3_TURBO_LORA_PATH = H3_MODELS_ROOT / "turbo-lora" / "minimax_h3_turbo_4step_ema_ckpt500.safetensors"
+H3_TURBO_ADALN_PATH = H3_MODELS_ROOT / "turbo-lora" / "upstream_time_embedder.safetensors"
+H3_TURBO_STEPS = 4
+
 H3_FRAME_RATE = 24.0
 # packing.py: 17n+5 frame grid, 32px canvas grid -- duplicated here (not
 # imported) since this file talks to the H3 venv only as a subprocess,
@@ -140,7 +171,21 @@ H3_QUALITY_TIMEOUTS = {
 }
 
 H3_MIN_DURATION_S = 3.0
-H3_MAX_DURATION_S = 15.0
+# 15.0 was phosphene's own validated ceiling (3 chained windows -- nobody,
+# including phosphene, has data past that). Raised to 30.0 (6 windows) to
+# test past it, 2026-09-29 -- the runner itself has no hard cap
+# (chain_windows math in _h3_chain_plan_ng is unbounded), this is purely
+# an "our own choice, untested past 3 windows" ceiling. Revisit if a
+# 6-window chain's seams/drift look worse than the validated 3-window
+# ones did.
+H3_MAX_DURATION_S = 30.0
+
+# The dense (--chain-windows 1) path's proven-reliable ceiling -- phosphene
+# chains anything longer into this many seconds per window (see
+# minimax-h3-mlx's 69ec486, "Chain 5-second windows into clips the dense
+# path cannot reach"). A duration that fits in one window renders exactly
+# as it always has; only a longer one pays the chain's extra windows.
+H3_CHAIN_WINDOW_S = 5.0
 
 
 def _validate_h3_dims_ng(width: int, height: int) -> None:
@@ -162,13 +207,23 @@ def resolve_h3_quality_ng(quality: str) -> tuple:
     return dims
 
 
-def resolve_h3_quality_timeout_ng(quality: Optional[str]) -> Optional[float]:
+def resolve_h3_quality_timeout_ng(quality: Optional[str],
+                                   duration_s: Optional[float] = None) -> Optional[float]:
     """Maps a named tier to its H3_QUALITY_TIMEOUTS budget. None (no
     named tier -- an explicit width/height call) or an unrecognized
     name both return None, meaning "let H3Config.timeout_s's own
     default apply" rather than raise -- unlike resolve_h3_quality_ng,
-    an unknown quality here isn't fatal to the render."""
-    return H3_QUALITY_TIMEOUTS.get(quality) if quality else None
+    an unknown quality here isn't fatal to the render.
+
+    duration_s scales the budget by how many chained windows that
+    duration needs (_h3_chain_plan_ng) -- a 3-window chain takes
+    roughly 3x one window's wall time, so the flat per-tier budget
+    alone would let the watchdog kill a legitimate long chain."""
+    base = H3_QUALITY_TIMEOUTS.get(quality) if quality else None
+    if base is None or not duration_s:
+        return base
+    _, chain_windows, _ = _h3_chain_plan_ng(duration_s)
+    return base * chain_windows
 
 
 def _validate_h3_duration_ng(duration_s: float) -> None:
@@ -186,6 +241,25 @@ def _align_h3_frames_ng(duration_s: float, frame_rate: float = H3_FRAME_RATE) ->
     while n % H3_FRAMES_PER_CHUNK != H3_LATENTS_PER_CHUNK:
         n += 1
     return n
+
+
+def _h3_chain_plan_ng(duration_s: float) -> tuple[int, int, int]:
+    """(window_frames, chain_windows, total_frames) for duration_s.
+
+    chain_windows is 1 -- today's untouched dense path, same output as
+    before this existed -- whenever the whole clip fits in one
+    H3_CHAIN_WINDOW_S window. Otherwise this is the same stride math
+    generate_staged.py's own --chain-windows uses (frames + (n-1) *
+    (frames-1) delivered, trimmed to total_frames via
+    --chain-total-frames), computed here up front so the timeout budget
+    and the subprocess command agree on the same plan."""
+    total_frames = _align_h3_frames_ng(duration_s)
+    window_frames = _align_h3_frames_ng(H3_CHAIN_WINDOW_S)
+    if total_frames <= window_frames:
+        return total_frames, 1, total_frames
+    stride = window_frames - 1
+    chain_windows = 1 + math.ceil((total_frames - window_frames) / stride)
+    return window_frames, chain_windows, total_frames
 
 
 def _clean_subprocess_env_ng() -> dict:
@@ -247,6 +321,17 @@ def _resolve_h3_dit_ng(config: H3Config) -> Optional[str]:
     return str(p) if p.is_file() else None
 
 
+def _resolve_h3_turbo_ng() -> tuple:
+    """(lora_path, adaln_path) as strs, or (None, None) if either file
+    is missing -- turbo is all-or-nothing, --lora-adaln without --lora
+    (or vice versa) isn't a state generate_staged.py's turbo mode is
+    documented for."""
+    lora, adaln = H3_TURBO_LORA_PATH, H3_TURBO_ADALN_PATH
+    if lora.is_file() and adaln.is_file():
+        return str(lora), str(adaln)
+    return None, None
+
+
 # Metal device contention -- same reasoning as ltx_engineNG.py's own
 # _LTX_SUBPROCESS_LOCK, kept separate since this is a different venv
 # and a different subprocess.
@@ -262,6 +347,7 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
     compact_root = _resolve_h3_compact_root_ng(cfg)
     text_config = _resolve_h3_text_config_ng(cfg)
     dit = _resolve_h3_dit_ng(cfg)
+    turbo_lora, turbo_adaln = _resolve_h3_turbo_ng()
     return {
         "repo_dir": str(H3_REPO_DIR),
         "models_root": str(H3_MODELS_ROOT),
@@ -276,6 +362,7 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         "compact_path": compact_root or str(H3_COMPACT_ROOT),
         "text_config_ok": text_config is not None,
         "text_config_path": text_config or str(H3_TEXT_CONFIG),
+        "turbo_ok": turbo_lora is not None,
         "ready": all((python, runner, dit, compact_root, text_config)),
     }
 
@@ -285,6 +372,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           config: H3Config,
                           width: Optional[int] = None, height: Optional[int] = None,
                           steps: Optional[int] = None,
+                          turbo: bool = False,
                           on_log: Optional[Callable[[str], None]] = None,
                           on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
@@ -293,12 +381,43 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     render. config.model picks bf16 ("h3") or quantized ("h3q8") DiT
     weights -- same compact VAE/text-encoder pack either way. width/
     height/steps default to H3_WIDTH/H3_HEIGHT/H3_STEPS (the "high" true
-    16:9 canvas) when omitted."""
+    16:9 canvas) when omitted.
+
+    turbo=True applies the larryvrh 4-step distillation LoRA and FORCES
+    steps to H3_TURBO_STEPS regardless of the steps argument -- turbo
+    is a coherent package (this exact adapter measured at this exact
+    step count), not a step count you pick independently of it. Raises
+    FileNotFoundError if the adapter files aren't on disk (check
+    h3_health_ng()['turbo_ok'] first to avoid that)."""
     width = H3_WIDTH if width is None else int(width)
     height = H3_HEIGHT if height is None else int(height)
-    steps = H3_STEPS if steps is None else int(steps)
+    steps = H3_TURBO_STEPS if turbo else (H3_STEPS if steps is None else int(steps))
     _validate_h3_dims_ng(width, height)
     _validate_h3_duration_ng(duration_s)
+
+    turbo_lora = turbo_adaln = None
+    if turbo:
+        if config.model != "h3":
+            # Measured 2026-09-29: against h3q8 (quantized) the loader's
+            # shape check compares the LoRA's A matrix to the QUANTIZED
+            # DiT's packed tensor shape, not its logical dense shape --
+            # every non-adaLN module (208/259) silently mismatches and
+            # gets skipped (0 applied), so the adapter contributes
+            # nothing beyond the small adaLN absorption and --steps 4
+            # runs essentially undistilled. Against h3 (bf16) the same
+            # weights apply correctly (208 applied, only the documented
+            # 51 adaLN modules skipped). Not a training/architecture
+            # mismatch -- specific to the quantized loader path -- so
+            # refuse rather than silently degrade instead of erroring.
+            raise ValueError(
+                "turbo requires model='h3' (bf16) -- against 'h3q8' "
+                "(quantized) the turbo LoRA's shape check silently fails "
+                "on every non-adaLN module and the adapter does nothing")
+        turbo_lora, turbo_adaln = _resolve_h3_turbo_ng()
+        if not turbo_lora:
+            raise FileNotFoundError(
+                f"H3 turbo LoRA not found -- expected both "
+                f"{H3_TURBO_LORA_PATH} and {H3_TURBO_ADALN_PATH}")
 
     python = _resolve_h3_python_ng(config)
     if not python:
@@ -326,7 +445,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     if image_path is not None and not Path(image_path).is_file():
         raise FileNotFoundError(f"H3 keyframe image not found at {image_path}")
 
-    frames = _align_h3_frames_ng(duration_s)
+    window_frames, chain_windows, frames = _h3_chain_plan_ng(duration_s)
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
 
     output_dir = Path(output_dir)
@@ -341,7 +460,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "--dit", dit,
         "--compact-root", compact_root,
         "--text-config", text_config,
-        "--frames", str(frames),
+        "--frames", str(window_frames),
         "--height", str(height),
         "--width", str(width),
         "--steps", str(steps),
@@ -349,15 +468,35 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "-o", str(out_mp4),
         "--metrics", str(metrics_path),
     ]
+    if chain_windows > 1:
+        # --chain-keep-windows: also write each window's own mp4 beside
+        # the stitched output. Costs almost nothing (small per-window
+        # files) and means a crash/kill partway through a long chain --
+        # see the 2026-09-29 broken-pipe incident that lost a full
+        # ~33-minute render with nothing to show for it -- still leaves
+        # every window that finished before the failure on disk.
+        cmd += ["--chain-windows", str(chain_windows), "--chain-total-frames", str(frames),
+                "--chain-keep-windows"]
     if image_path is not None:
         cmd += ["--first-frame", image_path]
+    if turbo:
+        cmd += ["--lora", turbo_lora, "--lora-adaln", turbo_adaln]
 
     if on_log:
-        on_log(f"[h3] launching {config.model} {frames} frames "
-               f"(~{frames / H3_FRAME_RATE:.1f}s) at {width}x{height}, "
-               f"{steps} steps, seed={seed}")
+        turbo_note = " [turbo 4-step]" if turbo else ""
+        if chain_windows > 1:
+            on_log(f"[h3] launching {config.model} {chain_windows} chained windows "
+                   f"({window_frames}f each) -> {frames} frames "
+                   f"(~{frames / H3_FRAME_RATE:.1f}s) at {width}x{height}, "
+                   f"{steps} steps{turbo_note}, seed={seed}")
+        else:
+            on_log(f"[h3] launching {config.model} {frames} frames "
+                   f"(~{frames / H3_FRAME_RATE:.1f}s) at {width}x{height}, "
+                   f"{steps} steps{turbo_note}, seed={seed}")
 
     with _H3_SUBPROCESS_LOCK:
+        from model_offloadNG import offload_resident_models_ng
+        offload_resident_models_ng(on_log=on_log)
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

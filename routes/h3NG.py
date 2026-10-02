@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request, send_file
 import engine_installNG
 import h3_engineNG
 import h3_installNG
+import h3_job_logsNG
 import h3_jobsNG as h3_jobs
 from video_analysisNG import find_cache_frame_ng
 
@@ -131,7 +132,9 @@ def h3_generate_ng():
     height and to that tier's watchdog budget, H3_QUALITY_TIMEOUTS,
     here), width/height (optional ints, multiples of 32, override
     quality's dims when given -- the tier's timeout still applies since
-    it's resolved from `quality` alone), steps (optional int).
+    it's resolved from `quality` alone), steps (optional int), turbo
+    (optional bool -- the 4-step distilled LoRA; forces steps to
+    h3_engineNG.H3_TURBO_STEPS regardless of a passed `steps`).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -152,7 +155,8 @@ def h3_generate_ng():
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
     steps = request.form.get("steps", type=int)
-    timeout_s = h3_engineNG.resolve_h3_quality_timeout_ng(quality)
+    turbo = str(request.form.get("turbo") or "").strip().lower() in ("1", "true", "on")
+    timeout_s = h3_engineNG.resolve_h3_quality_timeout_ng(quality, duration_s)
 
     try:
         img_bytes, ext = _resolve_ref_image_bytes()
@@ -162,7 +166,7 @@ def h3_generate_ng():
     try:
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
-            model=model, width=width, height=height, steps=steps,
+            model=model, width=width, height=height, steps=steps, turbo=turbo,
             timeout_s=timeout_s)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
@@ -219,3 +223,71 @@ def h3_download_video_ng(job_id):
         as_attachment=True,
         download_name=f"h3-{job_id}.mp4",
     )
+
+
+# ---- Durable job log (h3_job_logsNG.py) -- separate from the queue
+# above: a permanent, never-pruned history of finished renders (prompt,
+# seed, settings, the mp4 and the full log), browsable by day (recent) or
+# drilled down by year/month (archive). Twin of musicNG's own job-log
+# routes -- see h3_job_logsNG.py's module docstring for the on-disk layout.
+
+@h3NG_bp.route("/api/ng/h3/logs", methods=["GET"])
+def h3_logs_recent_ng():
+    return jsonify({"ok": True, "entries": h3_job_logsNG.list_recent_logs_ng()})
+
+
+@h3NG_bp.route("/api/ng/h3/logs/archive", methods=["GET"])
+def h3_logs_archive_years_ng():
+    return jsonify({"ok": True, "years": h3_job_logsNG.list_archive_years_ng()})
+
+
+@h3NG_bp.route("/api/ng/h3/logs/archive/<year>", methods=["GET"])
+def h3_logs_archive_months_ng(year):
+    return jsonify({"ok": True, "months": h3_job_logsNG.list_archive_months_ng(year)})
+
+
+@h3NG_bp.route("/api/ng/h3/logs/archive/<year>/<month>", methods=["GET"])
+def h3_logs_archive_day_entries_ng(year, month):
+    return jsonify({"ok": True, "entries": h3_job_logsNG.list_archive_day_entries_ng(year, month)})
+
+
+@h3NG_bp.route("/api/ng/h3/logs/<date>/<job_id>/video", methods=["GET"])
+def h3_log_video_ng(date, job_id):
+    path = h3_job_logsNG.log_video_path_ng(date, job_id)
+    if path is None:
+        return jsonify({"error": "no such log entry or video"}), 404
+    return send_file(path, mimetype="video/mp4")
+
+
+@h3NG_bp.route("/api/ng/h3/logs/<date>/<job_id>/ref", methods=["GET"])
+def h3_log_ref_ng(date, job_id):
+    path = h3_job_logsNG.log_ref_path_ng(date, job_id)
+    if path is None:
+        return jsonify({"error": "no such log entry or reference image"}), 404
+    return send_file(path)
+
+
+@h3NG_bp.route("/api/ng/h3/logs/<date>/<job_id>/text", methods=["GET"])
+def h3_log_text_ng(date, job_id):
+    path = h3_job_logsNG.log_text_path_ng(date, job_id)
+    if path is None:
+        return jsonify({"error": "no such log entry or log text"}), 404
+    return send_file(path, mimetype="text/plain")
+
+
+@h3NG_bp.route("/api/ng/h3/logs/<date>/<job_id>/notes", methods=["PATCH"])
+def h3_log_update_notes_ng(date, job_id):
+    body = request.get_json(silent=True) or {}
+    notes = str(body.get("notes") or "")
+    entry = h3_job_logsNG.update_log_notes_ng(date, job_id, notes)
+    if entry is None:
+        return jsonify({"error": "no such log entry"}), 404
+    return jsonify({"ok": True, "entry": entry})
+
+
+@h3NG_bp.route("/api/ng/h3/logs/<date>/<job_id>", methods=["DELETE"])
+def h3_log_delete_ng(date, job_id):
+    ok = h3_job_logsNG.delete_log_ng(date, job_id)
+    if not ok:
+        return jsonify({"error": "no such log entry"}), 404
+    return jsonify({"ok": True})
