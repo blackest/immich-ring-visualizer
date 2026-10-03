@@ -5,6 +5,7 @@ in APP_ARCHITECTURE_NOTES.md."""
 import json
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -107,20 +108,19 @@ NG_ADDRESS_SETTINGS = [
     {
         "key": "ollama_base_url",
         "env": "RINGVIZ_OLLAMA_URL",
-        "default": "http://macstudio-2-1.tail74ab30.ts.net:11434",
+        "default": "http://127.0.0.1:11434",
         "label": "Ollama URL",
-        "description": "Local Ollama daemon powering the Chat view.",
+        "description": "Local Ollama daemon powering the Chat view (same machine, so no network hop).",
         "probe": True,
-        "tailscale_device": "MacStudio (2)",
     },
     {
         "key": "hermes_base_url",
         "env": "RINGVIZ_HERMES_URL",
-        "default": "http://m1mini-4.tail74ab30.ts.net:8642",
+        "default": "http://m1mini.local:8642",
+        "fallback": "http://192.168.3.248:8642",
         "label": "Hermes gateway URL",
-        "description": "Hermes agent gateway (OpenAI-compatible /v1) powering the Rachel view.",
+        "description": "Hermes agent gateway (OpenAI-compatible /v1) powering the Rachel view. LAN (mDNS) address -- Tailscale isn't needed for this.",
         "probe": True,
-        "tailscale_device": "m1mini (4)",
     },
     {
         "key": "hermes_api_key",
@@ -240,6 +240,61 @@ def _tailscale_devices():
     return devices
 
 
+def get_tailscale_state():
+    """Live (uncached) Tailscale daemon state for the settings UI.
+    Returns {"state": ..., "detail": ...}. state is Tailscale's own
+    BackendState ("Running", "Stopped", "NeedsLogin", "Starting", ...) or
+    "not_installed" / "unreachable" (CLI present but tailscaled/app isn't
+    answering -- the usual "app not launched" case)."""
+    bin_path = _tailscale_bin()
+    if not bin_path:
+        return {"state": "not_installed", "detail": "Tailscale CLI not found."}
+    try:
+        out = subprocess.run(
+            [bin_path, "status", "--json"],
+            capture_output=True, text=True, timeout=3,
+        )
+    except Exception as e:
+        return {"state": "unreachable", "detail": str(e)}
+    try:
+        data = json.loads(out.stdout)
+    except ValueError:
+        msg = (out.stderr or out.stdout or "").strip()
+        return {"state": "unreachable", "detail": msg or "tailscaled not responding."}
+    return {"state": data.get("BackendState") or "unknown", "detail": data.get("AuthURL") or ""}
+
+
+def tailscale_bring_up():
+    """Try to get Tailscale connected. If the daemon answers, `tailscale
+    up`; if it doesn't (app not running), launch the macOS app first and
+    wait briefly for it. Returns the post-attempt get_tailscale_state()
+    plus an "ok" flag. NeedsLogin can't be fixed unattended -- the
+    returned detail carries the login URL for the user to open."""
+    bin_path = _tailscale_bin()
+    if not bin_path:
+        return {"ok": False, **get_tailscale_state()}
+    state = get_tailscale_state()
+    if state["state"] == "unreachable":
+        subprocess.run(["open", "-a", "Tailscale"], capture_output=True, timeout=10)
+        for _ in range(10):
+            time.sleep(1)
+            state = get_tailscale_state()
+            if state["state"] != "unreachable":
+                break
+    if state["state"] in ("Stopped", "Starting"):
+        try:
+            subprocess.run([bin_path, "up"], capture_output=True, text=True, timeout=15)
+        except Exception:
+            pass
+        for _ in range(5):
+            state = get_tailscale_state()
+            if state["state"] == "Running":
+                break
+            time.sleep(1)
+    _tailscale_cache["devices"] = None  # re-resolve device names now
+    return {"ok": state["state"] == "Running", **state}
+
+
 def _resolve_tailscale_value(spec):
     """Swap the hardcoded default's host for that device's CURRENT tailnet
     DNS name (same scheme/port/path as the default) -- None if the spec
@@ -258,6 +313,33 @@ def _resolve_tailscale_value(spec):
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+_FALLBACK_TTL = 20
+_fallback_cache = {}  # url -> (timestamp, chosen url)
+
+
+def _with_fallback(spec, url):
+    """If the spec has a "fallback" and `url` (the built-in default) can't
+    be reached by a quick TCP connect -- e.g. mDNS .local not resolving --
+    use the fallback instead. Cached briefly so settings reads stay cheap.
+    Only applied to the default; a saved/env value is the user's explicit
+    choice and is never swapped."""
+    fallback = spec.get("fallback")
+    if not fallback:
+        return url
+    now = time.time()
+    hit = _fallback_cache.get(url)
+    if hit and now - hit[0] < _FALLBACK_TTL:
+        return hit[1]
+    parts = urlsplit(url)
+    try:
+        with socket.create_connection((parts.hostname, parts.port or 80), timeout=1):
+            chosen = url
+    except OSError:
+        chosen = fallback
+    _fallback_cache[url] = (now, chosen)
+    return chosen
+
+
 def _ng_setting(key):
     spec = next(s for s in NG_ADDRESS_SETTINGS if s["key"] == key)
     env_val = os.environ.get(spec["env"])
@@ -266,7 +348,7 @@ def _ng_setting(key):
     saved = _load_ng_settings().get(key)
     if saved:
         return saved
-    return _resolve_tailscale_value(spec) or spec["default"]
+    return _resolve_tailscale_value(spec) or _with_fallback(spec, spec["default"])
 
 
 def get_ng_address_settings():
@@ -284,7 +366,7 @@ def get_ng_address_settings():
         elif live:
             source, value = "tailscale", live
         else:
-            source, value = "default", spec["default"]
+            source, value = "default", _with_fallback(spec, spec["default"])
         out.append({**spec, "value": value, "source": source})
     return out
 

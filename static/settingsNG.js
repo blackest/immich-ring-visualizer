@@ -87,7 +87,41 @@
     return wrap;
   }
 
+  const tsStateEl = document.getElementById("ng-settings-tailscale-state");
+  const tsDetailEl = document.getElementById("ng-settings-tailscale-detail");
+  const tsUpBtn = document.getElementById("ng-settings-tailscale-up");
+
+  function renderTailscale(s) {
+    const up = s.state === "Running";
+    tsStateEl.textContent = up ? "connected" : s.state.replace("_", " ");
+    tsStateEl.className = "ng-settings-field-status " + (up ? "ok" : "fail");
+    tsDetailEl.textContent = !up && s.detail ? " -- " + s.detail : "";
+    tsUpBtn.style.display = up || s.state === "not_installed" ? "none" : "";
+  }
+
+  async function loadTailscale() {
+    try {
+      renderTailscale(await (await fetch("/api/ng/settings/tailscale")).json());
+    } catch (e) {
+      renderTailscale({ state: "unreachable", detail: e.message });
+    }
+  }
+
+  tsUpBtn.addEventListener("click", async () => {
+    tsUpBtn.disabled = true;
+    tsStateEl.textContent = "connecting...";
+    try {
+      const res = await fetch("/api/ng/settings/tailscale/up", { method: "POST" });
+      renderTailscale(await res.json());
+    } catch (e) {
+      renderTailscale({ state: "unreachable", detail: e.message });
+    }
+    tsUpBtn.disabled = false;
+    loadAddresses();
+  });
+
   async function loadAddresses() {
+    loadTailscale();
     addressesEl.textContent = "Loading...";
     try {
       const res = await fetch("/api/ng/settings/addresses");

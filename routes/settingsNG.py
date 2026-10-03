@@ -23,7 +23,9 @@ from configNG import (
     get_comfyui_base_url,
     get_ng_address_settings,
     get_tailscale_hostname,
+    get_tailscale_state,
     save_ng_address_settings,
+    tailscale_bring_up,
 )
 
 settingsNG_bp = Blueprint("settingsNG", __name__)
@@ -50,6 +52,17 @@ def save_addresses_ng():
         return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
     save_ng_address_settings(body)
     return jsonify({"ok": True, "settings": get_ng_address_settings()})
+
+
+@settingsNG_bp.route("/api/ng/settings/tailscale", methods=["GET"])
+def tailscale_status_ng():
+    return jsonify(get_tailscale_state())
+
+
+@settingsNG_bp.route("/api/ng/settings/tailscale/up", methods=["POST"])
+def tailscale_up_ng():
+    """Launch/connect Tailscale on this machine (see configNG.tailscale_bring_up)."""
+    return jsonify(tailscale_bring_up())
 
 
 def _probe_url(url, timeout=2.0):
