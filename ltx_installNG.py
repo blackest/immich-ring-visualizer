@@ -1,7 +1,6 @@
 """Self-service install recipe for the LTX (Animate) engine -- builds the
 list of engine_installNG.InstallStep the "Install now" button runs, so
-ltx_engineNG.py's LTX_REPO_DIR/LTX_WEIGHTS_ROOT resolve to a real install
-without needing Phosphene (see PHOSPHENE_DECOUPLING_PLAN.md).
+ltx_engineNG.py's LTX_REPO_DIR/LTX_WEIGHTS_ROOT resolve to a real install.
 
 Ported from Phosphene's scripts/pinokio/ltx_checkout.sh, ltx_venv.sh, and
 install.js's own `uv pip install` sequence (MIT licensed) -- same fork,

@@ -1,5 +1,5 @@
 """Character-sheet generation: one face photo -> a shot list of turnaround
-/ dataset views, with no Phosphene involved.
+/ dataset views.
 
 Ported from Phosphene's mlx_ltx_panel.py (the Characters-tab bookkeeping
 + generate_character_sheet orchestrator) per PHOSPHENE_DECOUPLING_PLAN.md,

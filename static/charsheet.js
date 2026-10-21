@@ -1,7 +1,6 @@
 // Character sheet panel -- turns a face into a shot-list of turnaround /
 // dataset views via character_sheet.py + hidream_engine.py (ported from
-// Phosphene, see PHOSPHENE_DECOUPLING_PLAN.md; no longer talks to
-// Phosphene at all). Three sources feed the same result:
+// Phosphene, see PHOSPHENE_DECOUPLING_PLAN.md). Three sources feed the same result:
 //   1. The currently-centered Immich face (lastNeighborsRender.centerId,
 //      a real assetId) -> POST /api/charsheet/sheet-from-asset (JSON).
 //   2. The currently-centered video-frame or folder-image anchor

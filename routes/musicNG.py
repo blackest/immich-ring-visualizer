@@ -48,7 +48,7 @@ def music_status_ng():
 def music_install_ng():
     """Kicks off the background install job (clone+pin -> venv -> deps ->
     weights, see music_installNG.py) that gets MUSIC_REPO_DIR/
-    MUSIC_MODELS_ROOT to a real install without needing Phosphene. Picking
+    MUSIC_MODELS_ROOT to a real install. Picking
     up a *freshly finished* install still needs a process restart --
     music_engineNG.py resolves those paths once at import time -- so the
     frontend's completed-job message says so rather than re-polling

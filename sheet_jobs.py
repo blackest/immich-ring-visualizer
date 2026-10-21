@@ -54,7 +54,7 @@ class SheetJob:
     # Resolved prompt text per shot key -- computed up front at job-start
     # time (prompts don't depend on render output, just on the shot spec
     # + settings), not pushed from the render loop. Lets the UI offer a
-    # "copy prompt" action -- for reuse in Phosphene, ComfyUI, or
+    # "copy prompt" action -- for reuse in ComfyUI or
     # anywhere else -- the moment a job starts, not just once a shot
     # finishes rendering.
     shot_prompts: dict = field(default_factory=dict)

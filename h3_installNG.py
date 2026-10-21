@@ -1,7 +1,6 @@
 """Self-service install recipe for the H3 (MiniMax) engine -- builds the
 list of engine_installNG.InstallStep the "Install now" button runs, so
-h3_engineNG.py's H3_REPO_DIR/H3_MODELS_ROOT resolve to a real install
-without needing Phosphene.
+h3_engineNG.py's H3_REPO_DIR/H3_MODELS_ROOT resolve to a real install.
 
 Ported from Phosphene's scripts/pinokio/h3_checkout.sh + install_h3.js's
 venv/deps steps (MIT licensed). Unlike LTX and Music, the weights fetch

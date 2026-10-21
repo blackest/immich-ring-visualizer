@@ -1,9 +1,7 @@
 """Self-service install recipe for the Music (YuE2) engine -- builds the
 list of engine_installNG.InstallStep the "Install now" button runs, so
 music_engineNG.py's MUSIC_REPO_DIR/MUSIC_MODELS_ROOT resolve to a real
-install without requiring Phosphene (see PHOSPHENE_DECOUPLING_PLAN.md for
-why that dependency was already removed from the render path itself --
-this closes the remaining "how do you even get yue2-mlx" gap).
+install (this closes the "how do you even get yue2-mlx" gap).
 
 Ported from Phosphene's scripts/pinokio/music_clone.sh, music_checkout.sh,
 music_venv.sh, music_sync.sh, music_fetch.py (MIT licensed) -- same repo,

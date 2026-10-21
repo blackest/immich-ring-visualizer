@@ -1,25 +1,17 @@
 """Character-sheet generation: face photo -> a shot-list of turnaround /
 dataset views, rendered as a background job.
 
-This used to proxy every request over HTTP to a separate Phosphene
-process (127.0.0.1:8198). As of PHOSPHENE_DECOUPLING_PLAN.md, it doesn't
-anymore -- character_sheet.py + hidream_engine.py (ported from Phosphene)
-do the work locally, in-process. Phosphene keeps working exactly as it
-did before; we copied logic out, we didn't remove anything from there,
-and we never import mlx-vlm into this app's interpreter -- generation
-still happens in a subprocess in the standalone HiDream lab venv, just
-invoked directly instead of via Phosphene's HTTP layer.
+character_sheet.py + hidream_engine.py (ported from Phosphene) do the
+work locally, in-process. We never import mlx-vlm into this app's
+interpreter -- generation happens in a subprocess in the standalone
+HiDream lab venv.
 
-It also used to block the whole HTTP request for the duration of a
-render (fine for 3 views at ~9-10 min each; not fine once "extended"
-15-shot / full-body / multi-angle dataset jobs at 2.5+ hours entered the
-picture). Every generate/reroll route now hands off to sheet_jobs.py's
-background thread and returns immediately with a job id; the frontend
-polls GET /api/charsheet/sheet-jobs/<job_id> for progress instead of
-sitting on one long-lived connection.
-
-Renamed from routes/phosphene.py (and /api/phosphene/* -> /api/charsheet/*):
-this code no longer has anything to do with the Phosphene app.
+Renders can run for hours ("extended" 15-shot / full-body / multi-angle
+dataset jobs take 2.5+ hours), so no request blocks on one. Every
+generate/reroll route hands off to sheet_jobs.py's background thread and
+returns immediately with a job id; the frontend polls
+GET /api/charsheet/sheet-jobs/<job_id> for progress instead of sitting
+on one long-lived connection.
 """
 
 import os
@@ -70,8 +62,7 @@ def _map_job_start_error(e: Exception):
 @charsheet_bp.route("/api/charsheet/status", methods=["GET"])
 def charsheet_status():
     """Reports whether the local HiDream lab (venv + model + script) is
-    reachable -- replaces the old "is the Phosphene process up" ping,
-    since there's no separate process to ping anymore."""
+    reachable (there's no separate process to ping)."""
     health = hidream_engine.hidream_health()
     return jsonify({"reachable": health["ready"], **health})
 

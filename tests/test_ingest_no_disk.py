@@ -13,7 +13,7 @@ run_folder_analysis and stored in job["srcImages"] for /api/export-job
 to read back later.
 
 run_folder_analysis itself (InsightFace) is stubbed -- same tradeoff
-test_phosphene_routes.py makes -- these tests are about what data reaches
+test_charsheet_routes.py makes -- these tests are about what data reaches
 it and where it's held, not the face-detection pipeline.
 
 Run with:

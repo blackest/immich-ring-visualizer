@@ -1,8 +1,7 @@
 """NG twin of routes/charsheet.py -- HTTP layer for the Generate view's
 character-sheet feature.
 
-NG-only file (the original has since been renamed routes/charsheet.py;
-the code has never had anything to do with the Phosphene app). Named generateNG.py to match the
+NG-only file. Named generateNG.py to match the
 Generate view itself and to stay engine-agnostic, since more than one
 generation engine may exist someday (see hidream_engineNG.py's
 docstring).
