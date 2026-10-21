@@ -108,7 +108,7 @@ class RandomFaceNgTestCase(unittest.TestCase):
 
         self.assertIn(conn, self._released)
 
-    def test_query_filters_on_personId_and_orders_random(self):
+    def test_query_filters_on_personGroupId_and_orders_random(self):
         conn = self._mock_conn(("asset-123", "IMG_0042.jpg"))
 
         # capture the cursor actually used by the route
@@ -125,7 +125,7 @@ class RandomFaceNgTestCase(unittest.TestCase):
         self.client.get("/api/ng/random-face")
 
         sql, params = captured["cursor"].executed
-        self.assertIn('"personId" IS NOT NULL', sql)
+        self.assertIn('"personGroupId" IS NOT NULL', sql)
         self.assertIn("ORDER BY random()", sql)
         self.assertIn("LIMIT 1", sql)
 
