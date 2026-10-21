@@ -1,10 +1,16 @@
 # Decoupling character-sheet generation from Phosphene
 
-**Status:** planning doc, nothing built yet. Written at the end of a session
-that (a) built the current Phosphene-dependent integration and (b) tuned
-Phosphene's character-sheet prompt/seed handling. Read this whole file
-before writing code — several things below are open decisions, not settled
-answers.
+**Status: DONE (historical).** The decoupling has been built: `character_sheet.py`,
+`hidream_engine.py` and `sheet_jobs.py` now live in this repo, and
+`routes/phosphene.py` calls them directly instead of proxying to Phosphene on
+`:8198`. The rest of this file is the original plan, kept for context only --
+line numbers and "nothing built yet" statements below are stale.
+
+Leftovers (not part of the decoupling itself): `ltx_engineNG.py` /
+`music_engineNG.py` still fall back to the Phosphene install tree under
+`/Volumes/AI/Pinkio/...` because that is currently the only place those
+engines are installed on this machine; the legacy `/` page still uses
+`phosphene_bp`.
 
 ## The goal, in one sentence
 

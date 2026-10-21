@@ -330,6 +330,15 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
         on_log(f"[ltx] launching {frames} frames (~{(frames - 1) / frame_rate:.1f}s) "
                f"at {width}x{height}, {frame_rate}fps, seed={seed}")
 
+    import configNG
+    import ltx_codecNG
+    codec_outcome = ltx_codecNG.apply_codec_patch_ng()
+    if on_log and codec_outcome in (ltx_codecNG.MISSING, ltx_codecNG.DRIFT):
+        on_log(f"[ltx] codec patch {codec_outcome}: output preset ignored, "
+               f"clips will be encoded at upstream's large crf-18 default")
+    env = _clean_subprocess_env_ng()
+    env.update(ltx_codecNG.codec_env_ng(configNG.get_ltx_output_preset()))
+
     with _LTX_SUBPROCESS_LOCK:
         from model_offloadNG import offload_resident_models_ng
         offload_resident_models_ng(on_log=on_log)
@@ -338,7 +347,7 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            env=_clean_subprocess_env_ng(),
+            env=env,
             cwd=str(LTX_REPO_DIR),
             start_new_session=True,
         )

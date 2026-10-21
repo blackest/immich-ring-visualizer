@@ -167,6 +167,18 @@ NG_ADDRESS_SETTINGS = [
         "description": "ComfyUI server powering the ComfyUI view (extract a workflow from a PNG, edit its parameters, run it).",
         "probe": True,
     },
+    {
+        "key": "ltx_output_preset",
+        "env": "RINGVIZ_LTX_OUTPUT_PRESET",
+        "default": "web",
+        "label": "Animate video quality",
+        "description": "Encoder setting for Animate (LTX) clips. LTX's output is grainy, so Standard/Lossless produce very large files (~100 MB for 8s); Web is a few MB.",
+        "options": [
+            {"value": "web", "label": "Web / small files (CRF 23)"},
+            {"value": "standard", "label": "Standard (CRF 18, very large)"},
+            {"value": "archival", "label": "Lossless 4:4:4 (huge)"},
+        ],
+    },
 ]
 
 
@@ -387,6 +399,10 @@ def save_ng_address_settings(values):
     with open(NG_SETTINGS_FILE, "w") as f:
         json.dump(current, f, indent=2, sort_keys=True)
     return current
+
+
+def get_ltx_output_preset():
+    return _ng_setting("ltx_output_preset")
 
 
 def get_ollama_base_url():

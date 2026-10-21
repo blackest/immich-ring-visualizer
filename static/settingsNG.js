@@ -69,11 +69,24 @@
     desc.className = "ng-settings-row-desc";
     desc.textContent = setting.description || "";
 
-    const input = document.createElement("input");
-    input.type = setting.secret ? "password" : "text";
-    input.dataset.settingKey = setting.key;
-    input.value = setting.value || "";
-    input.placeholder = setting.default || "";
+    let input;
+    if (setting.options) {
+      input = document.createElement("select");
+      setting.options.forEach((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        input.appendChild(opt);
+      });
+      input.dataset.settingKey = setting.key;
+      input.value = setting.value || setting.default;
+    } else {
+      input = document.createElement("input");
+      input.type = setting.secret ? "password" : "text";
+      input.dataset.settingKey = setting.key;
+      input.value = setting.value || "";
+      input.placeholder = setting.default || "";
+    }
     if (setting.source === "env") {
       // An env var always wins over a saved override -- editing here
       // would silently do nothing, so disable it and say why.
@@ -144,7 +157,7 @@
   // as a mysterious failure in Chat/Rachel/ComfyUI later.
   async function probeAddresses() {
     const body = {};
-    addressesEl.querySelectorAll("input[data-setting-key]").forEach((input) => {
+    addressesEl.querySelectorAll("[data-setting-key]").forEach((input) => {
       body[input.dataset.settingKey] = input.value;
     });
     addressesEl.querySelectorAll(".ng-settings-field-status").forEach((el) => {
@@ -331,7 +344,7 @@
 
   saveAddressesBtn.addEventListener("click", async () => {
     const values = {};
-    addressesEl.querySelectorAll("input[data-setting-key]").forEach((input) => {
+    addressesEl.querySelectorAll("[data-setting-key]").forEach((input) => {
       if (!input.disabled) values[input.dataset.settingKey] = input.value;
     });
 

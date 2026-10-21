@@ -114,6 +114,16 @@ def _step_deps(on_log: Callable[[str], None]) -> None:
                cwd=str(dest), on_log=on_log)
 
 
+def _step_codec(on_log: Callable[[str], None]) -> None:
+    import ltx_codecNG
+    outcome = ltx_codecNG.apply_codec_patch_ng()
+    on_log(f"LTX output-codec patch: {outcome}")
+    if outcome in (ltx_codecNG.MISSING, ltx_codecNG.DRIFT):
+        raise RuntimeError(
+            f"LTX codec patch {outcome}: upstream's ffmpeg line moved or the "
+            f"file is absent -- update PATCH_OLD in ltx_codecNG.py")
+
+
 def _step_weights(on_log: Callable[[str], None]) -> None:
     for repo_key in ("q8_25", "hq_25", "gemma4_25"):
         ltx_pack_fetchNG.fetch_pack(repo_key, LTX_WEIGHTS_ROOT, on_log)
@@ -125,5 +135,6 @@ def build_steps() -> List[InstallStep]:
         InstallStep("clone", _step_clone),
         InstallStep("venv", _step_venv),
         InstallStep("deps", _step_deps),
+        InstallStep("codec", _step_codec),
         InstallStep("weights", _step_weights),
     ]
