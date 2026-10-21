@@ -1,7 +1,7 @@
 """A lightweight in-process job queue for character-sheet generation.
 
 The 3-view turnaround sheet was small enough to render inside one
-blocking HTTP request (see routes/phosphene.py's original docstring).
+blocking HTTP request (see routes/charsheet.py's original docstring).
 The 15-shot "extended" dataset preset is not -- at ~10 min/shot that's
 2.5+ hours, which no HTTP client should sit on. This module runs a
 generation as a background thread instead and exposes poll-based status,
@@ -246,6 +246,6 @@ def job_status(job_id: str) -> dict:
         "finished_at": job.finished_at,
         "shots": shots,
         "log_tail": job.log_tail(20),
-        "sheet_url": (f"/api/phosphene/characters/{job.character_id}/sheet"
+        "sheet_url": (f"/api/charsheet/characters/{job.character_id}/sheet"
                       if overall == "completed" else None),
     }

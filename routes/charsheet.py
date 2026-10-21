@@ -15,13 +15,11 @@ render (fine for 3 views at ~9-10 min each; not fine once "extended"
 15-shot / full-body / multi-angle dataset jobs at 2.5+ hours entered the
 picture). Every generate/reroll route now hands off to sheet_jobs.py's
 background thread and returns immediately with a job id; the frontend
-polls GET /api/phosphene/sheet-jobs/<job_id> for progress instead of
+polls GET /api/charsheet/sheet-jobs/<job_id> for progress instead of
 sitting on one long-lived connection.
 
-The module (and blueprint variable) keep the name "phosphene" rather
-than being renamed -- the URL paths under /api/phosphene/... mostly
-stay put so existing bookmarks/scripts don't break, and renaming the
-file/blueprint too would just be churn for no functional benefit.
+Renamed from routes/phosphene.py (and /api/phosphene/* -> /api/charsheet/*):
+this code no longer has anything to do with the Phosphene app.
 """
 
 import os
@@ -39,7 +37,7 @@ from config import IMMICH_API_KEY, IMMICH_BASE_URL
 from folder_analysis import run_folder_analysis
 from state import _analysis_jobs
 
-phosphene_bp = Blueprint("phosphene", __name__)
+charsheet_bp = Blueprint("charsheet", __name__)
 
 _CONTENT_TYPE_EXT = {
     "image/jpeg": ".jpg", "image/jpg": ".jpg",
@@ -53,7 +51,7 @@ def _job_started_response(job, status_code=202):
         "job_id": job.job_id,
         "trigger": job.character_id,
         "shot_keys": job.shot_keys,
-        "poll_url": f"/api/phosphene/sheet-jobs/{job.job_id}",
+        "poll_url": f"/api/charsheet/sheet-jobs/{job.job_id}",
     }), status_code
 
 
@@ -69,8 +67,8 @@ def _map_job_start_error(e: Exception):
     return jsonify({"error": str(e)}), 500
 
 
-@phosphene_bp.route("/api/phosphene/status", methods=["GET"])
-def phosphene_status():
+@charsheet_bp.route("/api/charsheet/status", methods=["GET"])
+def charsheet_status():
     """Reports whether the local HiDream lab (venv + model + script) is
     reachable -- replaces the old "is the Phosphene process up" ping,
     since there's no separate process to ping anymore."""
@@ -78,7 +76,7 @@ def phosphene_status():
     return jsonify({"reachable": health["ready"], **health})
 
 
-@phosphene_bp.route("/api/phosphene/presets", methods=["GET"])
+@charsheet_bp.route("/api/charsheet/presets", methods=["GET"])
 def list_presets():
     """Feeds the settings panel's preset/style dropdowns -- shot keys
     and pose text per preset, plus the available style names, so the
@@ -94,7 +92,7 @@ def list_presets():
     })
 
 
-@phosphene_bp.route("/api/phosphene/characters", methods=["POST"])
+@charsheet_bp.route("/api/charsheet/characters", methods=["POST"])
 def create_draft_character():
     """Register a "draft" character from a photo already on this machine
     (an Immich pick, an exported video frame, any local file) - no LoRA,
@@ -174,7 +172,7 @@ def _register_draft_and_start_job(trigger: str, tmp_path: str, settings: dict):
     return _job_started_response(job)
 
 
-@phosphene_bp.route("/api/phosphene/sheet-from-asset", methods=["POST"])
+@charsheet_bp.route("/api/charsheet/sheet-from-asset", methods=["POST"])
 def generate_sheet_from_immich_asset():
     """The one-click path for an Immich-sourced face: an asset_id in, a
     background sheet-generation job started. Downloads the asset's
@@ -232,7 +230,7 @@ def requests_get_immich_asset(asset_id: str):
     )
 
 
-@phosphene_bp.route("/api/phosphene/sheet-from-upload", methods=["POST"])
+@charsheet_bp.route("/api/charsheet/sheet-from-upload", methods=["POST"])
 def generate_sheet_from_upload():
     """The one-click path for anything that ISN'T already an Immich
     asset: a local video frame, a folder-loaded image, or literally any
@@ -290,8 +288,8 @@ def generate_sheet_from_upload():
                 pass
 
 
-@phosphene_bp.route(
-    "/api/phosphene/characters/<character_id>/sheet/generate", methods=["POST"]
+@charsheet_bp.route(
+    "/api/charsheet/characters/<character_id>/sheet/generate", methods=["POST"]
 )
 def generate_character_sheet_route(character_id):
     """Start a background sheet-generation job for an already-registered
@@ -307,8 +305,8 @@ def generate_character_sheet_route(character_id):
     return _job_started_response(job)
 
 
-@phosphene_bp.route(
-    "/api/phosphene/characters/<character_id>/sheet/reroll", methods=["POST"]
+@charsheet_bp.route(
+    "/api/charsheet/characters/<character_id>/sheet/reroll", methods=["POST"]
 )
 def reroll_shot_route(character_id):
     """Re-render one shot of an already-generated sheet.
@@ -330,7 +328,7 @@ def reroll_shot_route(character_id):
     return _job_started_response(job)
 
 
-@phosphene_bp.route("/api/phosphene/sheet-jobs/<job_id>", methods=["GET"])
+@charsheet_bp.route("/api/charsheet/sheet-jobs/<job_id>", methods=["GET"])
 def sheet_job_status_route(job_id):
     """Poll target for every job-starting route above -- overall status,
     per-shot status inferred from disk, and a tail of the HiDream
@@ -342,7 +340,7 @@ def sheet_job_status_route(job_id):
     return jsonify(status)
 
 
-@phosphene_bp.route("/api/phosphene/characters/<character_id>/sheet", methods=["GET"])
+@charsheet_bp.route("/api/charsheet/characters/<character_id>/sheet", methods=["GET"])
 def serve_character_sheet(character_id):
     """Serves the composited sheet.png (small shot counts only -- see
     character_sheet.MAX_SHOTS_FOR_COMPOSITE; an extended-preset job has
@@ -356,7 +354,7 @@ def serve_character_sheet(character_id):
     return send_file(p, mimetype="image/png")
 
 
-@phosphene_bp.route("/api/phosphene/characters/<character_id>/sheet-meta", methods=["GET"])
+@charsheet_bp.route("/api/charsheet/characters/<character_id>/sheet-meta", methods=["GET"])
 def serve_character_sheet_meta(character_id):
     """Full sheet.json (every shot's prompt/seed/path/refs) -- lets the
     panel restore the shot grid on page load without an active job_id
@@ -368,8 +366,8 @@ def serve_character_sheet_meta(character_id):
     return jsonify(character_sheet.character_sheet_meta(character_id))
 
 
-@phosphene_bp.route(
-    "/api/phosphene/characters/<character_id>/shots/<shot_key>", methods=["GET"]
+@charsheet_bp.route(
+    "/api/charsheet/characters/<character_id>/shots/<shot_key>", methods=["GET"]
 )
 def serve_shot_thumbnail(character_id, shot_key):
     """Serves the latest rendered PNG for one shot key -- what the shot
@@ -390,8 +388,8 @@ def serve_shot_thumbnail(character_id, shot_key):
     return send_file(candidates[-1], mimetype="image/png")
 
 
-@phosphene_bp.route(
-    "/api/phosphene/characters/<character_id>/sheet/add-to-ring", methods=["POST"]
+@charsheet_bp.route(
+    "/api/charsheet/characters/<character_id>/sheet/add-to-ring", methods=["POST"]
 )
 def add_sheet_to_ring(character_id):
     """Feeds a character's avatar (as the reference face) plus every

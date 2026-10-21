@@ -43,7 +43,7 @@ def run_folder_analysis(job_id, images, sim_threshold, blur_threshold, ref_index
     write_cache_frame()'d, so it has no viewable/exportable image in the
     ring (frameId stays None) -- fine for real photo/video curation,
     where most candidate frames are expected to fail and caching all of
-    them would be wasteful. Character-sheet shots (routes/phosphene.py's
+    them would be wasteful. Character-sheet shots (routes/charsheet.py's
     add_sheet_to_ring) are the opposite case: a handful of already-
     expensive HiDream renders that already exist as real files on disk,
     where a side/three-quarter shot scoring under the similarity

@@ -3,16 +3,16 @@
 // Phosphene, see PHOSPHENE_DECOUPLING_PLAN.md; no longer talks to
 // Phosphene at all). Three sources feed the same result:
 //   1. The currently-centered Immich face (lastNeighborsRender.centerId,
-//      a real assetId) -> POST /api/phosphene/sheet-from-asset (JSON).
+//      a real assetId) -> POST /api/charsheet/sheet-from-asset (JSON).
 //   2. The currently-centered video-frame or folder-image anchor
 //      (centerId === '__anchor__', details in lastVideoRingState) -> the
 //      anchor thumbnail is fetch()ed as a blob and uploaded.
 //   3. Any photo picked directly from disk via the file input.
-// (2) and (3) both land on POST /api/phosphene/sheet-from-upload
+// (2) and (3) both land on POST /api/charsheet/sheet-from-upload
 // (multipart) because video frames and folder images are never written
 // to disk in this app (see video_analysis.py's MemoryVideo).
 //
-// Generation now runs as a background job (routes/phosphene.py hands
+// Generation now runs as a background job (routes/charsheet.py hands
 // back {job_id, poll_url, shot_keys} immediately instead of blocking the
 // request -- the 15-shot "extended" preset can run 2.5+ hours, way past
 // any sane fetch timeout). This file polls GET poll_url every couple of
@@ -24,9 +24,9 @@
 // file stays a classic script too, on purpose: an inline onclick
 // handler only works if the function declaring it lands on window.
 
-const PHOSPHERE_POLL_MS = 2000;
-let _phospherePollTimer = null;
-let _phosphereCurrentTrigger = null;
+const CHARSHEET_POLL_MS = 2000;
+let _charsheetPollTimer = null;
+let _charsheetCurrentTrigger = null;
 
 // key -> { root, imgWrap, actions, imgEl, phEl, copyBtn, rerollBtn,
 //          lastStatus, lastThumbnail }. Persists across polls of the
@@ -35,40 +35,40 @@ let _phosphereCurrentTrigger = null;
 // cache-busting timestamp on every <img> regardless of whether that
 // shot's render actually changed -- was what made the grid visibly
 // flash roughly once per poll). Cleared only when a brand new
-// top-level generate/upload starts (_phosphereStart), NOT on a reroll
+// top-level generate/upload starts (_charsheetStart), NOT on a reroll
 // poll -- a reroll job's status response only lists the one shot being
 // re-rolled, and the rest of the grid should stay exactly as it was.
-let _phosphereGridCells = new Map();
-let _phosphereShotGridCollapsed = false;
+let _charsheetGridCells = new Map();
+let _charsheetShotGridCollapsed = false;
 
-function _phosphereEls() {
+function _charsheetEls() {
   return {
-    btn: document.getElementById('phosphene-sheet-btn'),
-    fileBtn: document.getElementById('phosphene-sheet-file-btn'),
-    status: document.getElementById('phosphene-sheet-status'),
-    logTail: document.getElementById('phosphene-log-tail'),
-    img: document.getElementById('phosphene-sheet-img'),
-    grid: document.getElementById('phosphene-shot-grid'),
-    gridToggle: document.getElementById('phosphene-shot-grid-toggle'),
-    gridWrap: document.getElementById('phosphene-shot-grid-wrap'),
-    addToRingBtn: document.getElementById('phosphene-add-to-ring-btn'),
-    nameInput: document.getElementById('phosphene-sheet-name'),
-    presetSelect: document.getElementById('phosphene-preset-select'),
-    styleSelect: document.getElementById('phosphene-style-select'),
-    wardrobeInput: document.getElementById('phosphene-wardrobe-input'),
-    hairColorInput: document.getElementById('phosphene-hair-color-input'),
-    seedInput: document.getElementById('phosphene-seed-input'),
-    identityLockCb: document.getElementById('phosphene-identity-lock-cb'),
-    customPromptInput: document.getElementById('phosphene-custom-prompt-input'),
-    settingsToggle: document.getElementById('phosphene-settings-toggle'),
-    settingsMore: document.getElementById('phosphene-settings-more'),
-    unavailableBanner: document.getElementById('phosphene-unavailable-banner'),
+    btn: document.getElementById('charsheet-btn'),
+    fileBtn: document.getElementById('charsheet-file-btn'),
+    status: document.getElementById('charsheet-status'),
+    logTail: document.getElementById('charsheet-log-tail'),
+    img: document.getElementById('charsheet-img'),
+    grid: document.getElementById('charsheet-shot-grid'),
+    gridToggle: document.getElementById('charsheet-shot-grid-toggle'),
+    gridWrap: document.getElementById('charsheet-shot-grid-wrap'),
+    addToRingBtn: document.getElementById('charsheet-add-to-ring-btn'),
+    nameInput: document.getElementById('charsheet-name'),
+    presetSelect: document.getElementById('charsheet-preset-select'),
+    styleSelect: document.getElementById('charsheet-style-select'),
+    wardrobeInput: document.getElementById('charsheet-wardrobe-input'),
+    hairColorInput: document.getElementById('charsheet-hair-color-input'),
+    seedInput: document.getElementById('charsheet-seed-input'),
+    identityLockCb: document.getElementById('charsheet-identity-lock-cb'),
+    customPromptInput: document.getElementById('charsheet-custom-prompt-input'),
+    settingsToggle: document.getElementById('charsheet-settings-toggle'),
+    settingsMore: document.getElementById('charsheet-settings-more'),
+    unavailableBanner: document.getElementById('charsheet-unavailable-banner'),
   };
 }
 
 // "more settings" collapse -- wired once at load, see bottom of file.
-function _phosphereInitSettingsToggle() {
-  const { settingsToggle, settingsMore } = _phosphereEls();
+function _charsheetInitSettingsToggle() {
+  const { settingsToggle, settingsMore } = _charsheetEls();
   if (!settingsToggle) return;
   settingsToggle.addEventListener('click', () => {
     const open = settingsMore.style.display !== 'none';
@@ -79,7 +79,7 @@ function _phosphereInitSettingsToggle() {
 
 // Gate the character-sheet feature on whether the local HiDream engine
 // is actually reachable from this machine (hidream_engine.hidream_health()
-// via GET /api/phosphene/status). Generation is a subprocess call into a
+// via GET /api/charsheet/status). Generation is a subprocess call into a
 // separate Mac-only MLX venv that simply won't exist on Windows/Linux
 // (or a Mac without the HiDream lab installed) -- previously the panel
 // gave no warning at all: fill in settings, click Generate, wait for the
@@ -88,20 +88,20 @@ function _phosphereInitSettingsToggle() {
 // have worked here. Checked once at page load. Fails OPEN (leaves the
 // button enabled, hides the banner) if the status call itself errors --
 // a network hiccup isn't evidence the feature is unavailable.
-function _phosphereCheckAvailability() {
-  const { btn, fileBtn, unavailableBanner } = _phosphereEls();
+function _charsheetCheckAvailability() {
+  const { btn, fileBtn, unavailableBanner } = _charsheetEls();
   if (!unavailableBanner) return;
-  fetch('/api/phosphene/status')
+  fetch('/api/charsheet/status')
     .then(r => r.json())
     .then(health => {
       const unavailable = health && health.reachable === false;
-      _phosphereSetGenerationDisabled(unavailable, health);
+      _charsheetSetGenerationDisabled(unavailable, health);
     })
     .catch(() => { /* fail open */ });
 }
 
-function _phosphereSetGenerationDisabled(disabled, health) {
-  const { btn, fileBtn, unavailableBanner } = _phosphereEls();
+function _charsheetSetGenerationDisabled(disabled, health) {
+  const { btn, fileBtn, unavailableBanner } = _charsheetEls();
   if (!unavailableBanner) return;
   if (disabled) {
     const missing = [];
@@ -127,32 +127,32 @@ function _phosphereSetGenerationDisabled(disabled, health) {
 
 // Shot grid collapse -- same pattern as "more settings" above, but the
 // grid's own display:none/grid is already actively managed every poll
-// tick by _phosphereStart/_phosphereRenderGrid (data-presence: is
+// tick by _charsheetStart/_charsheetRenderGrid (data-presence: is
 // there anything to show at all), so the user's collapse preference
 // lives on a separate wrapper element instead of fighting that -- see
-// _phosphereApplyShotGridCollapseState.
-function _phosphereInitShotGridToggle() {
-  const { gridToggle } = _phosphereEls();
+// _charsheetApplyShotGridCollapseState.
+function _charsheetInitShotGridToggle() {
+  const { gridToggle } = _charsheetEls();
   if (!gridToggle) return;
   gridToggle.addEventListener('click', () => {
-    _phosphereShotGridCollapsed = !_phosphereShotGridCollapsed;
-    _phosphereApplyShotGridCollapseState();
+    _charsheetShotGridCollapsed = !_charsheetShotGridCollapsed;
+    _charsheetApplyShotGridCollapseState();
   });
 }
 
-function _phosphereApplyShotGridCollapseState() {
-  const { gridToggle, gridWrap } = _phosphereEls();
+function _charsheetApplyShotGridCollapseState() {
+  const { gridToggle, gridWrap } = _charsheetEls();
   if (!gridToggle || !gridWrap) return;
   gridToggle.style.display = 'block';
-  gridWrap.style.display = _phosphereShotGridCollapsed ? 'none' : 'block';
-  const count = _phosphereGridCells.size;
-  gridToggle.textContent = (_phosphereShotGridCollapsed ? '▸' : '▾') +
+  gridWrap.style.display = _charsheetShotGridCollapsed ? 'none' : 'block';
+  const count = _charsheetGridCells.size;
+  gridToggle.textContent = (_charsheetShotGridCollapsed ? '▸' : '▾') +
     ` character sheet shots (${count})`;
 }
 
-function _phosphereSettings() {
+function _charsheetSettings() {
   const { presetSelect, styleSelect, wardrobeInput, hairColorInput, seedInput,
-          identityLockCb, customPromptInput } = _phosphereEls();
+          identityLockCb, customPromptInput } = _charsheetEls();
   const seedRaw = (seedInput.value || '').trim();
   return {
     preset: presetSelect.value,
@@ -165,45 +165,45 @@ function _phosphereSettings() {
   };
 }
 
-function _phosphereSetBusy(busy) {
-  const { btn, fileBtn } = _phosphereEls();
+function _charsheetSetBusy(busy) {
+  const { btn, fileBtn } = _charsheetEls();
   btn.disabled = busy;
   fileBtn.disabled = busy;
 }
 
-function _phosphereStart(message) {
-  const { status, img, grid, gridToggle, gridWrap, logTail, addToRingBtn } = _phosphereEls();
-  _phosphereSetBusy(true);
+function _charsheetStart(message) {
+  const { status, img, grid, gridToggle, gridWrap, logTail, addToRingBtn } = _charsheetEls();
+  _charsheetSetBusy(true);
   status.textContent = message;
   img.style.display = 'none';
   img.src = '';
   grid.style.display = 'none';
   grid.innerHTML = '';
-  _phosphereGridCells.clear();
+  _charsheetGridCells.clear();
   gridToggle.style.display = 'none';
   gridWrap.style.display = 'none';
   logTail.style.display = 'none';
   logTail.textContent = '';
   addToRingBtn.style.display = 'none';
-  if (_phospherePollTimer) {
-    clearInterval(_phospherePollTimer);
-    _phospherePollTimer = null;
+  if (_charsheetPollTimer) {
+    clearInterval(_charsheetPollTimer);
+    _charsheetPollTimer = null;
   }
 }
 
-function _phosphereShowError(payload, fallback) {
-  const { status } = _phosphereEls();
+function _charsheetShowError(payload, fallback) {
+  const { status } = _charsheetEls();
   const msg = (payload && payload.error) ? payload.error : (fallback || 'unknown error');
   status.textContent = 'Error: ' + msg;
-  _phosphereSetBusy(false);
+  _charsheetSetBusy(false);
 }
 
-const _PHOSPHERE_STATUS_LABEL = {
+const _CHARSHEET_STATUS_LABEL = {
   queued: 'queued', rendering: 'rendering…', done: 'done',
   failed: 'failed', not_started: 'skipped',
 };
 
-function _phosphereBuildShotCell(trigger, shot) {
+function _charsheetBuildShotCell(trigger, shot) {
   const cell = document.createElement('div');
   cell.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
 
@@ -227,7 +227,7 @@ function _phosphereBuildShotCell(trigger, shot) {
     imgEl: null, phEl: null, copyBtn: null, rerollBtn: null,
     lastStatus: null, lastThumbnail: undefined,
   };
-  _phosphereApplyShotState(trigger, entry, shot);
+  _charsheetApplyShotState(trigger, entry, shot);
   return entry;
 }
 
@@ -242,7 +242,7 @@ function _phosphereBuildShotCell(trigger, shot) {
 // (a fresh render or a re-roll), so using IT as the cache-bust value
 // (instead of the current time) means the <img> only gets replaced,
 // and only re-fetches, when there is genuinely something new to show.
-function _phosphereApplyShotState(trigger, entry, shot) {
+function _charsheetApplyShotState(trigger, entry, shot) {
   const showsImage = shot.status === 'done' || shot.status === 'failed';
   const thumbChanged = shot.thumbnail !== entry.lastThumbnail;
 
@@ -250,7 +250,7 @@ function _phosphereApplyShotState(trigger, entry, shot) {
     entry.imgWrap.innerHTML = '';
     const im = document.createElement('img');
     im.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
-    im.src = `/api/phosphene/characters/${encodeURIComponent(trigger)}/shots/` +
+    im.src = `/api/charsheet/characters/${encodeURIComponent(trigger)}/shots/` +
              `${encodeURIComponent(shot.key)}?v=${encodeURIComponent(shot.thumbnail || shot.status)}`;
     im.alt = shot.key;
     entry.imgWrap.appendChild(im);
@@ -261,7 +261,7 @@ function _phosphereApplyShotState(trigger, entry, shot) {
     const ph = document.createElement('div');
     ph.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;' +
       'justify-content:center;color:var(--dim);font-size:var(--fs-9);text-align:center;padding:4px;';
-    ph.textContent = _PHOSPHERE_STATUS_LABEL[shot.status] || shot.status;
+    ph.textContent = _CHARSHEET_STATUS_LABEL[shot.status] || shot.status;
     entry.imgWrap.appendChild(ph);
     entry.phEl = ph;
     entry.imgEl = null;
@@ -280,12 +280,12 @@ function _phosphereApplyShotState(trigger, entry, shot) {
     copy.title = shot.prompt;
     copy.style.cssText = 'flex:1;font-size:var(--fs-9);padding:2px;background:#16161c;' +
       'border:1px solid #2a2a32;color:var(--dim);border-radius:3px;cursor:pointer;';
-    copy.onclick = () => _phosphereCopyPrompt(copy, shot.prompt);
+    copy.onclick = () => _charsheetCopyPrompt(copy, shot.prompt);
     entry.actions.appendChild(copy);
     entry.copyBtn = copy;
   } else if (shot.prompt && entry.copyBtn && entry.copyBtn.title !== shot.prompt) {
     entry.copyBtn.title = shot.prompt;
-    entry.copyBtn.onclick = () => _phosphereCopyPrompt(entry.copyBtn, shot.prompt);
+    entry.copyBtn.onclick = () => _charsheetCopyPrompt(entry.copyBtn, shot.prompt);
   }
 
   // Reroll/retry -- appears once a shot has something to reroll, label
@@ -301,30 +301,30 @@ function _phosphereApplyShotState(trigger, entry, shot) {
       entry.rerollBtn = reroll;
     }
     if (entry.rerollBtn.textContent !== wantLabel) entry.rerollBtn.textContent = wantLabel;
-    entry.rerollBtn.onclick = () => _phosphereReroll(trigger, shot.key);
+    entry.rerollBtn.onclick = () => _charsheetReroll(trigger, shot.key);
   }
 }
 
-function _phosphereRenderGrid(trigger, shots) {
-  const { grid } = _phosphereEls();
+function _charsheetRenderGrid(trigger, shots) {
+  const { grid } = _charsheetEls();
   grid.style.display = 'grid';
   shots.forEach(shot => {
-    let entry = _phosphereGridCells.get(shot.key);
+    let entry = _charsheetGridCells.get(shot.key);
     if (!entry) {
-      entry = _phosphereBuildShotCell(trigger, shot);
-      _phosphereGridCells.set(shot.key, entry);
+      entry = _charsheetBuildShotCell(trigger, shot);
+      _charsheetGridCells.set(shot.key, entry);
       grid.appendChild(entry.root);
     } else {
-      _phosphereApplyShotState(trigger, entry, shot);
+      _charsheetApplyShotState(trigger, entry, shot);
     }
   });
   // Reveal the toggle once there's anything to show, and keep its
   // label's shot count and the wrap's collapsed/expanded state current
   // on every poll tick (cheap -- just two style/text writes).
-  _phosphereApplyShotGridCollapseState();
+  _charsheetApplyShotGridCollapseState();
 }
 
-function _phosphereCopyPrompt(button, text) {
+function _charsheetCopyPrompt(button, text) {
   const flash = (label) => {
     const original = button.textContent;
     button.textContent = label;
@@ -342,7 +342,7 @@ function _phosphereCopyPrompt(button, text) {
       document.body.removeChild(ta);
       flash(ok ? 'copied!' : 'copy failed');
     } catch (err) {
-      console.warn('[phosphere] fallback copy failed:', err);
+      console.warn('[charsheet] fallback copy failed:', err);
       flash('copy failed');
     }
   };
@@ -353,9 +353,9 @@ function _phosphereCopyPrompt(button, text) {
   }
 }
 
-function _phospherePoll(jobId, trigger) {
-  const { status, img, logTail, addToRingBtn } = _phosphereEls();
-  fetch(`/api/phosphene/sheet-jobs/${jobId}`)
+function _charsheetPoll(jobId, trigger) {
+  const { status, img, logTail, addToRingBtn } = _charsheetEls();
+  fetch(`/api/charsheet/sheet-jobs/${jobId}`)
     .then(r => r.json())
     .then(job => {
       const doneCount = job.shots.filter(s => s.status === 'done').length;
@@ -369,7 +369,7 @@ function _phospherePoll(jobId, trigger) {
         logTail.scrollTop = logTail.scrollHeight;
       }
 
-      _phosphereRenderGrid(trigger, job.shots);
+      _charsheetRenderGrid(trigger, job.shots);
       // Shown as soon as anything has actually rendered, even mid-job
       // or after a job that ultimately failed partway through -- reads
       // sheet_views/ directly (see sheet_shot_image_paths), not
@@ -377,9 +377,9 @@ function _phospherePoll(jobId, trigger) {
       addToRingBtn.style.display = doneCount > 0 ? 'block' : 'none';
 
       if (job.status !== 'running') {
-        clearInterval(_phospherePollTimer);
-        _phospherePollTimer = null;
-        _phosphereSetBusy(false);
+        clearInterval(_charsheetPollTimer);
+        _charsheetPollTimer = null;
+        _charsheetSetBusy(false);
         if (job.status === 'failed') {
           status.textContent = 'Error: ' + (job.error || 'generation failed');
         } else if (job.sheet_url) {
@@ -392,42 +392,42 @@ function _phospherePoll(jobId, trigger) {
       // A transient poll failure shouldn't kill the whole job -- the
       // background thread on the server keeps running regardless; just
       // skip this tick and try again on the next interval.
-      console.warn('[phosphere] poll failed, retrying:', err);
+      console.warn('[charsheet] poll failed, retrying:', err);
     });
 }
 
-function _phosphereWatchJob(jobId, trigger) {
-  _phosphereCurrentTrigger = trigger;
-  if (_phospherePollTimer) clearInterval(_phospherePollTimer);
-  _phospherePoll(jobId, trigger);
-  _phospherePollTimer = setInterval(() => _phospherePoll(jobId, trigger), PHOSPHERE_POLL_MS);
+function _charsheetWatchJob(jobId, trigger) {
+  _charsheetCurrentTrigger = trigger;
+  if (_charsheetPollTimer) clearInterval(_charsheetPollTimer);
+  _charsheetPoll(jobId, trigger);
+  _charsheetPollTimer = setInterval(() => _charsheetPoll(jobId, trigger), CHARSHEET_POLL_MS);
 }
 
-function _phosphereSubmit(requestPromise, triggerHint) {
-  _phosphereStart('Starting…');
+function _charsheetSubmit(requestPromise, triggerHint) {
+  _charsheetStart('Starting…');
   requestPromise
     .then(r => r.json().then(payload => ({ ok: r.ok, payload })))
     .then(({ ok, payload }) => {
       if (!ok || !payload || !payload.ok || !payload.job_id) {
-        _phosphereShowError(payload);
+        _charsheetShowError(payload);
         return;
       }
-      const { status } = _phosphereEls();
+      const { status } = _charsheetEls();
       status.textContent = `Started — 0/${payload.shot_keys.length} shots`;
-      _phosphereWatchJob(payload.job_id, payload.trigger || triggerHint);
+      _charsheetWatchJob(payload.job_id, payload.trigger || triggerHint);
     })
     .catch(err => {
-      _phosphereShowError(null, 'request failed: ' + err);
+      _charsheetShowError(null, 'request failed: ' + err);
     });
 }
 
-function phosphereAddToRing() {
-  const trigger = _phosphereCurrentTrigger;
+function charsheetAddToRing() {
+  const trigger = _charsheetCurrentTrigger;
   if (!trigger) return;
-  const { status, addToRingBtn } = _phosphereEls();
+  const { status, addToRingBtn } = _charsheetEls();
   addToRingBtn.disabled = true;
   addToRingBtn.textContent = 'Adding to ring…';
-  fetch(`/api/phosphene/characters/${encodeURIComponent(trigger)}/sheet/add-to-ring`, {
+  fetch(`/api/charsheet/characters/${encodeURIComponent(trigger)}/sheet/add-to-ring`, {
     method: 'POST',
   })
     .then(r => r.json().then(payload => ({ ok: r.ok, payload })))
@@ -439,7 +439,7 @@ function phosphereAddToRing() {
         return;
       }
       // Same job shape/poller /api/analyze-folder uses -- see
-      // routes/phosphene.py's add_sheet_to_ring for why 'folder' is the
+      // routes/charsheet.py's add_sheet_to_ring for why 'folder' is the
       // right sourceType here (it IS one, just generated not uploaded).
       pollAnalysis(payload.jobId, `${trigger} (character sheet)`, 1, status, 'folder');
     })
@@ -450,11 +450,11 @@ function phosphereAddToRing() {
     });
 }
 
-function _phosphereReroll(trigger, shotKey) {
-  const { status } = _phosphereEls();
-  _phosphereSetBusy(true);
+function _charsheetReroll(trigger, shotKey) {
+  const { status } = _charsheetEls();
+  _charsheetSetBusy(true);
   status.textContent = `Re-rolling ${shotKey}…`;
-  fetch(`/api/phosphene/characters/${encodeURIComponent(trigger)}/sheet/reroll`, {
+  fetch(`/api/charsheet/characters/${encodeURIComponent(trigger)}/sheet/reroll`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ shot_key: shotKey }),
@@ -462,24 +462,24 @@ function _phosphereReroll(trigger, shotKey) {
     .then(r => r.json().then(payload => ({ ok: r.ok, payload })))
     .then(({ ok, payload }) => {
       if (!ok || !payload || !payload.ok || !payload.job_id) {
-        _phosphereShowError(payload);
+        _charsheetShowError(payload);
         return;
       }
-      _phosphereWatchJob(payload.job_id, trigger);
+      _charsheetWatchJob(payload.job_id, trigger);
     })
-    .catch(err => _phosphereShowError(null, 'reroll request failed: ' + err));
+    .catch(err => _charsheetShowError(null, 'reroll request failed: ' + err));
 }
 
 // Source 1: the currently-centered Immich face.
-function phosphereGenerateSheet() {
-  const { nameInput, status } = _phosphereEls();
+function charsheetGenerateSheet() {
+  const { nameInput, status } = _charsheetEls();
   const centerId = (typeof lastNeighborsRender !== 'undefined' && lastNeighborsRender)
     ? lastNeighborsRender.centerId : null;
-  const settings = _phosphereSettings();
+  const settings = _charsheetSettings();
 
   if (centerId && centerId !== '__anchor__') {
     const trigger = (nameInput.value || '').trim() || centerId;
-    _phosphereSubmit(fetch('/api/phosphene/sheet-from-asset', {
+    _charsheetSubmit(fetch('/api/charsheet/sheet-from-asset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ asset_id: centerId, name: (nameInput.value || '').trim(),
@@ -506,9 +506,9 @@ function phosphereGenerateSheet() {
         form.append('file', blob, 'reference.jpg');
         form.append('trigger', trigger);
         Object.entries(settings).forEach(([k, v]) => form.append(k, v));
-        _phosphereSubmit(fetch('/api/phosphene/sheet-from-upload', { method: 'POST', body: form }), trigger);
+        _charsheetSubmit(fetch('/api/charsheet/sheet-from-upload', { method: 'POST', body: form }), trigger);
       })
-      .catch(err => _phosphereShowError(null, String(err)));
+      .catch(err => _charsheetShowError(null, String(err)));
     return;
   }
 
@@ -517,28 +517,28 @@ function phosphereGenerateSheet() {
 
 // Source 3: a photo picked directly from disk, independent of the ring
 // view entirely.
-function phosphereGenerateFromFile(input) {
+function charsheetGenerateFromFile(input) {
   const file = input.files && input.files[0];
   if (!file) return;
-  const { nameInput } = _phosphereEls();
-  const settings = _phosphereSettings();
+  const { nameInput } = _charsheetEls();
+  const settings = _charsheetSettings();
   const form = new FormData();
   const trigger = (nameInput.value || '').trim() || ('upload-' + Date.now());
   form.append('file', file, file.name);
   form.append('trigger', trigger);
   Object.entries(settings).forEach(([k, v]) => form.append(k, v));
-  _phosphereSubmit(fetch('/api/phosphene/sheet-from-upload', { method: 'POST', body: form }), trigger);
+  _charsheetSubmit(fetch('/api/charsheet/sheet-from-upload', { method: 'POST', body: form }), trigger);
   input.value = ''; // allow re-picking the same file later
 }
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    _phosphereInitSettingsToggle();
-    _phosphereInitShotGridToggle();
-    _phosphereCheckAvailability();
+    _charsheetInitSettingsToggle();
+    _charsheetInitShotGridToggle();
+    _charsheetCheckAvailability();
   });
 } else {
-  _phosphereInitSettingsToggle();
-  _phosphereInitShotGridToggle();
-  _phosphereCheckAvailability();
+  _charsheetInitSettingsToggle();
+  _charsheetInitShotGridToggle();
+  _charsheetCheckAvailability();
 }

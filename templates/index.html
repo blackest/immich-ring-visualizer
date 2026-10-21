@@ -309,20 +309,20 @@
       <div class="detail" id="sidebar-current-detail"></div>
     </div>
   </div>
-  <div id="phosphene-sheet-panel" style="padding:10px 16px;border-bottom:1px solid #212127;">
+  <div id="charsheet-panel" style="padding:10px 16px;border-bottom:1px solid #212127;">
     <div style="font-size:var(--fs-10);color:var(--dim);margin-bottom:6px;">Character sheet</div>
-    <div id="phosphene-unavailable-banner"
+    <div id="charsheet-unavailable-banner"
          style="display:none;font-size:var(--fs-10);color:#e0a030;background:#2a2210;border:1px solid #4a3a18;border-radius:4px;padding:6px;margin-bottom:6px;"></div>
-    <input id="phosphene-sheet-name" type="text" placeholder="Character name (optional)"
+    <input id="charsheet-name" type="text" placeholder="Character name (optional)"
            style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-11);margin-bottom:6px;">
 
     <div style="display:flex;gap:6px;margin-bottom:6px;">
-      <select id="phosphene-preset-select" title="Shot list"
+      <select id="charsheet-preset-select" title="Shot list"
               style="flex:1;min-width:0;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);">
         <option value="default">Default — 3-view turnaround</option>
         <option value="extended">Extended — 15-shot dataset</option>
       </select>
-      <select id="phosphene-style-select" title="Film / genre look"
+      <select id="charsheet-style-select" title="Film / genre look"
               style="flex:1;min-width:0;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);">
         <option value="none">No style</option>
         <option value="cinematic">Cinematic</option>
@@ -333,55 +333,55 @@
       </select>
     </div>
 
-    <div id="phosphene-settings-toggle"
+    <div id="charsheet-settings-toggle"
          style="font-size:var(--fs-10);color:var(--accent);cursor:pointer;margin-bottom:6px;user-select:none;">
       ▸ more settings
     </div>
-    <div id="phosphene-settings-more" style="display:none;margin-bottom:6px;">
-      <input id="phosphene-wardrobe-input" type="text" placeholder="Wardrobe override (optional)"
+    <div id="charsheet-settings-more" style="display:none;margin-bottom:6px;">
+      <input id="charsheet-wardrobe-input" type="text" placeholder="Wardrobe override (optional)"
              style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);margin-bottom:4px;">
-      <input id="phosphene-hair-color-input" type="text" placeholder="Hair color (optional, e.g. blonde, dark red)"
+      <input id="charsheet-hair-color-input" type="text" placeholder="Hair color (optional, e.g. blonde, dark red)"
              title="Names the hair color explicitly in the prompt instead of the default &quot;same as reference&quot; wording"
              style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);margin-bottom:4px;">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">
-        <input id="phosphene-seed-input" type="number" placeholder="Seed (blank = random)"
+        <input id="charsheet-seed-input" type="number" placeholder="Seed (blank = random)"
                style="flex:1;min-width:0;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);">
         <label style="display:flex;align-items:center;gap:4px;font-size:var(--fs-10);color:var(--dim);white-space:nowrap;cursor:pointer;">
-          <input type="checkbox" id="phosphene-identity-lock-cb" checked> identity lock
+          <input type="checkbox" id="charsheet-identity-lock-cb" checked> identity lock
         </label>
       </div>
-      <textarea id="phosphene-custom-prompt-input" rows="2"
+      <textarea id="charsheet-custom-prompt-input" rows="2"
                 placeholder="Free prompt (optional) — replaces the preset with one custom shot"
                 style="width:100%;box-sizing:border-box;background:#16161c;border:1px solid #2a2a32;color:var(--text);padding:4px;border-radius:4px;font-size:var(--fs-10);resize:vertical;"></textarea>
     </div>
 
-    <button type="button" id="phosphene-sheet-btn" onclick="phosphereGenerateSheet()"
+    <button type="button" id="charsheet-btn" onclick="charsheetGenerateSheet()"
             style="width:100%;font-size:var(--fs-11);padding:6px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:4px;cursor:pointer;">
       Generate sheet (from current reference)
     </button>
-    <input type="file" id="phosphene-sheet-file" accept="image/*" style="display:none"
-           onchange="phosphereGenerateFromFile(this)">
-    <button type="button" id="phosphene-sheet-file-btn" onclick="document.getElementById('phosphene-sheet-file').click()"
+    <input type="file" id="charsheet-file" accept="image/*" style="display:none"
+           onchange="charsheetGenerateFromFile(this)">
+    <button type="button" id="charsheet-file-btn" onclick="document.getElementById('charsheet-file').click()"
             style="width:100%;font-size:var(--fs-10);padding:5px;background:#16161c;border:1px solid #2a2a32;color:var(--dim);border-radius:4px;cursor:pointer;margin-top:6px;">
       or choose a photo from disk…
     </button>
 
-    <div id="phosphene-sheet-status" style="font-size:var(--fs-10);color:var(--dim);margin-top:6px;"></div>
-    <div id="phosphene-log-tail"
+    <div id="charsheet-status" style="font-size:var(--fs-10);color:var(--dim);margin-top:6px;"></div>
+    <div id="charsheet-log-tail"
          style="display:none;font-family:monospace;font-size:var(--fs-9);color:var(--dim);white-space:pre-wrap;max-height:70px;overflow-y:auto;margin-top:4px;background:#0e0e12;border:1px solid #212127;border-radius:4px;padding:4px;"></div>
 
-    <img id="phosphene-sheet-img" src="" alt="Character sheet"
+    <img id="charsheet-img" src="" alt="Character sheet"
          style="display:none;width:100%;margin-top:8px;border-radius:4px;border:1px solid #2a2a32;">
-    <div id="phosphene-shot-grid-toggle"
+    <div id="charsheet-shot-grid-toggle"
          style="display:none;font-size:var(--fs-10);color:var(--accent);cursor:pointer;margin-top:8px;margin-bottom:4px;user-select:none;">
       ▾ character sheet shots
     </div>
-    <div id="phosphene-shot-grid-wrap"
+    <div id="charsheet-shot-grid-wrap"
          style="display:none;max-height:320px;overflow-y:auto;border:1px solid #212127;border-radius:4px;padding:4px;">
-      <div id="phosphene-shot-grid"
+      <div id="charsheet-shot-grid"
            style="display:none;grid-template-columns:repeat(3, 1fr);gap:4px;"></div>
     </div>
-    <button type="button" id="phosphene-add-to-ring-btn" onclick="phosphereAddToRing()"
+    <button type="button" id="charsheet-add-to-ring-btn" onclick="charsheetAddToRing()"
             title="Send the avatar + every rendered shot into the ring analysis pipeline, same as importing them as a folder"
             style="display:none;width:100%;font-size:var(--fs-11);padding:6px;margin-top:6px;background:#16161c;border:1px solid #2a2a32;color:var(--text);border-radius:4px;cursor:pointer;">
       Add sheet to ring
@@ -461,6 +461,6 @@
 <script src="{{ url_for('static', filename='viz-render.js') }}"></script>
 <script src="{{ url_for('static', filename='media-ingest.js') }}"></script>
 <script src="{{ url_for('static', filename='selection-ui.js') }}"></script>
-<script src="{{ url_for('static', filename='phosphene-sheet.js') }}"></script>
+<script src="{{ url_for('static', filename='charsheet.js') }}"></script>
 </body>
 </html>

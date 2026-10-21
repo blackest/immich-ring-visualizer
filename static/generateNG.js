@@ -3,7 +3,7 @@
  *
  * Self-contained character-sheet generation, wired to the NG backend at
  * /api/ng/generate/* (routes/generateNG.py). This file deliberately does
- * NOT touch or reuse phosphene-sheet.js -- that stays the original page's
+ * NOT touch or reuse charsheet.js -- that stays the original page's
  * working code. The only thing this view reads from the rest of the app
  * is the active project's reference image(s): the ring anchor plus any
  * ring candidates the user has selected, surfaced as a small tray. A

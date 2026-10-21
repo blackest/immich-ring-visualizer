@@ -606,7 +606,7 @@
     // character id. always_cache=True server-side (see
     // routes/generateNG.py's add_sheet_to_ring_ng) so a low-similarity
     // side/three-quarter shot still gets cached and shows up here
-    // instead of silently vanishing. Ported from routes/phosphene.py's
+    // instead of silently vanishing. Ported from routes/charsheet.py's
     // add_sheet_to_ring via generateNG.js's "Add to ring" button. ----
     async startSheetAnalysis(characterId) {
       this.stopPolling();

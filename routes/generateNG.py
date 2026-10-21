@@ -1,10 +1,8 @@
-"""NG twin of routes/phosphene.py -- HTTP layer for the Generate view's
+"""NG twin of routes/charsheet.py -- HTTP layer for the Generate view's
 character-sheet feature.
 
-NG-only file, renamed off "phosphene" (the original kept that name for
-URL-compatibility reasons that don't apply here -- there are no
-existing NG bookmarks/scripts to preserve, and the code has never had
-anything to do with Phosphene). Named generateNG.py to match the
+NG-only file (the original has since been renamed routes/charsheet.py;
+the code has never had anything to do with the Phosphene app). Named generateNG.py to match the
 Generate view itself and to stay engine-agnostic, since more than one
 generation engine may exist someday (see hidream_engineNG.py's
 docstring).
@@ -537,7 +535,7 @@ def serve_shot_thumbnail_ng(character_id, shot_key):
     "/api/ng/generate/characters/<character_id>/sheet/add-to-ring", methods=["POST"]
 )
 def add_sheet_to_ring_ng(character_id):
-    """NG twin of routes/phosphene.py's add_sheet_to_ring -- feeds a
+    """NG twin of routes/charsheet.py's add_sheet_to_ring -- feeds a
     character's avatar (as the reference face) plus every
     currently-rendered shot into the same analysis pipeline
     /api/ng/analyze-folder drives (folder_analysisNG.run_folder_analysis_ng),

@@ -1,5 +1,5 @@
-"""Flask-test-client tests for routes/phosphene.py's "Add sheet to ring"
-endpoint (POST /api/phosphene/characters/<id>/sheet/add-to-ring).
+"""Flask-test-client tests for routes/charsheet.py's "Add sheet to ring"
+endpoint (POST /api/charsheet/characters/<id>/sheet/add-to-ring).
 
 This is the automation of the existing folder-import flow: it hands the
 character's avatar (reference) plus every rendered shot's *current*
@@ -15,7 +15,7 @@ image list it hands off, not the face-detection pipeline.
 
 Run with:
 
-    python3 -m unittest tests.test_phosphene_routes -v
+    python3 -m unittest tests.test_charsheet_routes -v
 
 from the repo root.
 """
@@ -34,8 +34,8 @@ from flask import Flask
 from PIL import Image
 
 import character_sheet
-import routes.phosphene as phosphene_routes
-from routes.phosphene import phosphene_bp
+import routes.charsheet as charsheet_routes
+from routes.charsheet import charsheet_bp
 from state import _analysis_jobs
 
 
@@ -46,7 +46,7 @@ def _write_tiny_png(path: Path):
 
 def _make_app():
     app = Flask(__name__)
-    app.register_blueprint(phosphene_bp)
+    app.register_blueprint(charsheet_bp)
     app.testing = True
     return app
 
@@ -72,7 +72,7 @@ class AddSheetToRingRouteTestCase(unittest.TestCase):
         # InsightFace/onnxruntime itself.
         self._run_calls = []
         patcher = mock.patch.object(
-            phosphene_routes, "run_folder_analysis",
+            charsheet_routes, "run_folder_analysis",
             side_effect=self._fake_run_folder_analysis)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -103,18 +103,18 @@ class AddSheetToRingRouteTestCase(unittest.TestCase):
             time.sleep(0.01)
 
     def test_unknown_character_404(self):
-        resp = self.client.post("/api/phosphene/characters/nobody/sheet/add-to-ring")
+        resp = self.client.post("/api/charsheet/characters/nobody/sheet/add-to-ring")
         self.assertEqual(resp.status_code, 404)
         self.assertIn("reference image", resp.get_json()["error"])
 
     def test_character_with_no_shots_yet_404(self):
         character_sheet.create_draft_character("ada", self._src.name)
-        resp = self.client.post("/api/phosphene/characters/ada/sheet/add-to-ring")
+        resp = self.client.post("/api/charsheet/characters/ada/sheet/add-to-ring")
         self.assertEqual(resp.status_code, 404)
         self.assertIn("no rendered shots", resp.get_json()["error"])
 
     def test_bad_character_id_400(self):
-        resp = self.client.post("/api/phosphene/characters/..%2F..%2Fetc/sheet/add-to-ring")
+        resp = self.client.post("/api/charsheet/characters/..%2F..%2Fetc/sheet/add-to-ring")
         self.assertIn(resp.status_code, (400, 404))
 
     def test_avatar_and_shots_sent_with_avatar_first(self):
@@ -125,7 +125,7 @@ class AddSheetToRingRouteTestCase(unittest.TestCase):
         _write_tiny_png(front_png)
         _write_tiny_png(profile_png)
 
-        resp = self.client.post("/api/phosphene/characters/bea/sheet/add-to-ring")
+        resp = self.client.post("/api/charsheet/characters/bea/sheet/add-to-ring")
         self.assertEqual(resp.status_code, 202)
         body = resp.get_json()
         self.assertIn("jobId", body)
@@ -167,7 +167,7 @@ class AddSheetToRingRouteTestCase(unittest.TestCase):
         self.assertFalse((char_dir / "sheet.json").exists())
         _write_tiny_png(char_dir / "sheet_views" / "front" / "cand_00_hidream_999.png")
 
-        resp = self.client.post("/api/phosphene/characters/cleo/sheet/add-to-ring")
+        resp = self.client.post("/api/charsheet/characters/cleo/sheet/add-to-ring")
         self.assertEqual(resp.status_code, 202)
         self._job_ids_created.append(resp.get_json()["jobId"])
         self.assertEqual(resp.get_json()["imageCount"], 2)  # avatar + 1 shot

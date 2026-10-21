@@ -134,7 +134,7 @@ def character_sheet_png(name: str) -> Optional[Path]:
 def sheet_shot_image_paths(name: str) -> list:
     """Every shot's *current* rendered image path -- the latest
     cand_*.png by mtime in each sheet_views/<key>/ dir, the same "what's
-    actually displayed" rule serve_shot_thumbnail (routes/phosphene.py)
+    actually displayed" rule serve_shot_thumbnail (routes/charsheet.py)
     uses. Deliberately reads the on-disk sheet_views/ layout rather than
     sheet.json's views list: sheet.json is only (re)written once a whole
     generate/reroll job finishes, so it can be stale or missing mid-job,

@@ -20,7 +20,7 @@ script (as vendored today, with its own "[compat]" comments) does NOT
 implement First-Block Cache -- it prints a warning and just runs the full
 step count it's given. So Phosphene's character sheets are, right now,
 genuinely 6-step renders, below the lab's own documented Dev-recipe floor
-of 28 and below what Ring Visualizer's own routes/phosphene.py comment
+of 28 and below what Ring Visualizer's own routes/charsheet.py comment
 assumed ("each its own full 28-step diffusion loop"). Decided with John
 2026-09-02: port the honest 28-step default; revisit if it's too slow.
 """
