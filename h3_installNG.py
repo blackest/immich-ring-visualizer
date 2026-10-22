@@ -24,8 +24,14 @@ before this job is even started), and MiniMax's own Community License
 (territory restrictions) -- the frontend only starts this after a license
 checkbox is ticked (see routes/h3NG.py's confirm_license requirement).
 
-Code: https://github.com/mrbizarro/minimax-h3-mlx.git, branch
-codex/h3-engine-v2. See H3_SETUP.md for the plain-CLI equivalent.
+Code: https://github.com/mrbizarro/minimax-h3-mlx.git, pinned to the exact
+engine commit Phosphene validates each release against (H3_PIN_SHA, reached
+via the ref H3_PIN_REF -- both copied from Phosphene's h3_checkout.sh, THE
+one place its pin lives; bump them together). The venv's packages install
+under h3_constraints.txt (a copy of Phosphene's scripts/pinokio/
+h3_constraints.txt, MIT) via `uv pip install -c`, because the runner's own
+requirements.txt lines are only floors and a new PyPI release once broke
+every fresh install. See H3_SETUP.md for the plain-CLI equivalent.
 """
 
 from __future__ import annotations
@@ -39,7 +45,10 @@ from engine_installNG import InstallStep, run_logged
 from h3_engineNG import H3_DIT_BF16, H3_DIT_Q8_DIR, H3_MODELS_ROOT, H3_REPO_DIR
 
 H3_URL = "https://github.com/mrbizarro/minimax-h3-mlx.git"
-H3_BRANCH = "codex/h3-engine-v2"
+H3_PIN_SHA = "3f6c75c09ccfa336a8c211b787d6a2350d83ef7a"  # Phosphene v4.19.x engine pin
+H3_PIN_REF = "phosphene/v4.19.0"  # the ref on origin that keeps the pin reachable
+H3_LOCAL_BRANCH = "phosphene-pinned"  # same local branch name Phosphene uses
+H3_CONSTRAINTS = Path(__file__).resolve().parent / "h3_constraints.txt"
 H3_MIN_RAM_BYTES = 36_000_000_000  # same floor as Phosphene's h3_preflight.sh
 
 
@@ -78,14 +87,29 @@ def _step_clone(on_log: Callable[[str], None]) -> None:
         run_logged(["git", "clone", H3_URL, str(dest)], on_log=on_log)
 
     run_logged(["git", "remote", "set-url", "origin", H3_URL], cwd=str(dest), on_log=on_log)
-    run_logged(["git", "fetch", "--force", "origin", H3_BRANCH], cwd=str(dest), on_log=on_log)
+    def have_pin() -> bool:
+        return subprocess.run(["git", "cat-file", "-e", f"{H3_PIN_SHA}^{{commit}}"],
+                              cwd=str(dest), capture_output=True).returncode == 0
+
+    # The ref first (one round trip, keeps the pin reachable locally); the
+    # bare commit as a fallback if the ref was renamed upstream.
+    for ref in (H3_PIN_REF, H3_PIN_SHA):
+        if have_pin():
+            break
+        subprocess.run(["git", "fetch", "--force", "origin", ref],
+                       cwd=str(dest), capture_output=True)
+    if not have_pin():
+        raise RuntimeError(
+            f"could not fetch the pinned H3 engine commit {H3_PIN_SHA[:7]} from {H3_URL}")
     if (dest / "minimax_h3_mlx").is_dir():
         run_logged(["git", "reset", "--hard", "HEAD"], cwd=str(dest), on_log=on_log)
-    run_logged(["git", "checkout", "--force", "-B", H3_BRANCH, "FETCH_HEAD"], cwd=str(dest), on_log=on_log)
+    run_logged(["git", "checkout", "--force", "-B", H3_LOCAL_BRANCH, H3_PIN_SHA],
+               cwd=str(dest), on_log=on_log)
     if not (dest / "scripts" / "quantize_stream.py").is_file():
         raise RuntimeError(
-            f"{H3_BRANCH} has no scripts/quantize_stream.py -- the Q8 build step cannot run from this tree.")
-    on_log(f"minimax-h3-mlx on {H3_BRANCH} ({_git_head(dest)[:12]})")
+            f"the pinned H3 engine {H3_PIN_SHA[:7]} has no scripts/quantize_stream.py -- "
+            f"the Q8 build step cannot run from this tree.")
+    on_log(f"minimax-h3-mlx pinned at {_git_head(dest)[:12]}")
 
 
 def _venv_python(repo_dir: Path) -> Path:
@@ -108,8 +132,10 @@ def _step_venv(on_log: Callable[[str], None]) -> None:
 def _step_deps(on_log: Callable[[str], None]) -> None:
     dest = H3_REPO_DIR
     py = str(_venv_python(dest))
-    run_logged(["uv", "pip", "install", "--python", py, "-r", "requirements.txt"],
-               cwd=str(dest), on_log=on_log)
+    # -c: the constraints file only forbids a resolve from leaving the
+    # known-good set (and moves a drifted package back); it installs nothing.
+    run_logged(["uv", "pip", "install", "--python", py, "-c", str(H3_CONSTRAINTS),
+                "-r", "requirements.txt"], cwd=str(dest), on_log=on_log)
 
 
 def _step_weights(on_log: Callable[[str], None]) -> None:

@@ -27,7 +27,7 @@ def _make_origin_repo(tmp: Path) -> tuple[str, str]:
     _step_clone requires to exist post-checkout."""
     origin = tmp / "origin"
     origin.mkdir()
-    _run(["git", "init", "-q", "-b", "codex/h3-engine-v2"], cwd=origin)
+    _run(["git", "init", "-q", "-b", "main"], cwd=origin)
     _run(["git", "config", "user.email", "test@example.com"], cwd=origin)
     _run(["git", "config", "user.name", "test"], cwd=origin)
     (origin / "scripts").mkdir()
@@ -36,9 +36,14 @@ def _make_origin_repo(tmp: Path) -> tuple[str, str]:
     (origin / "minimax_h3_mlx" / "__init__.py").write_text("")
     _run(["git", "add", "-A"], cwd=origin)
     _run(["git", "commit", "-q", "-m", "initial"], cwd=origin)
-    tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=origin,
+    pin = subprocess.run(["git", "rev-parse", "HEAD"], cwd=origin,
                           capture_output=True, text=True, check=True).stdout.strip()
-    return str(origin), tip
+    # A later commit on main: a pinned install must NOT land here.
+    (origin / "later.txt").write_text("newer\n")
+    _run(["git", "add", "-A"], cwd=origin)
+    _run(["git", "commit", "-q", "-m", "later"], cwd=origin)
+    _run(["git", "update-ref", "refs/heads/phosphene/pin", pin], cwd=origin)
+    return str(origin), pin
 
 
 class StepCloneTestCase(unittest.TestCase):
@@ -47,6 +52,10 @@ class StepCloneTestCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.tmp = Path(self._tmp.name)
         self.origin_url, self.tip_sha = _make_origin_repo(self.tmp)
+        for name, val in (("H3_PIN_SHA", self.tip_sha), ("H3_PIN_REF", "phosphene/pin")):
+            patcher = mock.patch.object(h3_installNG, name, val)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.dest = self.tmp / "checkout"
 
     def _clone(self):
@@ -56,9 +65,10 @@ class StepCloneTestCase(unittest.TestCase):
             h3_installNG._step_clone(logs.append)
         return logs
 
-    def test_fresh_clone_lands_on_branch_tip(self):
+    def test_fresh_clone_lands_on_the_pin_not_branch_tip(self):
         self._clone()
         self.assertEqual(h3_installNG._git_head(self.dest), self.tip_sha)
+        self.assertFalse((self.dest / "later.txt").exists())
         self.assertTrue((self.dest / "scripts" / "quantize_stream.py").is_file())
 
     def test_rerun_after_local_edit_is_idempotent_and_resets(self):
@@ -74,18 +84,41 @@ class StepCloneTestCase(unittest.TestCase):
         # rather than silently leaving the Q8 build unrunnable.
         bare = self.tmp / "bare_no_quant"
         bare.mkdir()
-        _run(["git", "init", "-q", "-b", "codex/h3-engine-v2"], cwd=bare)
+        _run(["git", "init", "-q", "-b", "main"], cwd=bare)
         _run(["git", "config", "user.email", "t@example.com"], cwd=bare)
         _run(["git", "config", "user.name", "t"], cwd=bare)
         (bare / "readme.txt").write_text("no quantizer here\n")
         _run(["git", "add", "-A"], cwd=bare)
         _run(["git", "commit", "-q", "-m", "no quantizer"], cwd=bare)
+        bare_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=bare,
+                                  capture_output=True, text=True, check=True).stdout.strip()
+        _run(["git", "update-ref", "refs/heads/phosphene/pin", bare_sha], cwd=bare)
 
         logs = []
         with mock.patch.object(h3_installNG, "H3_URL", str(bare)), \
+             mock.patch.object(h3_installNG, "H3_PIN_SHA", bare_sha), \
              mock.patch.object(h3_installNG, "H3_REPO_DIR", self.dest):
             with self.assertRaises(RuntimeError):
                 h3_installNG._step_clone(logs.append)
+
+    def test_unreachable_pin_raises_and_leaves_checkout_alone(self):
+        self._clone()
+        with mock.patch.object(h3_installNG, "H3_PIN_SHA", "0" * 40), \
+             mock.patch.object(h3_installNG, "H3_URL", self.origin_url), \
+             mock.patch.object(h3_installNG, "H3_REPO_DIR", self.dest):
+            with self.assertRaisesRegex(RuntimeError, "could not fetch the pinned"):
+                h3_installNG._step_clone(lambda _: None)
+        self.assertEqual(h3_installNG._git_head(self.dest), self.tip_sha)
+
+    def test_deps_step_installs_under_constraints(self):
+        calls = []
+        with mock.patch.object(h3_installNG, "run_logged",
+                               side_effect=lambda cmd, **kw: calls.append(cmd)), \
+             mock.patch.object(h3_installNG, "H3_REPO_DIR", self.dest):
+            h3_installNG._step_deps(lambda _: None)
+        self.assertIn("-c", calls[0])
+        self.assertEqual(calls[0][calls[0].index("-c") + 1], str(h3_installNG.H3_CONSTRAINTS))
+        self.assertTrue(h3_installNG.H3_CONSTRAINTS.is_file())
 
 
 class RamGuardTestCase(unittest.TestCase):

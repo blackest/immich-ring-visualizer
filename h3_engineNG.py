@@ -126,6 +126,11 @@ H3_TEXT_CONFIG = H3_MODELS_ROOT / "upstream-meta" / "FL2VA" / "text_encoder" / "
 # time_embedder the pruned checkpoint dropped), not the DiT itself.
 H3_TURBO_LORA_PATH = H3_MODELS_ROOT / "turbo-lora" / "minimax_h3_turbo_4step_ema_ckpt500.safetensors"
 H3_TURBO_ADALN_PATH = H3_MODELS_ROOT / "turbo-lora" / "upstream_time_embedder.safetensors"
+# Phosphene's current default (v4.19.x): LightX2V's v1.0 4-step adapter
+# repacked into the runner layout. It carries no adaLN pairs, so it needs
+# no --lora-adaln companion and is passed as PATH:SCALE. Preferred over
+# the retired ckpt500 pair above, which stays as the fallback.
+H3_TURBO_V1_LORA_PATH = H3_MODELS_ROOT / "turbo-lora" / "lightx2v_v1.0_768p_ourlayout.safetensors"
 H3_TURBO_STEPS = 4
 
 H3_FRAME_RATE = 24.0
@@ -322,14 +327,26 @@ def _resolve_h3_dit_ng(config: H3Config) -> Optional[str]:
 
 
 def _resolve_h3_turbo_ng() -> tuple:
-    """(lora_path, adaln_path) as strs, or (None, None) if either file
-    is missing -- turbo is all-or-nothing, --lora-adaln without --lora
-    (or vice versa) isn't a state generate_staged.py's turbo mode is
-    documented for."""
+    """(lora_path, adaln_path) as strs, or (None, None) if no complete
+    adapter is on disk. Prefers the v1.0 LightX2V adapter (adaln_path is
+    None -- it has no adaLN pairs); otherwise the retired ckpt500 pair,
+    which is all-or-nothing: --lora-adaln without --lora (or vice versa)
+    isn't a state generate_staged.py's turbo mode is documented for."""
+    if H3_TURBO_V1_LORA_PATH.is_file():
+        return str(H3_TURBO_V1_LORA_PATH), None
     lora, adaln = H3_TURBO_LORA_PATH, H3_TURBO_ADALN_PATH
     if lora.is_file() and adaln.is_file():
         return str(lora), str(adaln)
     return None, None
+
+
+def _h3_turbo_argv_ng(turbo_lora: str, turbo_adaln: Optional[str]) -> list:
+    """The runner argv for the resolved adapter: v1.0 (no adaLN) uses the
+    PATH:SCALE spelling the pinned runner documents; the legacy ckpt500
+    pair keeps its original --lora + --lora-adaln form."""
+    if turbo_adaln is None:
+        return ["--lora", f"{turbo_lora}:1.0"]
+    return ["--lora", turbo_lora, "--lora-adaln", turbo_adaln]
 
 
 # Metal device contention -- same reasoning as ltx_engineNG.py's own
@@ -416,8 +433,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         turbo_lora, turbo_adaln = _resolve_h3_turbo_ng()
         if not turbo_lora:
             raise FileNotFoundError(
-                f"H3 turbo LoRA not found -- expected both "
-                f"{H3_TURBO_LORA_PATH} and {H3_TURBO_ADALN_PATH}")
+                f"H3 turbo LoRA not found -- expected {H3_TURBO_V1_LORA_PATH}, "
+                f"or both {H3_TURBO_LORA_PATH} and {H3_TURBO_ADALN_PATH}")
 
     python = _resolve_h3_python_ng(config)
     if not python:
@@ -480,7 +497,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     if image_path is not None:
         cmd += ["--first-frame", image_path]
     if turbo:
-        cmd += ["--lora", turbo_lora, "--lora-adaln", turbo_adaln]
+        cmd += _h3_turbo_argv_ng(turbo_lora, turbo_adaln)
 
     if on_log:
         turbo_note = " [turbo 4-step]" if turbo else ""

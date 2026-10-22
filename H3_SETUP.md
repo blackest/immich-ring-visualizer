@@ -37,7 +37,8 @@ anything.
 ## 1. Where it comes from
 
 - **Code:** [mrbizarro/minimax-h3-mlx](https://github.com/mrbizarro/minimax-h3-mlx),
-  branch `codex/h3-engine-v2`.
+  pinned to commit `3f6c75c` (Phosphene's validated engine, reachable via the
+  `phosphene/v4.19.0` ref).
 - **Weights, straight from Hugging Face** (via the cloned repo's own
   `scripts/download_selected.py` -- not anything this app or Phosphene
   re-hosts):
@@ -59,15 +60,18 @@ Requires macOS 14+ on Apple Silicon, 36 GB+ RAM, and
 download plus ~22 GB more for the locally-built Q8 pack).
 
 ```bash
-# 1. Clone and pin to the branch this app is validated against
-git clone --branch codex/h3-engine-v2 \
-  https://github.com/mrbizarro/minimax-h3-mlx.git ~/minimax-h3-mlx
+# 1. Clone and pin to the exact commit this app is validated against
+git clone https://github.com/mrbizarro/minimax-h3-mlx.git ~/minimax-h3-mlx
 cd ~/minimax-h3-mlx
+git fetch origin phosphene/v4.19.0
+git checkout -B phosphene-pinned 3f6c75c09ccfa336a8c211b787d6a2350d83ef7a
 
 # 2. Its own venv (separate from LTX -- the two disagree on which MLX
 #    version to run)
 uv venv --python 3.11 --seed .venv
-uv pip install --python .venv/bin/python -r requirements.txt
+# -c pins every package to the known-good set (h3_constraints.txt in this
+#    app's repo); requirements.txt alone only sets minimum versions
+uv pip install --python .venv/bin/python -c /path/to/immichring/h3_constraints.txt -r requirements.txt
 
 # 3. Download the weights -- appends "models/" to --root itself
 .venv/bin/python scripts/download_selected.py --root ~/mlx_models/hailuo-h3

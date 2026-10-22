@@ -1,0 +1,131 @@
+# THE HAILUO H3 VENV'S KNOWN-GOOD SET (minimax-h3-mlx/.venv) - 4.19.5.
+#
+# Every install into the H3 venv passes this file with -c, through ONE script:
+# scripts/pinokio/h3_deps.sh. install_h3.js runs it (Install, "Repair Hailuo
+# H3", "Update Hailuo H3 runner"), every Update runs it (scripts/post_update.sh
+# 8b) and so does the panel's own Repair (POST /h3/repair). A constraint never
+# installs anything by itself; it only forbids a resolve from leaving these
+# versions - and uv MOVES a package that already sits outside them, so the same
+# run that installs also repairs a drifted venv. scripts/check_post_update.js
+# fails the build on an install into the H3 venv that does not go through
+# h3_deps.sh, and on an eager --upgrade.
+#
+# WHY (4.19.5). Through 4.19.4 this venv was resolved from the runner's
+# requirements.txt alone, and those lines are floors (mlx>=0.32.0,
+# transformers>=4.57, huggingface_hub>=0.30, mlx-vlm>=0.4.4). Every new H3
+# install got whatever PyPI held that day: on 2026-10-14 that was mlx 0.32.3,
+# a day later mlx 0.32.4. The LTX venv's version of that story is 4.19.4 -
+# tokenizers 0.23.3 shipped and every render on an updated install failed until
+# the venv was put back. The next upstream release that breaks the H3 runner
+# would have reached every new H3 install the same way, with no Phosphene
+# release, no gate and no way back.
+#
+# HOW IT WAS CAPTURED. `uv pip freeze` of the H3 venv a from-zero 4.19.4
+# install built on 2026-10-15 (Pinokio 8.2.0 environment, H3 engine pin
+# 3f6c75c), minus pip / setuptools / wheel (the venv's --seed, not the
+# resolve). Validated on 4.19.5 by real H3 renders: Draft t2v, i2v and
+# Keyframes from zero, and identical output to the 4.19.4 venv for the same
+# job and seed.
+#
+# NOT THE LTX VENV'S SET, ON PURPOSE. The two engines keep separate venvs
+# because they disagree about MLX: LTX holds mlx==0.31.1
+# (engine_constraints.txt; 0.32.x raises LTX's active memory - CLAUDE.md
+# section 4, the "mlx 0.32 held" measurements), while the H3 runner needs
+# mlx>=0.32 (on 0.31 it dies with "seed(): incompatible function arguments" -
+# H3_MLX_MIN in mlx_ltx_panel.py) and mlx-vlm 0.7.8 needs mlx>=0.32.3. The
+# 0.32 cache sweep on H3 was refuted (H3's peak is its weights), so the reason
+# LTX holds 0.31.1 does not apply here. Shared packages that agree with the LTX
+# venv: numpy 2.4.6, pillow 12.3.0, safetensors 0.8.0. Different by design:
+# mlx (0.31.1 there), mlx-vlm (0.4.4 there), transformers (<5.13 there),
+# tokenizers (0.22.x there), huggingface-hub (1.x there).
+#
+# Moving it: regenerate the WHOLE file from a from-zero install's venv, then a
+# from-zero install + H3 renders on the new set. Change the engine pin
+# (scripts/pinokio/h3_checkout.sh) and this file in the same commit when the
+# runner's requirements.txt changes.
+
+# ---- What the H3 runner is built on (the panel's preflight judges these:
+# ---- H3_ENV_JUDGED in mlx_ltx_panel.py) -------------------------------------
+# MLX. >=0.32 (see above); 0.32.4 is what fresh installs resolve from
+# 2026-10-14.
+mlx==0.32.4
+mlx-metal==0.32.4
+# The Qwen3-VL text encoder (mlx_vlm.models.qwen3_vl). Requires mlx>=0.32.3 and
+# transformers>=5.14.0.
+mlx-vlm==0.7.8
+# The tokenizer and image processor (AutoTokenizer / AutoProcessor). transformers
+# checks its own dependencies AT IMPORT and refuses to load on a mismatch - for
+# 5.19.0: tokenizers>=0.23.1,<0.24, huggingface-hub>=1.31,<3.0,
+# safetensors>=0.8.0.
+transformers==5.19.0
+tokenizers==0.23.3
+huggingface-hub==2.2.0
+safetensors==0.8.0
+numpy==2.4.6
+pillow==12.3.0
+
+# ---- Everything else the same resolve installed, exact ----------------------
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.5
+aiosignal==1.4.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+attrs==26.1.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.2
+click==8.5.0
+cryptography==50.0.2
+datasets==5.1.0
+dill==0.4.1
+fastapi==0.143.1
+filelock==4.2.0
+frozenlist==1.8.0
+fsspec==2026.7.0
+h11==0.16.0
+hf-xet==1.7.0
+httpcore2==2.13.1
+httpx2==2.13.1
+idna==3.20
+jinja2==3.1.6
+llguidance==1.9.1
+markdown-it-py==4.2.0
+markupsafe==3.0.4
+mdurl==0.1.2
+miniaudio==1.71
+mlx-audio==0.5.9
+multidict==7.1.0
+multiprocess==0.70.19
+opencv-python==5.0.0.93
+opentelemetry-api==1.45.1
+packaging==26.3
+pandas==3.0.6
+propcache==0.5.4
+pyarrow==26.0.0
+pycparser==3.11
+pydantic-core==2.50.1
+pydantic==2.14.1
+pygments==2.21.0
+python-dateutil==2.9.0.post0
+python-multipart==0.0.32
+pyyaml==6.0.3
+regex==2026.9.29
+requests==2.34.2
+rich==15.0.0
+scipy==1.17.1
+sentencepiece==0.2.2
+shellingham==1.5.4
+six==1.17.0
+sounddevice==0.5.6
+starlette==1.8.0
+tqdm==4.70.1
+truststore==0.10.5
+typer==0.27.3
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.8.0
+uvicorn==0.54.0
+websockets==17.2
+xxhash==4.0.1
+yarl==1.25.1
