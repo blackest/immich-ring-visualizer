@@ -79,6 +79,8 @@
     els.quality = document.getElementById("ng-h3-quality");
     els.turboRow = document.getElementById("ng-h3-turbo-row");
     els.turbo = document.getElementById("ng-h3-turbo");
+    els.v13Row = document.getElementById("ng-h3-v13-row");
+    els.v13 = document.getElementById("ng-h3-v13");
 
     els.generateBtn = document.getElementById("ng-h3-generate-btn");
     els.status = document.getElementById("ng-h3-status");
@@ -324,6 +326,14 @@
             : "turbo LoRA files not found on this machine";
           els.turboRow.classList.toggle("ng-vg-ref-col-disabled", !turboOk);
         }
+        var v13Ok = !!(h && h.v13_ok);
+        if (els.v13) els.v13.disabled = !v13Ok;
+        if (els.v13Row) {
+          els.v13Row.title = v13Ok
+            ? ""
+            : "lightx2v v1.3 adapter not found -- build it from Phosphene's Speed row";
+          els.v13Row.classList.toggle("ng-vg-ref-col-disabled", !v13Ok);
+        }
       })
       .catch(function () {
         statusChecked = false; // let a later sync retry
@@ -348,6 +358,7 @@
     var model = els.model ? els.model.value : "h3q8";
     var quality = els.quality ? els.quality.value : "high";
     var turbo = !!(els.turbo && !els.turbo.disabled && els.turbo.checked);
+    var v13 = !!(els.v13 && !els.v13.disabled && els.v13.checked);
 
     var localId = "h" + ++localSeq;
     var item = {
@@ -361,6 +372,7 @@
       model: model,
       quality: quality,
       turbo: turbo,
+      v13: v13,
       error: null,
       videoUrl: null,
       logTail: [],
@@ -382,6 +394,7 @@
     form.append("model", model);
     form.append("quality", quality);
     if (turbo) form.append("turbo", "true");
+    if (v13) form.append("v13", "true");
     if (seed !== null && !isNaN(seed)) form.append("seed", String(seed));
 
     fetch(API + "/generate", { method: "POST", body: form })
@@ -606,25 +619,51 @@
       });
     }
     if (els.turbo && els.model) {
-      // Turbo's LoRA only applies correctly against the bf16 DiT --
-      // against h3q8 (quantized) every non-adaLN module silently fails
+      // Turbo's and v1.3's LoRAs only apply correctly against the bf16 DiT
+      // -- against h3q8 (quantized) every non-adaLN module silently fails
       // its shape check and the adapter does nothing (see
-      // h3_engineNG.py's generate_h3_video_ng). Force+lock model to
-      // "h3" while turbo is on rather than let that combination be
-      // picked and quietly do the wrong thing.
-      var modelBeforeTurbo = null;
-      els.turbo.addEventListener("change", function () {
-        if (els.turbo.checked) {
-          modelBeforeTurbo = els.model.value;
+      // h3_engineNG.py's generate_h3_video_ng). Force+lock model to "h3"
+      // while either is on rather than let that combination be picked and
+      // quietly do the wrong thing. The two are mutually exclusive (one
+      // speed adapter per run); v1.3 is also only validated at "high".
+      var modelBeforeSpeed = null;
+      var qualityBeforeV13 = null;
+      var syncSpeedLocks = function () {
+        var anySpeed = els.turbo.checked || (els.v13 && els.v13.checked);
+        if (anySpeed && modelBeforeSpeed === null) {
+          modelBeforeSpeed = els.model.value;
           els.model.value = "h3";
           els.model.disabled = true;
-          statusChecked = false;
-          ensureStatusChecked();
-        } else {
+        } else if (!anySpeed && modelBeforeSpeed !== null) {
           els.model.disabled = false;
-          if (modelBeforeTurbo) els.model.value = modelBeforeTurbo;
+          els.model.value = modelBeforeSpeed;
+          modelBeforeSpeed = null;
         }
+        if (els.quality) {
+          var v13On = !!(els.v13 && els.v13.checked);
+          if (v13On && qualityBeforeV13 === null) {
+            qualityBeforeV13 = els.quality.value;
+            els.quality.value = "high";
+            els.quality.disabled = true;
+          } else if (!v13On && qualityBeforeV13 !== null) {
+            els.quality.disabled = false;
+            els.quality.value = qualityBeforeV13;
+            qualityBeforeV13 = null;
+          }
+        }
+        statusChecked = false;
+        ensureStatusChecked();
+      };
+      els.turbo.addEventListener("change", function () {
+        if (els.turbo.checked && els.v13) els.v13.checked = false;
+        syncSpeedLocks();
       });
+      if (els.v13) {
+        els.v13.addEventListener("change", function () {
+          if (els.v13.checked) els.turbo.checked = false;
+          syncSpeedLocks();
+        });
+      }
     }
 
     els.generateBtn.addEventListener("click", generateVideo);

@@ -153,6 +153,7 @@ def record_job_ng(job) -> None:
             "height": job.height,
             "steps": job.steps,
             "turbo": job.turbo,
+            "v13": getattr(job, "v13", False),
             "error": job.error,
             "error_type": job.error_type,
             "queued_at": job.queued_at,

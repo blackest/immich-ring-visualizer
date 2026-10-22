@@ -134,7 +134,9 @@ def h3_generate_ng():
     quality's dims when given -- the tier's timeout still applies since
     it's resolved from `quality` alone), steps (optional int), turbo
     (optional bool -- the 4-step distilled LoRA; forces steps to
-    h3_engineNG.H3_TURBO_STEPS regardless of a passed `steps`).
+    h3_engineNG.H3_TURBO_STEPS regardless of a passed `steps`), v13
+    (optional bool -- lightx2v v1.3 faster-Best, 7 steps, high canvas
+    + bf16 only; mutually exclusive with turbo).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -156,6 +158,7 @@ def h3_generate_ng():
             return jsonify({"error": str(e)}), 400
     steps = request.form.get("steps", type=int)
     turbo = str(request.form.get("turbo") or "").strip().lower() in ("1", "true", "on")
+    v13 = str(request.form.get("v13") or "").strip().lower() in ("1", "true", "on")
     timeout_s = h3_engineNG.resolve_h3_quality_timeout_ng(quality, duration_s)
 
     try:
@@ -166,7 +169,7 @@ def h3_generate_ng():
     try:
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
-            model=model, width=width, height=height, steps=steps, turbo=turbo,
+            model=model, width=width, height=height, steps=steps, turbo=turbo, v13=v13,
             timeout_s=timeout_s)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404

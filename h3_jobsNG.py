@@ -44,6 +44,7 @@ class H3JobNG:
     height: int = h3.H3_HEIGHT
     steps: int = h3.H3_STEPS
     turbo: bool = False  # 4-step distilled LoRA -- forces steps to H3_TURBO_STEPS
+    v13: bool = False  # lightx2v v1.3 faster-Best -- forces steps to H3_V13_STEPS
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
@@ -110,7 +111,7 @@ def _worker_loop() -> None:
                 duration_s=job.duration_s, output_dir=job.job_dir,
                 seed=job.seed, config=h3.H3Config(**cfg_kwargs),
                 width=job.width, height=job.height, steps=job.steps,
-                turbo=job.turbo,
+                turbo=job.turbo, v13=job.v13,
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.mp4_path = result["mp4_path"]
@@ -140,7 +141,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      model: h3.H3Model = "h3q8",
                      width: Optional[int] = None, height: Optional[int] = None,
                      steps: Optional[int] = None, turbo: bool = False,
-                     timeout_s: Optional[float] = None) -> H3JobNG:
+                     v13: bool = False, timeout_s: Optional[float] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
     video_jobsNG.start_video_job_ng (see its own docstring for the full
@@ -158,6 +159,10 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         raise ValueError(
             "turbo requires model='h3' (bf16) -- the turbo LoRA silently "
             "fails to apply against the quantized 'h3q8' DiT")
+    if turbo and v13:
+        raise ValueError("turbo and v13 are separate speed adapters -- pick one")
+    if v13 and model != "h3":
+        raise ValueError("v13 requires model='h3' (bf16) -- same limitation as turbo")
     h3._validate_h3_duration_ng(duration_s)
 
     width = h3.H3_WIDTH if width is None else int(width)
@@ -166,8 +171,15 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     # too so job.steps (and the status API) reports the step count that
     # will actually run, not whatever default was requested before turbo
     # was known.
-    steps = h3.H3_TURBO_STEPS if turbo else (h3.H3_STEPS if steps is None else int(steps))
+    steps = (h3.H3_TURBO_STEPS if turbo else h3.H3_V13_STEPS if v13
+             else (h3.H3_STEPS if steps is None else int(steps)))
     h3._validate_h3_dims_ng(width, height)
+    if v13 and (width, height) != (h3.H3_WIDTH, h3.H3_HEIGHT):
+        raise ValueError(
+            f"v13 is only validated at the 'high' {h3.H3_WIDTH}x{h3.H3_HEIGHT} canvas")
+    if v13 and not h3.H3_V13_LORA_PATH.is_file():
+        raise FileNotFoundError(
+            f"lightx2v v1.3 adapter not found at {h3.H3_V13_LORA_PATH}")
 
     has_image = image_bytes is not None
 
@@ -181,7 +193,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
 
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
-                  width=width, height=height, steps=steps, turbo=turbo,
+                  width=width, height=height, steps=steps, turbo=turbo, v13=v13,
                   timeout_s=timeout_s)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
@@ -238,6 +250,7 @@ def job_status_ng(job_id: str) -> dict:
         "height": job.height,
         "steps": job.steps,
         "turbo": job.turbo,
+        "v13": job.v13,
         "error": job.error,
         "error_type": job.error_type,
         "queued_at": job.queued_at,

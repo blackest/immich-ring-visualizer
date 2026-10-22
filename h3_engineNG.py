@@ -138,6 +138,14 @@ H3_TURBO_ADALN_PATH = H3_MODELS_ROOT / "turbo-lora" / "upstream_time_embedder.sa
 # the retired ckpt500 pair above, which stays as the fallback.
 H3_TURBO_V1_LORA_PATH = H3_MODELS_ROOT / "turbo-lora" / "lightx2v_v1.0_768p_ourlayout.safetensors"
 H3_TURBO_STEPS = 4
+# lightx2v v1.3 ("Best, faster", Phosphene 4.19.11): LightX2V's 768p adapter,
+# built locally by Phosphene's scripts/fetch_h3_v13.py already in the DiT's
+# per-head qkv order (so, unlike the turbo adapters, NO bake step). 7 sigma
+# points = 6 forwards at scale 1.0, ~870 s vs ~1950 s for the full 16-step
+# sampler on a 5 s 1024x576 clip. Only validated at the "high" canvas.
+H3_V13_LORA_PATH = H3_MODELS_ROOT / "turbo-lora" / "lightx2v_v1.3_768p_phosphene.safetensors"
+H3_V13_STEPS = 7
+H3_V13_VIDEO_SHIFT = "6"  # LightX2V's training shift; only sent if the runner has --video-shift
 
 H3_FRAME_RATE = 24.0
 # packing.py: 17n+5 frame grid, 32px canvas grid -- duplicated here (not
@@ -386,6 +394,7 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         "text_config_ok": text_config is not None,
         "text_config_path": text_config or str(H3_TEXT_CONFIG),
         "turbo_ok": turbo_lora is not None,
+        "v13_ok": H3_V13_LORA_PATH.is_file(),
         "ready": all((python, runner, dit, compact_root, text_config)),
     }
 
@@ -395,7 +404,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           config: H3Config,
                           width: Optional[int] = None, height: Optional[int] = None,
                           steps: Optional[int] = None,
-                          turbo: bool = False,
+                          turbo: bool = False, v13: bool = False,
                           on_log: Optional[Callable[[str], None]] = None,
                           on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
@@ -411,12 +420,33 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     is a coherent package (this exact adapter measured at this exact
     step count), not a step count you pick independently of it. Raises
     FileNotFoundError if the adapter files aren't on disk (check
-    h3_health_ng()['turbo_ok'] first to avoid that)."""
+    h3_health_ng()['turbo_ok'] first to avoid that).
+
+    v13=True renders the faster "Best" path: LightX2V's v1.3 adapter at
+    7 steps (6 forwards), forcing steps to H3_V13_STEPS. Same bf16-only
+    reason as turbo, and only validated on the "high" canvas; mutually
+    exclusive with turbo (one speed adapter per run)."""
     width = H3_WIDTH if width is None else int(width)
     height = H3_HEIGHT if height is None else int(height)
-    steps = H3_TURBO_STEPS if turbo else (H3_STEPS if steps is None else int(steps))
+    if turbo and v13:
+        raise ValueError("turbo and v13 are separate speed adapters -- pick one")
+    steps = (H3_TURBO_STEPS if turbo else H3_V13_STEPS if v13
+             else (H3_STEPS if steps is None else int(steps)))
     _validate_h3_dims_ng(width, height)
     _validate_h3_duration_ng(duration_s)
+    if v13:
+        if config.model != "h3":
+            raise ValueError(
+                "v13 requires model='h3' (bf16) -- same quantized-loader "
+                "limitation as turbo")
+        if (width, height) != (H3_WIDTH, H3_HEIGHT):
+            raise ValueError(
+                f"v13 is only validated at the 'high' {H3_WIDTH}x{H3_HEIGHT} "
+                f"canvas (got {width}x{height})")
+        if not H3_V13_LORA_PATH.is_file():
+            raise FileNotFoundError(
+                f"lightx2v v1.3 adapter not found at {H3_V13_LORA_PATH} -- "
+                f"build it from Phosphene's Speed row (Get it, 1.4 GB)")
 
     turbo_lora = turbo_adaln = None
     if turbo:
@@ -511,9 +541,14 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         if h3_lora.runner_has_flag_ng(runner, "--lora-qkv-permute"):
             turbo_lora = str(h3_lora.bake_runner_layout_ng(turbo_lora, on_log))
         cmd += _h3_turbo_argv_ng(turbo_lora, turbo_adaln)
+    if v13:
+        cmd += ["--lora", f"{H3_V13_LORA_PATH}:1.0"]
+        if h3_lora.runner_has_flag_ng(runner, "--video-shift"):
+            cmd += ["--video-shift", H3_V13_VIDEO_SHIFT]
 
     if on_log:
-        turbo_note = " [turbo 4-step]" if turbo else ""
+        turbo_note = (" [turbo 4-step]" if turbo
+                      else " [lightx2v v1.3]" if v13 else "")
         if chain_windows > 1:
             on_log(f"[h3] launching {config.model} {chain_windows} chained windows "
                    f"({window_frames}f each) -> {frames} frames "
