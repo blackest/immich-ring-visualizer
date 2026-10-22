@@ -65,6 +65,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Optional
 
+import h3_loraNG as h3_lora
+
 H3Model = Literal["h3", "h3q8"]
 
 
@@ -501,6 +503,13 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     if image_path is not None:
         cmd += ["--first-frame", image_path]
     if turbo:
+        # The pinned runner only re-orders a speed adapter's qkv rows under
+        # --lora-qkv-permute (off by default, global to the run); without
+        # this bake the adapter writes onto the wrong rows. A runner that
+        # predates the flag re-orders every --lora itself, so it gets the
+        # source file as-is -- re-ordering twice would undo it.
+        if h3_lora.runner_has_flag_ng(runner, "--lora-qkv-permute"):
+            turbo_lora = str(h3_lora.bake_runner_layout_ng(turbo_lora, on_log))
         cmd += _h3_turbo_argv_ng(turbo_lora, turbo_adaln)
 
     if on_log:
