@@ -83,7 +83,11 @@ def _resolve_h3_repo_dir_ng() -> Path:
     if env_p:
         return Path(env_p).expanduser()
     home = Path.home()
-    for cand in (home / "minimax-h3-mlx",
+    # Phosphene's own vendored checkout comes first: it sits on the pinned
+    # engine commit with a venv held to its locked package set, and sharing
+    # it avoids a second ~copy drifting out of date.
+    for cand in (Path("/Volumes/AI/Pinkio/api/phosphene.git/minimax-h3-mlx"),
+                 home / "minimax-h3-mlx",
                  home / "AI" / "minimax-h3-mlx",
                  Path("/Volumes/AI/minimax-h3-mlx")):
         if cand.exists():
