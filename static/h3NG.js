@@ -6,7 +6,7 @@
  * videogenNG.js's queue-based shape -- same FIFO render queue, same
  * reference-image paste/drop/drag UX -- trimmed of what H3 doesn't
  * have server-side yet: no /enhance, /discuss, /chat (LTX's own
- * Gemma-side features), no LoRA dropdown, no
+ * Gemma-side features), no
  * raw width/height/fps controls (steps fixed at h3_engineNG.H3_STEPS
  * for now). A `model` dropdown (h3 vs h3q8) replaces the model split
  * -- see h3_engineNG.py's docstring for why those are one engine, not
@@ -81,6 +81,9 @@
     els.turbo = document.getElementById("ng-h3-turbo");
     els.v13Row = document.getElementById("ng-h3-v13-row");
     els.v13 = document.getElementById("ng-h3-v13");
+    els.lorasBlock = document.getElementById("ng-h3-loras-block");
+    els.lorasRows = document.getElementById("ng-h3-loras-rows");
+    els.loraAdd = document.getElementById("ng-h3-lora-add");
 
     els.generateBtn = document.getElementById("ng-h3-generate-btn");
     els.status = document.getElementById("ng-h3-status");
@@ -303,6 +306,133 @@
       });
   }
 
+  // ---- User style/character LoRAs (GET /api/ng/h3/loras) ----
+  // The library is whatever sits in the H3 loras folder; rows are built
+  // here rather than in the HTML so the count can follow what the installed
+  // runner can stack (max_stack, or max_stack_with_speed while turbo / v1.3
+  // is ticked).
+  var loraLib = { loras: [], max: 0, maxSpeed: 0, loaded: false };
+
+  function loraLimit() {
+    var speed = !!((els.turbo && els.turbo.checked) || (els.v13 && els.v13.checked));
+    return speed ? loraLib.maxSpeed : loraLib.max;
+  }
+
+  function loraEntry(name) {
+    for (var i = 0; i < loraLib.loras.length; i++) {
+      if (loraLib.loras[i].name === name) return loraLib.loras[i];
+    }
+    return null;
+  }
+
+  function updateLoraHint(row) {
+    var hint = row.querySelector(".ng-h3-lora-hint");
+    var entry = loraEntry(row.querySelector("select").value);
+    var words = entry && entry.trigger_words && entry.trigger_words.length
+      ? "Trigger: " + entry.trigger_words.join(" / ") : "";
+    hint.textContent = words;
+    hint.style.display = words ? "" : "none";
+  }
+
+  function syncLoraControls() {
+    if (!els.lorasBlock) return;
+    var limit = loraLimit();
+    els.lorasBlock.hidden = !(loraLib.loras.length && (limit > 0 || els.lorasRows.children.length));
+    var rows = els.lorasRows.children;
+    // Over the limit (e.g. turbo got ticked on a single-slot runner): drop
+    // the surplus rows rather than let a doomed request be sent.
+    while (rows.length > limit) els.lorasRows.removeChild(rows[rows.length - 1]);
+    if (els.loraAdd) els.loraAdd.disabled = rows.length >= limit;
+  }
+
+  function addLoraRow(name, strength) {
+    if (!els.lorasRows) return;
+    var row = document.createElement("div");
+    row.className = "ng-h3-lora-row";
+    row.style.cssText = "margin-bottom: 6px";
+    var line = document.createElement("div");
+    line.style.cssText = "display: flex; gap: 6px; align-items: center";
+    var select = document.createElement("select");
+    select.className = "ng-gen-input";
+    select.style.cssText = "flex: 1; margin-bottom: 0";
+    loraLib.loras.forEach(function (entry) {
+      var opt = document.createElement("option");
+      opt.value = entry.name;
+      opt.textContent = (entry.ok ? "" : "(unusable) ") + (entry.title || entry.name);
+      opt.disabled = !entry.ok;
+      opt.title = entry.reason || "";
+      select.appendChild(opt);
+    });
+    var strengthInput = document.createElement("input");
+    strengthInput.type = "number";
+    strengthInput.className = "ng-gen-input";
+    strengthInput.step = "0.05";
+    strengthInput.min = "0";
+    strengthInput.max = "2";
+    strengthInput.style.cssText = "width: 76px; margin-bottom: 0";
+    var remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ng-gen-btn";
+    remove.style.cssText = "width: auto";
+    remove.textContent = "\u00d7";
+    remove.title = "Remove this LoRA";
+    var hint = document.createElement("div");
+    hint.className = "ng-gen-label ng-h3-lora-hint";
+    hint.style.cssText = "margin-top: 2px; text-transform: none; letter-spacing: 0; display: none";
+    line.appendChild(select);
+    line.appendChild(strengthInput);
+    line.appendChild(remove);
+    row.appendChild(line);
+    row.appendChild(hint);
+    els.lorasRows.appendChild(row);
+
+    var first = loraLib.loras.filter(function (e) { return e.ok; })[0];
+    if (name && loraEntry(name) && loraEntry(name).ok) select.value = name;
+    else if (first) select.value = first.name;
+    var chosen = loraEntry(select.value);
+    strengthInput.value = strength != null ? strength
+      : (chosen && chosen.recommended_strength) || 1;
+    select.addEventListener("change", function () {
+      var e = loraEntry(select.value);
+      if (e && e.recommended_strength) strengthInput.value = e.recommended_strength;
+      updateLoraHint(row);
+    });
+    remove.addEventListener("click", function () {
+      els.lorasRows.removeChild(row);
+      syncLoraControls();
+    });
+    updateLoraHint(row);
+    syncLoraControls();
+  }
+
+  // [{name, strength}] for the rows currently on screen.
+  function selectedLoras() {
+    if (!els.lorasRows) return [];
+    var out = [];
+    Array.prototype.forEach.call(els.lorasRows.children, function (row) {
+      var name = row.querySelector("select").value;
+      var strength = parseFloat(row.querySelector("input").value);
+      if (name) out.push({ name: name, strength: isNaN(strength) ? 1.0 : strength });
+    });
+    return out;
+  }
+
+  function ensureLorasLoaded() {
+    if (loraLib.loaded) return;
+    loraLib.loaded = true;
+    fetch(API + "/loras")
+      .then(function (r) { return r.json(); })
+      .then(function (payload) {
+        loraLib.loras = (payload && payload.loras) || [];
+        loraLib.max = (payload && payload.max_stack) || 0;
+        loraLib.maxSpeed = (payload && payload.max_stack_with_speed) || 0;
+        syncLoraControls();
+      })
+      .catch(function () {
+        loraLib.loaded = false; // let a later sync retry
+      });
+  }
+
   function ensureStatusChecked() {
     if (statusChecked) return;
     statusChecked = true;
@@ -395,6 +525,8 @@
     form.append("quality", quality);
     if (turbo) form.append("turbo", "true");
     if (v13) form.append("v13", "true");
+    var loras = selectedLoras();
+    if (loras.length) form.append("loras", JSON.stringify(loras));
     if (seed !== null && !isNaN(seed)) form.append("seed", String(seed));
 
     fetch(API + "/generate", { method: "POST", body: form })
@@ -666,6 +798,15 @@
       }
     }
 
+    if (els.loraAdd) {
+      els.loraAdd.addEventListener("click", function () {
+        if (els.lorasRows.children.length < loraLimit()) addLoraRow();
+      });
+    }
+    [els.turbo, els.v13].forEach(function (box) {
+      if (box) box.addEventListener("change", syncLoraControls);
+    });
+
     els.generateBtn.addEventListener("click", generateVideo);
     els.queueClear.addEventListener("click", function () {
       queue = queue.filter(function (q) {
@@ -707,6 +848,15 @@
       els.turbo.checked = true;
       els.turbo.dispatchEvent(new Event("change"));
     }
+    if (els.lorasRows) {
+      els.lorasRows.innerHTML = "";
+      (entry.loras || []).forEach(function (l) {
+        if (els.lorasRows.children.length < loraLimit() && loraEntry(l.name)) {
+          addLoraRow(l.name, l.strength);
+        }
+      });
+      syncLoraControls();
+    }
     if (els.modeT2v) {
       els.modeT2v.checked = !refUrl;
       onModeChange();
@@ -734,6 +884,7 @@
 
     init();
     ensureStatusChecked();
+    ensureLorasLoaded();
     renderQueue();
   }
 

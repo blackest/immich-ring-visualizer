@@ -2626,7 +2626,7 @@
 
             <!-- H3 view's main region -- keyframe + prompt + duration +
                  model form. See static/h3NG.js. No enhance/discuss/chat
-                 (LTX/Gemma-only features) and no LoRA dropdown -- see
+                 (LTX/Gemma-only features); user LoRA rows live in the rail -- see
                  h3_engineNG.py's docstring for what's deliberately not
                  built yet. -->
             <div id="ng-h3-main" style="display: none">
@@ -2780,6 +2780,20 @@
                       (lightx2v v1.3, ~2x faster, near-full quality, High
                       only)</label
                     >
+                    <div id="ng-h3-loras-block" style="margin-top: 8px" hidden>
+                      <label class="ng-gen-label" style="margin-top: 0"
+                        >LoRAs</label
+                      >
+                      <div id="ng-h3-loras-rows"></div>
+                      <button
+                        type="button"
+                        class="ng-gen-btn"
+                        id="ng-h3-lora-add"
+                        style="width: auto"
+                      >
+                        + Add LoRA
+                      </button>
+                    </div>
                     <div
                       class="ng-gen-label"
                       style="

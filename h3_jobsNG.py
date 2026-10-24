@@ -45,6 +45,7 @@ class H3JobNG:
     steps: int = h3.H3_STEPS
     turbo: bool = False  # 4-step distilled LoRA -- forces steps to H3_TURBO_STEPS
     v13: bool = False  # lightx2v v1.3 faster-Best -- forces steps to H3_V13_STEPS
+    loras: list = field(default_factory=list)  # [{"name", "path", "strength"}] user LoRAs
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
@@ -112,6 +113,7 @@ def _worker_loop() -> None:
                 seed=job.seed, config=h3.H3Config(**cfg_kwargs),
                 width=job.width, height=job.height, steps=job.steps,
                 turbo=job.turbo, v13=job.v13,
+                loras=[(l["path"], l["strength"]) for l in job.loras],
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.mp4_path = result["mp4_path"]
@@ -141,11 +143,13 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      model: h3.H3Model = "h3q8",
                      width: Optional[int] = None, height: Optional[int] = None,
                      steps: Optional[int] = None, turbo: bool = False,
-                     v13: bool = False, timeout_s: Optional[float] = None) -> H3JobNG:
+                     v13: bool = False, loras: Optional[list] = None,
+                     timeout_s: Optional[float] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
     video_jobsNG.start_video_job_ng (see its own docstring for the full
-    reasoning). image_bytes may be None for a text-to-video job -- H3
+    reasoning). `loras` is an optional [{"name", "path", "strength"}] list
+    (paths resolved from h3_lora_libraryNG by the route). image_bytes may be None for a text-to-video job -- H3
     generates from the prompt alone, no --first-frame keyframe."""
     prompt = (prompt or "").strip()
     if not prompt:
@@ -181,6 +185,17 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         raise FileNotFoundError(
             f"lightx2v v1.3 adapter not found at {h3.H3_V13_LORA_PATH}")
 
+    loras = loras or []
+    cleaned = h3._validate_h3_loras_ng([(l["path"], l["strength"]) for l in loras])
+    loras = [{"name": l["name"], "path": p, "strength": st}
+             for l, (p, st) in zip(loras, cleaned)]
+    if loras:
+        limit = h3.h3_lora_limit_ng(h3.H3_RUNNER, speed_adapter=bool(turbo or v13))
+        if len(loras) > limit:
+            raise ValueError(
+                f"this H3 runner takes at most {limit} LoRA(s) with this setup "
+                f"(got {len(loras)})")
+
     has_image = image_bytes is not None
 
     _ensure_worker_started()
@@ -194,7 +209,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
                   width=width, height=height, steps=steps, turbo=turbo, v13=v13,
-                  timeout_s=timeout_s)
+                  loras=loras, timeout_s=timeout_s)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()
@@ -251,6 +266,7 @@ def job_status_ng(job_id: str) -> dict:
         "steps": job.steps,
         "turbo": job.turbo,
         "v13": job.v13,
+        "loras": [{"name": l["name"], "strength": l["strength"]} for l in job.loras],
         "error": job.error,
         "error_type": job.error_type,
         "queued_at": job.queued_at,

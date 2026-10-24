@@ -6,9 +6,12 @@ returns a job id immediately, the frontend polls GET .../jobs/<id> for
 progress. Trimmed relative to videogenNG.py -- no /enhance, /discuss,
 /chat (those are LTX's own Gemma-side features, out of scope here; see
 h3_engineNG.py's docstring for what's deliberately not built yet) and
-no LoRA dropdown (not wired server-side either, same reason).
+no speed-adapter dropdown (turbo / v1.3 are checkboxes). User style/
+character LoRAs are listed by GET /api/ng/h3/loras and sent to /generate
+as a `loras` JSON field.
 """
 
+import json
 import os
 
 from flask import Blueprint, jsonify, request, send_file
@@ -18,6 +21,7 @@ import h3_engineNG
 import h3_installNG
 import h3_job_logsNG
 import h3_jobsNG as h3_jobs
+from h3_lora_libraryNG import list_h3_loras_ng, resolve_h3_lora_path_ng
 from video_analysisNG import find_cache_frame_ng
 
 h3NG_bp = Blueprint("h3NG", __name__)
@@ -121,6 +125,48 @@ def h3_install_status_ng(job_id):
         return jsonify({"error": str(e)}), 404
 
 
+@h3NG_bp.route("/api/ng/h3/loras", methods=["GET"])
+def h3_loras_ng():
+    """User style/character LoRAs in the H3 library (see
+    h3_lora_libraryNG.py), plus how many this runner can stack with and
+    without a speed adapter -- drives the rail's LoRA rows."""
+    runner = h3_engineNG._resolve_h3_runner_ng(h3_engineNG.H3Config())
+    return jsonify({
+        "loras": [{k: v for k, v in e.items() if k != "path"} for e in list_h3_loras_ng()],
+        "max_stack": h3_engineNG.h3_lora_limit_ng(runner or h3_engineNG.H3_RUNNER, speed_adapter=False),
+        "max_stack_with_speed": h3_engineNG.h3_lora_limit_ng(runner or h3_engineNG.H3_RUNNER, speed_adapter=True),
+    })
+
+
+def _loras_from_form() -> list:
+    """The `loras` form field -> [{"name", "path", "strength"}], every name
+    resolved against the real library listing. Raises ValueError (-> 400)
+    for malformed JSON, an unknown/unrunnable name, or a duplicate."""
+    raw = (request.form.get("loras") or "").strip()
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except ValueError:
+        raise ValueError("loras must be a JSON array of {name, strength}") from None
+    if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+        raise ValueError("loras must be a JSON array of {name, strength}")
+    out, seen = [], set()
+    for item in items:
+        name = str(item.get("name") or "").strip()
+        path = resolve_h3_lora_path_ng(name)
+        if path is None:
+            raise ValueError(f"unknown or unrunnable LoRA {name!r}")
+        if name in seen:
+            raise ValueError(f"LoRA {name!r} is listed twice")
+        seen.add(name)
+        strength = item.get("strength", 1.0)
+        if isinstance(strength, bool) or not isinstance(strength, (int, float)):
+            raise ValueError(f"LoRA {name!r} needs a numeric strength")
+        out.append({"name": name, "path": path, "strength": float(strength)})
+    return out
+
+
 @h3NG_bp.route("/api/ng/h3/generate", methods=["POST"])
 def h3_generate_ng():
     """Form fields: file (multipart -- the keyframe image) OR
@@ -136,7 +182,10 @@ def h3_generate_ng():
     (optional bool -- the 4-step distilled LoRA; forces steps to
     h3_engineNG.H3_TURBO_STEPS regardless of a passed `steps`), v13
     (optional bool -- lightx2v v1.3 faster-Best, 7 steps, high canvas
-    + bf16 only; mutually exclusive with turbo).
+    + bf16 only; mutually exclusive with turbo), loras (optional JSON
+    array of {"name": str, "strength": float} -- library names from
+    GET /api/ng/h3/loras; strength defaults to 1.0; resolved to paths
+    here, never taken from the client).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -162,6 +211,11 @@ def h3_generate_ng():
     timeout_s = h3_engineNG.resolve_h3_quality_timeout_ng(quality, duration_s)
 
     try:
+        loras = _loras_from_form()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    try:
         img_bytes, ext = _resolve_ref_image_bytes()
     except LookupError as e:
         return jsonify({"error": str(e)}), 404
@@ -170,7 +224,7 @@ def h3_generate_ng():
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
             model=model, width=width, height=height, steps=steps, turbo=turbo, v13=v13,
-            timeout_s=timeout_s)
+            loras=loras, timeout_s=timeout_s)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

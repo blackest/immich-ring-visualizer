@@ -154,6 +154,8 @@ def record_job_ng(job) -> None:
             "steps": job.steps,
             "turbo": job.turbo,
             "v13": getattr(job, "v13", False),
+            "loras": [{"name": l["name"], "strength": l["strength"]}
+                      for l in getattr(job, "loras", [])],
             "error": job.error,
             "error_type": job.error_type,
             "queued_at": job.queued_at,

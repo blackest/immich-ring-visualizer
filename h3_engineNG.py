@@ -46,11 +46,11 @@ Deliberately still NOT wired: --chain-prompts (a different prompt per
 window -- phosphene derives that from a shot's "settle" state, which
 this app's plain prompt box has no equivalent of, so every window
 gets the same prompt, the runner's own documented fallback), live
-preview, draft/TAE decode, step-cache, prompt-cache reuse. Non-turbo
-LoRA pass-through (generate_staged.py's own repeatable --lora
-PATH[:SCALE] for an arbitrary adapter) is in scope in the same thin
-way ltx_engineNG.py does it, once something resolves a UI name to a
-path -- not wired yet.
+preview, draft/TAE decode, step-cache, prompt-cache reuse. User
+style/character LoRAs ARE wired: `loras=[(path, strength)]` becomes a
+repeated --lora PATH:SCALE after any speed adapter (names are resolved to
+paths by h3_lora_libraryNG.py; each file is first laid out in the base's
+qkv row order by h3_loraNG.lora_for_runner_ng).
 """
 
 from __future__ import annotations
@@ -363,6 +363,41 @@ def _h3_turbo_argv_ng(turbo_lora: str, turbo_adaln: Optional[str]) -> list:
     return ["--lora", turbo_lora, "--lora-adaln", turbo_adaln]
 
 
+# The phrase the stackable runner's `--lora` help carries -- probing the help
+# text, not the flag, is what tells a repeatable `--lora` from the older
+# single-slot one (both spell the flag identically).
+H3_LORA_STACK_MARKER = "Repeat the flag to stack adapters"
+H3_LORA_STACK_LIMIT = 4
+H3_LORA_STRENGTH_MIN, H3_LORA_STRENGTH_MAX = 0.0, 2.0
+
+
+def h3_lora_limit_ng(runner, speed_adapter: bool) -> int:
+    """How many user LoRAs a render may carry on this runner: up to
+    H3_LORA_STACK_LIMIT on a stacking runner; on the single-slot one, one --
+    and none if a speed adapter (turbo / v1.3) already spent the slot."""
+    if h3_lora.runner_has_flag_ng(runner, H3_LORA_STACK_MARKER):
+        return H3_LORA_STACK_LIMIT
+    return 0 if speed_adapter else 1
+
+
+def _validate_h3_loras_ng(loras) -> list:
+    """[(path, strength)] cleaned up, or ValueError. Paths must already be
+    resolved from the library (h3_lora_libraryNG) -- this only checks shape."""
+    out = []
+    for item in loras or []:
+        try:
+            path, strength = item
+            strength = float(strength)
+        except (TypeError, ValueError):
+            raise ValueError("each LoRA needs a path and a numeric strength") from None
+        if not H3_LORA_STRENGTH_MIN <= strength <= H3_LORA_STRENGTH_MAX:
+            raise ValueError(
+                f"LoRA strength must be between {H3_LORA_STRENGTH_MIN:g} and "
+                f"{H3_LORA_STRENGTH_MAX:g} (got {strength:g})")
+        out.append((str(path), strength))
+    return out
+
+
 # Metal device contention -- same reasoning as ltx_engineNG.py's own
 # _LTX_SUBPROCESS_LOCK, kept separate since this is a different venv
 # and a different subprocess.
@@ -405,6 +440,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           width: Optional[int] = None, height: Optional[int] = None,
                           steps: Optional[int] = None,
                           turbo: bool = False, v13: bool = False,
+                          loras: Optional[list] = None,
                           on_log: Optional[Callable[[str], None]] = None,
                           on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
@@ -425,7 +461,13 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     v13=True renders the faster "Best" path: LightX2V's v1.3 adapter at
     7 steps (6 forwards), forcing steps to H3_V13_STEPS. Same bf16-only
     reason as turbo, and only validated on the "high" canvas; mutually
-    exclusive with turbo (one speed adapter per run)."""
+    exclusive with turbo (one speed adapter per run).
+
+    loras is an optional [(path, strength)] list of user style/character
+    LoRAs (paths already resolved from h3_lora_libraryNG), each passed as a
+    repeated --lora PATH:SCALE after any speed adapter. Each file is first
+    laid out in the base's qkv row order (h3_loraNG.lora_for_runner_ng)."""
+    loras = _validate_h3_loras_ng(loras)
     width = H3_WIDTH if width is None else int(width)
     height = H3_HEIGHT if height is None else int(height)
     if turbo and v13:
@@ -497,6 +539,16 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             f"{config.text_config or H3_TEXT_CONFIG}")
     if image_path is not None and not Path(image_path).is_file():
         raise FileNotFoundError(f"H3 keyframe image not found at {image_path}")
+    if loras:
+        limit = h3_lora_limit_ng(runner, speed_adapter=bool(turbo or v13))
+        if len(loras) > limit:
+            raise ValueError(
+                f"this H3 runner takes at most {limit} LoRA(s) alongside "
+                f"{'a speed adapter' if turbo or v13 else 'a render'} "
+                f"(got {len(loras)}) -- update the H3 runner to stack more")
+        for lora_path, _s in loras:
+            if not Path(lora_path).is_file():
+                raise FileNotFoundError(f"H3 LoRA not found at {lora_path}")
 
     window_frames, chain_windows, frames = _h3_chain_plan_ng(duration_s)
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
@@ -545,10 +597,19 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         cmd += ["--lora", f"{H3_V13_LORA_PATH}:1.0"]
         if h3_lora.runner_has_flag_ng(runner, "--video-shift"):
             cmd += ["--video-shift", H3_V13_VIDEO_SHIFT]
+    for lora_path, strength in loras:
+        # A speed adapter's own file is already in the runner's order (turbo
+        # is baked above, v1.3 ships that way); a user LoRA is not, so it goes
+        # through the layout check -- before this, its q/k/v update landed on
+        # the wrong heads.
+        runner_file, _qkv = h3_lora.lora_for_runner_ng(lora_path, runner, on_log)
+        cmd += ["--lora", f"{runner_file}:{strength:g}"]
 
     if on_log:
         turbo_note = (" [turbo 4-step]" if turbo
                       else " [lightx2v v1.3]" if v13 else "")
+        if loras:
+            turbo_note += " [" + ", ".join(f"{Path(p).stem}@{s:g}" for p, s in loras) + "]"
         if chain_windows > 1:
             on_log(f"[h3] launching {config.model} {chain_windows} chained windows "
                    f"({window_frames}f each) -> {frames} frames "
