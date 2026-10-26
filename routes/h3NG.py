@@ -22,6 +22,7 @@ import h3_installNG
 import h3_job_logsNG
 import h3_jobsNG as h3_jobs
 from h3_lora_libraryNG import list_h3_loras_ng, resolve_h3_lora_path_ng
+from h3_refmod_libraryNG import list_h3_refmods_ng, refmods_dir_ng, resolve_h3_refmod_ng
 from video_analysisNG import find_cache_frame_ng
 
 h3NG_bp = Blueprint("h3NG", __name__)
@@ -57,12 +58,12 @@ def _resolve_ref_image_bytes():
 
 @h3NG_bp.route("/api/ng/h3/status", methods=["GET"])
 def h3_status_ng():
-    """Reports whether the requested model (h3 or h3q8, default h3q8)
+    """Reports whether the requested model (h3, h3q8 or h3ref, default h3q8)
     is reachable -- the frontend gates the Generate button on this and
     uses it to grey out whichever model isn't installed on this Mac."""
     model = request.args.get("model", "h3q8")
-    if model not in ("h3", "h3q8"):
-        return jsonify({"error": f"model must be 'h3' or 'h3q8' (got {model!r})"}), 400
+    if model not in ("h3", "h3q8", "h3ref"):
+        return jsonify({"error": f"model must be 'h3', 'h3q8' or 'h3ref' (got {model!r})"}), 400
     health = h3_engineNG.h3_health_ng(model)
     platform_ok, platform_reason = engine_installNG.mac_apple_silicon_ok()
     ram_ok, ram_reason = h3_installNG.ram_ok()
@@ -138,6 +139,56 @@ def h3_loras_ng():
     })
 
 
+@h3NG_bp.route("/api/ng/h3/refmods", methods=["GET"])
+def h3_refmods_ng():
+    """RefMod reference files in the H3 refmods folder (see
+    h3_refmod_libraryNG.py), plus whether this install can use them at all:
+    `ready` needs a Ref2VA DiT on disk AND a runner that takes --refmod.
+    Drives the rail's RefMod rows; `rows` is what each file costs (a step
+    gets slower with every reference row, ~3x for a 2,800-row file)."""
+    health = h3_engineNG.h3_health_ng("h3ref")
+    return jsonify({
+        "refmods": [{k: v for k, v in e.items() if k != "path"} for e in list_h3_refmods_ng()],
+        "dir": str(refmods_dir_ng()),
+        "ready": health["refmod_ready"],
+        "ref2va_ok": health["ref2va_ok"],
+        "refmod_supported": health["refmod_supported"],
+        "max_images": h3_engineNG.h3_ref2va.MAX_REF_IMAGES,
+        "max_videos": h3_engineNG.h3_ref2va.MAX_REF_VIDEOS,
+    })
+
+
+def _refmods_from_form() -> list:
+    """The `refmods` form field -> [{"name", "path", "strength", "images",
+    "videos"}], every name resolved against the real library listing. Raises
+    ValueError (-> 400) for malformed JSON, an unknown/unusable name, a
+    duplicate or a strength outside 0..1."""
+    raw = (request.form.get("refmods") or "").strip()
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except ValueError:
+        raise ValueError("refmods must be a JSON array of {name, strength}") from None
+    if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+        raise ValueError("refmods must be a JSON array of {name, strength}")
+    out, seen = [], set()
+    for item in items:
+        name = str(item.get("name") or "").strip()
+        entry = resolve_h3_refmod_ng(name)
+        if entry is None:
+            raise ValueError(f"unknown or unusable RefMod {name!r}")
+        if name in seen:
+            raise ValueError(f"RefMod {name!r} is listed twice")
+        seen.add(name)
+        strength = item.get("strength", 1.0)
+        if isinstance(strength, bool) or not isinstance(strength, (int, float)) or not 0.0 <= strength <= 1.0:
+            raise ValueError(f"RefMod {name!r} needs a strength between 0 and 1")
+        out.append({"name": name, "path": entry["path"], "strength": float(strength),
+                    "images": entry["images"], "videos": entry["videos"]})
+    return out
+
+
 def _loras_from_form() -> list:
     """The `loras` form field -> [{"name", "path", "strength"}], every name
     resolved against the real library listing. Raises ValueError (-> 400)
@@ -173,7 +224,7 @@ def h3_generate_ng():
     ref_frame_id (a live curation-session frame) -- omit both for a
     text-to-video job with no keyframe. Also: prompt (required),
     duration_s (optional float, default 5.0), model (optional,
-    "h3"|"h3q8", default "h3q8"), seed (optional int), quality
+    "h3"|"h3q8"|"h3ref", default "h3q8"), seed (optional int), quality
     (optional, one of h3_engineNG.H3_QUALITIES -- resolved to width/
     height and to that tier's watchdog budget, H3_QUALITY_TIMEOUTS,
     here), width/height (optional ints, multiples of 32, override
@@ -185,7 +236,10 @@ def h3_generate_ng():
     + bf16 only; mutually exclusive with turbo), loras (optional JSON
     array of {"name": str, "strength": float} -- library names from
     GET /api/ng/h3/loras; strength defaults to 1.0; resolved to paths
-    here, never taken from the client).
+    here, never taken from the client), refmods (optional JSON array of
+    {"name": str, "strength": 0..1} -- library names from GET
+    /api/ng/h3/refmods; needs model "h3ref", a single 5 s window and no
+    keyframe or speed adapter).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -212,6 +266,7 @@ def h3_generate_ng():
 
     try:
         loras = _loras_from_form()
+        refmods = _refmods_from_form()
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
@@ -224,7 +279,7 @@ def h3_generate_ng():
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
             model=model, width=width, height=height, steps=steps, turbo=turbo, v13=v13,
-            loras=loras, timeout_s=timeout_s)
+            loras=loras, refmods=refmods, timeout_s=timeout_s)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

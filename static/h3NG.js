@@ -84,6 +84,10 @@
     els.lorasBlock = document.getElementById("ng-h3-loras-block");
     els.lorasRows = document.getElementById("ng-h3-loras-rows");
     els.loraAdd = document.getElementById("ng-h3-lora-add");
+    els.refmodsBlock = document.getElementById("ng-h3-refmods-block");
+    els.refmodsNote = document.getElementById("ng-h3-refmods-note");
+    els.refmodsRows = document.getElementById("ng-h3-refmods-rows");
+    els.refmodAdd = document.getElementById("ng-h3-refmod-add");
 
     els.generateBtn = document.getElementById("ng-h3-generate-btn");
     els.status = document.getElementById("ng-h3-status");
@@ -433,6 +437,149 @@
       });
   }
 
+  // ---- RefMod references (GET /api/ng/h3/refmods) ----
+  // Saved reference latents that the Ref2VA model reads as extra rows. Shown only
+  // on the "H3 Ref2VA Q8" model; each row costs denoise time in proportion to its
+  // `rows`, and a render is one 5 s window with no keyframe or speed adapter, so
+  // the speed checkboxes are locked off while this model is picked.
+  var refLib = { refmods: [], ready: false, ref2vaOk: false, supported: false,
+                 maxVideos: 3, loaded: false };
+
+  function refmodEntry(name) {
+    for (var i = 0; i < refLib.refmods.length; i++) {
+      if (refLib.refmods[i].name === name) return refLib.refmods[i];
+    }
+    return null;
+  }
+
+  function refmodsOn() { return !!(els.model && els.model.value === "h3ref"); }
+
+  function refmodsNoteText() {
+    if (refLib.ready) {
+      return refLib.refmods.length
+        ? "One 5 s window. Each reference adds denoise time (about 3x for a 2,800-row file)."
+        : "No RefMod files yet -- put .safetensors RefMods in the H3 refmods folder.";
+    }
+    var missing = [];
+    if (!refLib.ref2vaOk) missing.push("the Ref2VA Q8 weights");
+    if (!refLib.supported) missing.push("a runner build that takes --refmod");
+    return "Not available yet: this install is missing " + missing.join(" and ") + ".";
+  }
+
+  function updateRefmodHint(row) {
+    var hint = row.querySelector(".ng-h3-refmod-hint");
+    var entry = refmodEntry(row.querySelector("select").value);
+    var bits = [];
+    if (entry && entry.rows) bits.push(entry.rows.toLocaleString() + " reference rows");
+    if (entry && entry.has_lora) bits.push("also carries a LoRA (not applied)");
+    hint.textContent = bits.join(" \u00b7 ");
+    hint.style.display = bits.length ? "" : "none";
+  }
+
+  function syncRefmodControls() {
+    if (!els.refmodsBlock) return;
+    var on = refmodsOn();
+    els.refmodsBlock.hidden = !on;
+    if (els.refmodsNote) els.refmodsNote.textContent = on ? refmodsNoteText() : "";
+    var rows = els.refmodsRows.children;
+    if (!on || !refLib.ready) {
+      while (rows.length) els.refmodsRows.removeChild(rows[0]);
+    }
+    if (els.refmodAdd) {
+      els.refmodAdd.disabled = !refLib.ready || !refLib.refmods.some(function (e) { return e.ok; })
+        || rows.length >= refLib.maxVideos;
+    }
+    // Turbo / v1.3 were not made for the Ref2VA weights: lock them off here.
+    [els.turbo, els.v13].forEach(function (box) {
+      if (!box) return;
+      if (on) { box.checked = false; box.disabled = true; }
+    });
+  }
+
+  function addRefmodRow(name, strength) {
+    if (!els.refmodsRows) return;
+    var row = document.createElement("div");
+    row.className = "ng-h3-refmod-row";
+    row.style.cssText = "margin-bottom: 6px";
+    var line = document.createElement("div");
+    line.style.cssText = "display: flex; gap: 6px; align-items: center";
+    var select = document.createElement("select");
+    select.className = "ng-gen-input";
+    select.style.cssText = "flex: 1; margin-bottom: 0";
+    refLib.refmods.forEach(function (entry) {
+      var opt = document.createElement("option");
+      opt.value = entry.name;
+      opt.textContent = (entry.ok ? "" : "(unusable) ") + entry.name;
+      opt.disabled = !entry.ok;
+      opt.title = entry.reason || "";
+      select.appendChild(opt);
+    });
+    var strengthInput = document.createElement("input");
+    strengthInput.type = "number";
+    strengthInput.className = "ng-gen-input";
+    strengthInput.step = "0.05";
+    strengthInput.min = "0";
+    strengthInput.max = "1";
+    strengthInput.style.cssText = "width: 76px; margin-bottom: 0";
+    var remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ng-gen-btn";
+    remove.style.cssText = "width: auto";
+    remove.textContent = "\u00d7";
+    remove.title = "Remove this RefMod";
+    var hint = document.createElement("div");
+    hint.className = "ng-gen-label ng-h3-refmod-hint";
+    hint.style.cssText = "margin-top: 2px; text-transform: none; letter-spacing: 0; display: none";
+    line.appendChild(select);
+    line.appendChild(strengthInput);
+    line.appendChild(remove);
+    row.appendChild(line);
+    row.appendChild(hint);
+    els.refmodsRows.appendChild(row);
+
+    var first = refLib.refmods.filter(function (e) { return e.ok; })[0];
+    if (name && refmodEntry(name) && refmodEntry(name).ok) select.value = name;
+    else if (first) select.value = first.name;
+    strengthInput.value = strength != null ? strength : 1;
+    select.addEventListener("change", function () { updateRefmodHint(row); });
+    remove.addEventListener("click", function () {
+      els.refmodsRows.removeChild(row);
+      syncRefmodControls();
+    });
+    updateRefmodHint(row);
+    syncRefmodControls();
+  }
+
+  // [{name, strength}] for the rows on screen -- only meaningful on h3ref.
+  function selectedRefmods() {
+    if (!els.refmodsRows || !refmodsOn()) return [];
+    var out = [];
+    Array.prototype.forEach.call(els.refmodsRows.children, function (row) {
+      var name = row.querySelector("select").value;
+      var strength = parseFloat(row.querySelector("input").value);
+      if (name) out.push({ name: name, strength: isNaN(strength) ? 1.0 : strength });
+    });
+    return out;
+  }
+
+  function ensureRefmodsLoaded() {
+    if (refLib.loaded) return;
+    refLib.loaded = true;
+    fetch(API + "/refmods")
+      .then(function (r) { return r.json(); })
+      .then(function (payload) {
+        refLib.refmods = (payload && payload.refmods) || [];
+        refLib.ready = !!(payload && payload.ready);
+        refLib.ref2vaOk = !!(payload && payload.ref2va_ok);
+        refLib.supported = !!(payload && payload.refmod_supported);
+        refLib.maxVideos = (payload && payload.max_videos) || 3;
+        syncRefmodControls();
+      })
+      .catch(function () {
+        refLib.loaded = false; // let a later sync retry
+      });
+  }
+
   function ensureStatusChecked() {
     if (statusChecked) return;
     statusChecked = true;
@@ -463,6 +610,12 @@
             ? ""
             : "lightx2v v1.3 adapter not found -- build it from Phosphene's Speed row";
           els.v13Row.classList.toggle("ng-vg-ref-col-disabled", !v13Ok);
+        }
+        // The status answer must not unlock what the Ref2VA model locks off.
+        if (refmodsOn()) {
+          [els.turbo, els.v13].forEach(function (box) {
+            if (box) { box.checked = false; box.disabled = true; }
+          });
         }
       })
       .catch(function () {
@@ -527,6 +680,8 @@
     if (v13) form.append("v13", "true");
     var loras = selectedLoras();
     if (loras.length) form.append("loras", JSON.stringify(loras));
+    var refmods = selectedRefmods();
+    if (refmods.length) form.append("refmods", JSON.stringify(refmods));
     if (seed !== null && !isNaN(seed)) form.append("seed", String(seed));
 
     fetch(API + "/generate", { method: "POST", body: form })
@@ -748,6 +903,8 @@
       els.model.addEventListener("change", function () {
         statusChecked = false; // re-check reachability for the newly picked model
         ensureStatusChecked();
+        ensureRefmodsLoaded();
+        syncRefmodControls();
       });
     }
     if (els.turbo && els.model) {
@@ -806,6 +963,11 @@
     [els.turbo, els.v13].forEach(function (box) {
       if (box) box.addEventListener("change", syncLoraControls);
     });
+    if (els.refmodAdd) {
+      els.refmodAdd.addEventListener("click", function () {
+        if (els.refmodsRows.children.length < refLib.maxVideos) addRefmodRow();
+      });
+    }
 
     els.generateBtn.addEventListener("click", generateVideo);
     els.queueClear.addEventListener("click", function () {
@@ -885,6 +1047,8 @@
     init();
     ensureStatusChecked();
     ensureLorasLoaded();
+    ensureRefmodsLoaded();
+    syncRefmodControls();
     renderQueue();
   }
 

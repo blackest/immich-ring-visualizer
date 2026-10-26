@@ -2743,6 +2743,9 @@
                             H3Q8 (quantized, recommended)
                           </option>
                           <option value="h3">H3 (bf16, full precision)</option>
+                          <option value="h3ref">
+                            H3 Ref2VA Q8 (RefMod references)
+                          </option>
                         </select>
                       </div>
                       <div style="flex: 1">
@@ -2792,6 +2795,29 @@
                         style="width: auto"
                       >
                         + Add LoRA
+                      </button>
+                    </div>
+                    <div id="ng-h3-refmods-block" style="margin-top: 8px" hidden>
+                      <label class="ng-gen-label" style="margin-top: 0"
+                        >RefMod references</label
+                      >
+                      <div
+                        id="ng-h3-refmods-note"
+                        class="ng-gen-label"
+                        style="
+                          margin-top: 0;
+                          text-transform: none;
+                          letter-spacing: 0;
+                        "
+                      ></div>
+                      <div id="ng-h3-refmods-rows"></div>
+                      <button
+                        type="button"
+                        class="ng-gen-btn"
+                        id="ng-h3-refmod-add"
+                        style="width: auto"
+                      >
+                        + Add RefMod
                       </button>
                     </div>
                     <div

@@ -66,8 +66,11 @@ from pathlib import Path
 from typing import Callable, Literal, Optional
 
 import h3_loraNG as h3_lora
+import h3_ref2vaNG as h3_ref2va
 
-H3Model = Literal["h3", "h3q8"]
+# "h3ref" is the official Ref2VA transformer (own Q8, see h3_ref2vaNG.py): the only
+# model that reads RefMod reference rows. Same compact VAE/text-encoder pack.
+H3Model = Literal["h3", "h3q8", "h3ref"]
 
 
 class H3JobCancelled(RuntimeError):
@@ -302,6 +305,7 @@ class H3Config:
     text_config: str = ""       # default: H3_TEXT_CONFIG
     dit_bf16_path: str = ""     # default: H3_DIT_BF16
     dit_q8_dir: str = ""        # default: H3_DIT_Q8_DIR
+    dit_ref2va_dir: str = ""    # default: h3_ref2vaNG.ref2va_dit_candidates_ng()
     timeout_s: float = 3600.0   # absolute per-call ceiling; override via RINGVIZ_H3_TIMEOUT_S
     stall_s: float = 1200.0     # no-output watchdog; override via RINGVIZ_H3_STALL_S
 
@@ -330,7 +334,9 @@ def _resolve_h3_dit_ng(config: H3Config) -> Optional[str]:
     """Which DiT weights to pass, per config.model: bf16 is a single
     .safetensors file, q8 is a sharded directory (config.json +
     quant_config.json + model-*.safetensors) -- generate_staged.py's
-    --dit accepts either."""
+    --dit accepts either. "h3ref" is the Ref2VA Q8 directory."""
+    if config.model == "h3ref":
+        return h3_ref2va.resolve_ref2va_dit_ng(config.dit_ref2va_dir, H3_MODELS_ROOT)
     if config.model == "h3q8":
         p = Path(config.dit_q8_dir) if config.dit_q8_dir else H3_DIT_Q8_DIR
         ok = (p / "config.json").is_file() and (p / "quant_config.json").is_file() \
@@ -423,7 +429,15 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         "runner_ok": runner is not None,
         "runner_path": runner or str(H3_RUNNER),
         "dit_ok": dit is not None,
-        "dit_path": dit or (str(H3_DIT_Q8_DIR) if model == "h3q8" else str(H3_DIT_BF16)),
+        "dit_path": dit or (str(H3_DIT_Q8_DIR) if model == "h3q8"
+                            else str(h3_ref2va.ref2va_dit_candidates_ng(H3_MODELS_ROOT)[0]) if model == "h3ref"
+                            else str(H3_DIT_BF16)),
+        # RefMods need BOTH a Ref2VA DiT on disk and a runner that takes --refmod; the
+        # UI shows its rows only when `refmod_ready`, with the missing half spelled out.
+        "ref2va_ok": h3_ref2va.resolve_ref2va_dit_ng("", H3_MODELS_ROOT) is not None,
+        "refmod_supported": bool(runner) and h3_ref2va.runner_supports_refmod_ng(runner),
+        "refmod_ready": h3_ref2va.resolve_ref2va_dit_ng("", H3_MODELS_ROOT) is not None
+                        and bool(runner) and h3_ref2va.runner_supports_refmod_ng(runner),
         "compact_ok": compact_root is not None,
         "compact_path": compact_root or str(H3_COMPACT_ROOT),
         "text_config_ok": text_config is not None,
@@ -441,6 +455,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           steps: Optional[int] = None,
                           turbo: bool = False, v13: bool = False,
                           loras: Optional[list] = None,
+                          refmods: Optional[list] = None,
                           on_log: Optional[Callable[[str], None]] = None,
                           on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
@@ -466,7 +481,13 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     loras is an optional [(path, strength)] list of user style/character
     LoRAs (paths already resolved from h3_lora_libraryNG), each passed as a
     repeated --lora PATH:SCALE after any speed adapter. Each file is first
-    laid out in the base's qkv row order (h3_loraNG.lora_for_runner_ng)."""
+    laid out in the base's qkv row order (h3_loraNG.lora_for_runner_ng).
+
+    refmods is an optional [{"path", "strength", "images", "videos"}] list of
+    saved RefMod references (h3_refmod_libraryNG), each passed as a repeated
+    --refmod PATH:STRENGTH. Needs model="h3ref" and a runner that takes
+    --refmod; single window only, no keyframe or speed adapter -- see
+    h3_ref2vaNG.validate_refmods_ng, which refuses the rest before launch."""
     loras = _validate_h3_loras_ng(loras)
     width = H3_WIDTH if width is None else int(width)
     height = H3_HEIGHT if height is None else int(height)
@@ -525,7 +546,9 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             f"generate_staged.py not found at {config.runner_path or H3_RUNNER}")
     dit = _resolve_h3_dit_ng(config)
     if not dit:
-        expected = H3_DIT_Q8_DIR if config.model == "h3q8" else H3_DIT_BF16
+        expected = (H3_DIT_Q8_DIR if config.model == "h3q8"
+                    else h3_ref2va.ref2va_dit_candidates_ng(H3_MODELS_ROOT)[0] if config.model == "h3ref"
+                    else H3_DIT_BF16)
         raise FileNotFoundError(f"H3 {config.model} DiT weights not found at {expected}")
     compact_root = _resolve_h3_compact_root_ng(config)
     if not compact_root:
@@ -551,6 +574,9 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                 raise FileNotFoundError(f"H3 LoRA not found at {lora_path}")
 
     window_frames, chain_windows, frames = _h3_chain_plan_ng(duration_s)
+    refmods = h3_ref2va.validate_refmods_ng(
+        refmods, model=config.model, image_path=image_path, turbo=turbo, v13=v13,
+        chain_windows=chain_windows, runner=runner)
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
 
     output_dir = Path(output_dir)
@@ -604,12 +630,16 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         # the wrong heads.
         runner_file, _qkv = h3_lora.lora_for_runner_ng(lora_path, runner, on_log)
         cmd += ["--lora", f"{runner_file}:{strength:g}"]
+    cmd += h3_ref2va.refmod_argv_ng(refmods)
 
     if on_log:
         turbo_note = (" [turbo 4-step]" if turbo
                       else " [lightx2v v1.3]" if v13 else "")
         if loras:
             turbo_note += " [" + ", ".join(f"{Path(p).stem}@{s:g}" for p, s in loras) + "]"
+        if refmods:
+            turbo_note += " [refmods " + ", ".join(
+                f"{Path(r['path']).stem}@{r['strength']:g}" for r in refmods) + "]"
         if chain_windows > 1:
             on_log(f"[h3] launching {config.model} {chain_windows} chained windows "
                    f"({window_frames}f each) -> {frames} frames "
@@ -720,4 +750,5 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "frame_rate": H3_FRAME_RATE,
         "frames": frames,
         "duration_s": frames / H3_FRAME_RATE,
+        "refmods": [{"name": Path(r["path"]).stem, "strength": r["strength"]} for r in refmods],
     }
