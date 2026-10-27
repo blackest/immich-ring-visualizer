@@ -178,3 +178,11 @@ separately and `ready` once all are true.
   together: the Q8 DiT load peak is 20 GiB instead of 44, and the output is
   byte-identical. `RINGVIZ_H3_LAZY_ADALN=0` turns it off. `GET
   /api/ng/h3/status` reports `tristep_ok`, `tristep_supported` and `lazy_adaln`.
+- **AdaLN table cache.** When the runner has `--adaln-cache-dir` (minimax-h3-mlx
+  branch `adaln-cache`), Ring Visualizer passes it too, with the folder
+  `~/.cache/ringviz/h3-adaln` (`RINGVIZ_H3_ADALN_CACHE=/other/folder` moves it,
+  `RINGVIZ_H3_ADALN_CACHE=0` turns it off). The first render with a given
+  schedule builds and stores the AdaLN tables (about 0.1 GB for Fast, 0.5 GB for
+  16 steps); later renders with the same schedule, DiT files and LoRA stack load
+  them and never read the ~24 GiB of AdaLN weights (the stage drops from 4.5 s to
+  0.1 s; the clip is byte-identical). `/api/ng/h3/status` reports `adaln_cache`.

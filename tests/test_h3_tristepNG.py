@@ -161,6 +161,47 @@ class LazyAdalnTests(_Base):
         self.assertEqual(eng._h3_lazy_adaln_argv_ng(self.runner, legacy_adaln=False), ["--lazy-adaln"])
 
 
+CACHE_RUNNER = LAZY_RUNNER + "--adaln-cache-dir\n"
+
+
+class AdalnCacheTests(_Base):
+    def setUp(self):
+        super().setUp()
+        self.runner.write_text(CACHE_RUNNER)
+        os.environ.pop("RINGVIZ_H3_ADALN_CACHE", None)
+
+    def test_added_with_the_default_folder_when_the_runner_has_it(self):
+        folder = self._value(self._cmd(tristep=True), "--adaln-cache-dir")
+        self.assertTrue(folder.endswith(os.path.join(".cache", "ringviz", "h3-adaln")), folder)
+
+    def test_the_folder_can_be_moved(self):
+        with mock.patch.dict(os.environ, {"RINGVIZ_H3_ADALN_CACHE": str(self.tmp / "tables")}):
+            self.assertEqual(self._value(self._cmd(), "--adaln-cache-dir"), str(self.tmp / "tables"))
+
+    def test_absent_when_the_runner_lacks_it(self):
+        self.runner.write_text(LAZY_RUNNER)
+        self.assertNotIn("--adaln-cache-dir", self._cmd(tristep=True))
+
+    def test_opt_out_by_environment(self):
+        for off in ("0", "false", "OFF", "no"):
+            with mock.patch.dict(os.environ, {"RINGVIZ_H3_ADALN_CACHE": off}):
+                self.assertNotIn("--adaln-cache-dir", self._cmd())
+
+    def test_never_with_the_legacy_adaln_turbo(self):
+        self.assertEqual(eng._h3_adaln_cache_argv_ng(self.runner, legacy_adaln=True), [])
+        self.assertEqual(eng._h3_adaln_cache_argv_ng(self.runner, legacy_adaln=False)[0], "--adaln-cache-dir")
+
+    def test_it_sits_beside_the_lazy_flag_and_the_log_says_so(self):
+        cmd = self._cmd(tristep=True, refmods=[self._item()])
+        self.assertIn("--lazy-adaln", cmd)
+        self.assertIn("--adaln-cache-dir", cmd)
+
+    def test_health_reports_it(self):
+        self.assertTrue(eng.h3_health_ng("h3ref")["adaln_cache"])
+        self.runner.write_text(LAZY_RUNNER)
+        self.assertFalse(eng.h3_health_ng("h3ref")["adaln_cache"])
+
+
 class _FakeProc:
     """Stands in for the runner subprocess: prints the given lines, then 'exits'."""
     def __init__(self, lines, rc):

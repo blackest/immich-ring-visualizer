@@ -172,6 +172,12 @@ _H3_LORA_APPLIED_RE = re.compile(r"LoRA\s+\S+.*?:\s*(\d+)\s+applied")
 # projections are never resident together -- the Q8 DiT load peak drops from 44 to 20 GiB and the
 # output is byte-identical. Used automatically when the runner has it; RINGVIZ_H3_LAZY_ADALN=0 opts out.
 H3_LAZY_ADALN_FLAG = "--lazy-adaln"
+# `--adaln-cache-dir` (minimax-h3-mlx branch adaln-cache): the AdaLN tables are stored once per
+# schedule and reloaded, and a hit never reads the ~24 GiB of AdaLN weights at all (the AdaLN stage
+# drops from 4.5 s to 0.1 s; the output is byte-identical). Used automatically when the runner has
+# it; the folder defaults to ~/.cache/ringviz/h3-adaln, RINGVIZ_H3_ADALN_CACHE points it elsewhere
+# and RINGVIZ_H3_ADALN_CACHE=0 turns it off.
+H3_ADALN_CACHE_FLAG = "--adaln-cache-dir"
 
 H3_FRAME_RATE = 24.0
 # packing.py: 17n+5 frame grid, 32px canvas grid -- duplicated here (not
@@ -420,6 +426,23 @@ def _h3_lazy_adaln_argv_ng(runner, legacy_adaln: bool) -> list:
     return [H3_LAZY_ADALN_FLAG] if h3_lora.runner_has_flag_ng(runner, H3_LAZY_ADALN_FLAG) else []
 
 
+def _h3_adaln_cache_dir_ng() -> Optional[Path]:
+    """Where the AdaLN tables are stored, or None when the cache is switched off."""
+    raw = os.environ.get("RINGVIZ_H3_ADALN_CACHE", "").strip()
+    if raw.lower() in ("0", "false", "off", "no"):
+        return None
+    return Path(raw).expanduser() if raw else Path.home() / ".cache" / "ringviz" / "h3-adaln"
+
+
+def _h3_adaln_cache_argv_ng(runner, legacy_adaln: bool) -> list:
+    """`--adaln-cache-dir DIR` when the runner has it. Not for the retired ckpt500 turbo, whose adaLN
+    pairs are folded into the tables (`--lora-adaln`) -- that combination was not tested."""
+    folder = _h3_adaln_cache_dir_ng()
+    if legacy_adaln or folder is None or not h3_lora.runner_has_flag_ng(runner, H3_ADALN_CACHE_FLAG):
+        return []
+    return [H3_ADALN_CACHE_FLAG, str(folder)]
+
+
 # The phrase the stackable runner's `--lora` help carries -- probing the help
 # text, not the flag, is what tells a repeatable `--lora` from the older
 # single-slot one (both spell the flag identically).
@@ -499,6 +522,8 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         "tristep_supported": bool(runner) and h3_lora.runner_has_flag_ng(runner, "--sigma-subset"),
         # Informational: this runner will use the lazy AdaLN load on its own.
         "lazy_adaln": bool(runner) and bool(_h3_lazy_adaln_argv_ng(runner, legacy_adaln=False)),
+        # Informational: this runner will store and reuse the AdaLN tables on its own.
+        "adaln_cache": bool(runner) and bool(_h3_adaln_cache_argv_ng(runner, legacy_adaln=False)),
         "v13_ok": H3_V13_LORA_PATH.is_file(),
         "ready": all((python, runner, dit, compact_root, text_config)),
     }
@@ -715,6 +740,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     cmd += h3_ref2va.refmod_argv_ng(refmods)
     lazy_argv = _h3_lazy_adaln_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
     cmd += lazy_argv
+    adaln_cache_argv = _h3_adaln_cache_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
+    cmd += adaln_cache_argv
 
     if on_log:
         turbo_note = (" [turbo 4-step]" if turbo
@@ -722,6 +749,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                       else " [fast 3-step]" if tristep else "")
         if lazy_argv:
             turbo_note += " [lazy adaln]"
+        if adaln_cache_argv:
+            turbo_note += " [adaln cache]"
         if loras:
             turbo_note += " [" + ", ".join(f"{Path(p).stem}@{s:g}" for p, s in loras) + "]"
         if refmods:
