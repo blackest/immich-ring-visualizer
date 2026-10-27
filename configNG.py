@@ -11,6 +11,16 @@ import tempfile
 import time
 from urllib.parse import urlsplit, urlunsplit
 
+
+def _read_secret_file(path):
+    """Contents of a local secret file, or "" if it is missing. Keeps tokens
+    out of the repo: the file lives under ~/.config and is chmod 600."""
+    try:
+        with open(os.path.expanduser(path)) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
 IMMICH_BASE_URL = "http://localhost:2283"
 
 IMMICH_API_KEY = "L4mP37A5kNWHPME0024ms2SGep7KR8xP4oAB9UNGqOM"
@@ -125,7 +135,7 @@ NG_ADDRESS_SETTINGS = [
     {
         "key": "hermes_api_key",
         "env": "RINGVIZ_HERMES_KEY",
-        "default": "6tCD2B8MuMEFmIgxmgpXrPNu_sOGdaz5iEdIhwvcQTw",
+        "default": _read_secret_file("~/.config/ringviz/hermes_key"),
         "label": "Hermes API key",
         "description": "Bearer token sent to the Hermes gateway.",
         "secret": True,
