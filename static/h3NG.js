@@ -7,8 +7,8 @@
  * reference-image paste/drop/drag UX -- trimmed of what H3 doesn't
  * have server-side yet: no /enhance, /discuss, /chat (LTX's own
  * Gemma-side features), no
- * raw width/height/fps controls (steps fixed at h3_engineNG.H3_STEPS
- * for now). A `model` dropdown (h3 vs h3q8) replaces the model split
+ * raw width/height/fps controls (steps default to h3_engineNG.H3_STEPS;
+ * the optional Steps box overrides it). A `model` dropdown (h3 vs h3q8) replaces the model split
  * -- see h3_engineNG.py's docstring for why those are one engine, not
  * two -- and a `quality` dropdown (h3_engineNG.H3_QUALITIES, sent as
  * the named tier, resolved to width/height server-side) replaces
@@ -77,10 +77,14 @@
     els.seed = document.getElementById("ng-h3-seed");
     els.model = document.getElementById("ng-h3-model");
     els.quality = document.getElementById("ng-h3-quality");
+    els.steps = document.getElementById("ng-h3-steps");
+    els.stepsHint = document.getElementById("ng-h3-steps-hint");
     els.turboRow = document.getElementById("ng-h3-turbo-row");
     els.turbo = document.getElementById("ng-h3-turbo");
     els.v13Row = document.getElementById("ng-h3-v13-row");
     els.v13 = document.getElementById("ng-h3-v13");
+    els.tristepRow = document.getElementById("ng-h3-tristep-row");
+    els.tristep = document.getElementById("ng-h3-tristep");
     els.lorasBlock = document.getElementById("ng-h3-loras-block");
     els.lorasRows = document.getElementById("ng-h3-loras-rows");
     els.loraAdd = document.getElementById("ng-h3-lora-add");
@@ -92,6 +96,30 @@
     els.generateBtn = document.getElementById("ng-h3-generate-btn");
     els.status = document.getElementById("ng-h3-status");
     els.mainLog = document.getElementById("ng-h3-log");
+  }
+
+  // A speed adapter fixes the step count (Fast runs 3 steps on its own schedule, Turbo 4,
+  // Faster Best 7), so while one is ticked the Steps box shows that number and is locked,
+  // not the 16 default. The server forces the same value whatever is sent.
+  var stepsDefaults = null;
+  function syncStepsField() {
+    if (!els.steps) return;
+    if (stepsDefaults === null) {
+      stepsDefaults = {
+        placeholder: els.steps.placeholder,
+        title: els.steps.title,
+        hint: els.stepsHint ? els.stepsHint.textContent : "",
+      };
+    }
+    var fixed = null;
+    if (els.tristep && els.tristep.checked) fixed = { n: "3", why: "Fast runs 3 steps on its own schedule" };
+    else if (els.turbo && els.turbo.checked) fixed = { n: "4", why: "Turbo fixes the step count at 4" };
+    else if (els.v13 && els.v13.checked) fixed = { n: "7", why: "Faster Best fixes the step count at 7" };
+    els.steps.disabled = !!fixed;
+    if (fixed) els.steps.value = "";
+    els.steps.placeholder = fixed ? fixed.n : stepsDefaults.placeholder;
+    els.steps.title = fixed ? fixed.why : stepsDefaults.title;
+    if (els.stepsHint) els.stepsHint.textContent = fixed ? fixed.why : stepsDefaults.hint;
   }
 
   function setStatus(msg) {
@@ -318,7 +346,8 @@
   var loraLib = { loras: [], max: 0, maxSpeed: 0, loaded: false };
 
   function loraLimit() {
-    var speed = !!((els.turbo && els.turbo.checked) || (els.v13 && els.v13.checked));
+    var speed = !!((els.turbo && els.turbo.checked) || (els.v13 && els.v13.checked)
+      || (els.tristep && els.tristep.checked));
     return speed ? loraLib.maxSpeed : loraLib.max;
   }
 
@@ -490,6 +519,8 @@
         || rows.length >= refLib.maxVideos;
     }
     // Turbo / v1.3 were not made for the Ref2VA weights: lock them off here.
+    // Fast (the TaoMate 3-step adapter) is the exception -- tested with a RefMod
+    // on the Ref2VA Q8 -- so it is left alone.
     [els.turbo, els.v13].forEach(function (box) {
       if (!box) return;
       if (on) { box.checked = false; box.disabled = true; }
@@ -506,14 +537,33 @@
     var select = document.createElement("select");
     select.className = "ng-gen-input";
     select.style.cssText = "flex: 1; margin-bottom: 0";
-    refLib.refmods.forEach(function (entry) {
-      var opt = document.createElement("option");
-      opt.value = entry.name;
-      opt.textContent = (entry.ok ? "" : "(unusable) ") + entry.name;
-      opt.disabled = !entry.ok;
-      opt.title = entry.reason || "";
-      select.appendChild(opt);
-    });
+    // The shared library can hold ~1,500 files: a filter box narrows the list
+    // (name or description), keeping the current pick if it still matches.
+    var filter = document.createElement("input");
+    filter.type = "search";
+    filter.className = "ng-gen-input";
+    filter.placeholder = "filter " + refLib.refmods.length + " RefMods…";
+    filter.style.cssText = "width: 11em; margin-bottom: 0";
+    function populate() {
+      var keep = select.value;
+      var q = filter.value.trim().toLowerCase();
+      select.textContent = "";
+      refLib.refmods.forEach(function (entry) {
+        if (q && (entry.name + " " + (entry.description || "")).toLowerCase().indexOf(q) < 0) return;
+        var opt = document.createElement("option");
+        opt.value = entry.name;
+        opt.textContent = (entry.ok ? "" : "(unusable) ") + entry.name;
+        opt.disabled = !entry.ok;
+        opt.title = entry.reason || "";
+        select.appendChild(opt);
+      });
+      var opts = Array.prototype.slice.call(select.options);
+      var pick = opts.filter(function (o) { return o.value === keep; })[0]
+        || opts.filter(function (o) { return !o.disabled; })[0];
+      if (pick) select.value = pick.value;
+      if (row.parentNode) updateRefmodHint(row);
+    }
+    populate();
     var strengthInput = document.createElement("input");
     strengthInput.type = "number";
     strengthInput.className = "ng-gen-input";
@@ -530,6 +580,7 @@
     var hint = document.createElement("div");
     hint.className = "ng-gen-label ng-h3-refmod-hint";
     hint.style.cssText = "margin-top: 2px; text-transform: none; letter-spacing: 0; display: none";
+    line.appendChild(filter);
     line.appendChild(select);
     line.appendChild(strengthInput);
     line.appendChild(remove);
@@ -542,6 +593,7 @@
     else if (first) select.value = first.name;
     strengthInput.value = strength != null ? strength : 1;
     select.addEventListener("change", function () { updateRefmodHint(row); });
+    filter.addEventListener("input", populate);
     remove.addEventListener("click", function () {
       els.refmodsRows.removeChild(row);
       syncRefmodControls();
@@ -611,6 +663,21 @@
             : "lightx2v v1.3 adapter not found -- build it from Phosphene's Speed row";
           els.v13Row.classList.toggle("ng-vg-ref-col-disabled", !v13Ok);
         }
+        // Fast needs the adapter file AND a runner that takes --sigma-subset.
+        var tristepOk = !!(h && h.tristep_ok && h.tristep_supported);
+        if (els.tristep) {
+          els.tristep.disabled = !tristepOk;
+          if (!tristepOk) els.tristep.checked = false;
+        }
+        if (els.tristepRow) {
+          els.tristepRow.title = tristepOk
+            ? (h.lazy_adaln ? "Low-memory AdaLN load is on for this runner" : "")
+            : (h && h.tristep_ok === false
+              ? "TaoMate 3-step adapter not found -- Phosphene's Speed row downloads it"
+              : "this H3 runner has no --sigma-subset -- update the minimax-h3-mlx runner");
+          els.tristepRow.classList.toggle("ng-vg-ref-col-disabled", !tristepOk);
+        }
+        syncStepsField();
         // The status answer must not unlock what the Ref2VA model locks off.
         if (refmodsOn()) {
           [els.turbo, els.v13].forEach(function (box) {
@@ -642,6 +709,7 @@
     var quality = els.quality ? els.quality.value : "high";
     var turbo = !!(els.turbo && !els.turbo.disabled && els.turbo.checked);
     var v13 = !!(els.v13 && !els.v13.disabled && els.v13.checked);
+    var tristep = !!(els.tristep && !els.tristep.disabled && els.tristep.checked);
 
     var localId = "h" + ++localSeq;
     var item = {
@@ -656,6 +724,7 @@
       quality: quality,
       turbo: turbo,
       v13: v13,
+      tristep: tristep,
       error: null,
       videoUrl: null,
       logTail: [],
@@ -676,8 +745,11 @@
     form.append("duration_s", String(durationS));
     form.append("model", model);
     form.append("quality", quality);
+    var steps = els.steps ? parseInt(els.steps.value, 10) : NaN;
+    if (!isNaN(steps) && steps >= 4 && steps <= 40 && !els.steps.disabled) form.append("steps", String(steps));
     if (turbo) form.append("turbo", "true");
     if (v13) form.append("v13", "true");
+    if (tristep) form.append("tristep", "true");
     var loras = selectedLoras();
     if (loras.length) form.append("loras", JSON.stringify(loras));
     var refmods = selectedRefmods();
@@ -945,11 +1017,24 @@
       };
       els.turbo.addEventListener("change", function () {
         if (els.turbo.checked && els.v13) els.v13.checked = false;
+        if (els.turbo.checked && els.tristep) els.tristep.checked = false;
         syncSpeedLocks();
       });
       if (els.v13) {
         els.v13.addEventListener("change", function () {
           if (els.v13.checked) els.turbo.checked = false;
+          if (els.v13.checked && els.tristep) els.tristep.checked = false;
+          syncSpeedLocks();
+        });
+      }
+      // Fast never locks the model (it works on the Q8 DiTs); ticking it only has
+      // to release a lock turbo / v1.3 may have been holding, and clear them.
+      if (els.tristep) {
+        els.tristep.addEventListener("change", function () {
+          if (els.tristep.checked) {
+            els.turbo.checked = false;
+            if (els.v13) els.v13.checked = false;
+          }
           syncSpeedLocks();
         });
       }
@@ -960,8 +1045,9 @@
         if (els.lorasRows.children.length < loraLimit()) addLoraRow();
       });
     }
-    [els.turbo, els.v13].forEach(function (box) {
+    [els.turbo, els.v13, els.tristep].forEach(function (box) {
       if (box) box.addEventListener("change", syncLoraControls);
+      if (box) box.addEventListener("change", syncStepsField);
     });
     if (els.refmodAdd) {
       els.refmodAdd.addEventListener("click", function () {
@@ -1009,6 +1095,10 @@
     if (entry.turbo && els.turbo && !els.turbo.disabled && !els.turbo.checked) {
       els.turbo.checked = true;
       els.turbo.dispatchEvent(new Event("change"));
+    }
+    if (els.tristep && !els.tristep.disabled && !!els.tristep.checked !== !!entry.tristep) {
+      els.tristep.checked = !!entry.tristep;
+      els.tristep.dispatchEvent(new Event("change"));
     }
     if (els.lorasRows) {
       els.lorasRows.innerHTML = "";

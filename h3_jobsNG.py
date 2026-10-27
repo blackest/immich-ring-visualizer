@@ -46,6 +46,7 @@ class H3JobNG:
     steps: int = h3.H3_STEPS
     turbo: bool = False  # 4-step distilled LoRA -- forces steps to H3_TURBO_STEPS
     v13: bool = False  # lightx2v v1.3 faster-Best -- forces steps to H3_V13_STEPS
+    tristep: bool = False  # TaoMate 3-step "Fast" -- forces steps to H3_TRISTEP_STEPS; allowed with RefMods
     loras: list = field(default_factory=list)  # [{"name", "path", "strength"}] user LoRAs
     refmods: list = field(default_factory=list)  # [{"name", "path", "strength", "images", "videos"}] RefMods
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
@@ -114,7 +115,7 @@ def _worker_loop() -> None:
                 duration_s=job.duration_s, output_dir=job.job_dir,
                 seed=job.seed, config=h3.H3Config(**cfg_kwargs),
                 width=job.width, height=job.height, steps=job.steps,
-                turbo=job.turbo, v13=job.v13,
+                turbo=job.turbo, v13=job.v13, tristep=job.tristep,
                 loras=[(l["path"], l["strength"]) for l in job.loras],
                 refmods=job.refmods,
                 on_log=job.append_log,
@@ -148,7 +149,8 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      steps: Optional[int] = None, turbo: bool = False,
                      v13: bool = False, loras: Optional[list] = None,
                      refmods: Optional[list] = None,
-                     timeout_s: Optional[float] = None) -> H3JobNG:
+                     timeout_s: Optional[float] = None,
+                     tristep: bool = False) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
     video_jobsNG.start_video_job_ng (see its own docstring for the full
@@ -171,6 +173,11 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         raise ValueError("turbo and v13 are separate speed adapters -- pick one")
     if v13 and model != "h3":
         raise ValueError("v13 requires model='h3' (bf16) -- same limitation as turbo")
+    if tristep and (turbo or v13):
+        raise ValueError("Fast (3-step) is its own speed adapter -- not with turbo or v13")
+    if tristep and h3._resolve_h3_tristep_ng() is None:
+        raise FileNotFoundError(
+            "Fast (TaoMate 3-step) adapter not found in the H3 turbo-lora folder")
     h3._validate_h3_duration_ng(duration_s)
     # RefMods are checked here too, so a combination the runner cannot do (a speed
     # adapter, a keyframe, a chained length, the wrong model) fails the POST
@@ -178,7 +185,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     refmods = h3_ref2va.validate_refmods_ng(
         refmods, model=model, image_path="keyframe" if image_bytes is not None else None,
         turbo=turbo, v13=v13, chain_windows=h3._h3_chain_plan_ng(duration_s)[1],
-        runner=h3._resolve_h3_runner_ng(h3.H3Config()) or h3.H3_RUNNER)
+        runner=h3._resolve_h3_runner_ng(h3.H3Config()) or h3.H3_RUNNER, tristep=tristep)
 
     width = h3.H3_WIDTH if width is None else int(width)
     height = h3.H3_HEIGHT if height is None else int(height)
@@ -187,6 +194,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     # will actually run, not whatever default was requested before turbo
     # was known.
     steps = (h3.H3_TURBO_STEPS if turbo else h3.H3_V13_STEPS if v13
+             else h3.H3_TRISTEP_STEPS if tristep
              else (h3.H3_STEPS if steps is None else int(steps)))
     h3._validate_h3_dims_ng(width, height)
     if v13 and (width, height) != (h3.H3_WIDTH, h3.H3_HEIGHT):
@@ -201,7 +209,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     loras = [{"name": l["name"], "path": p, "strength": st}
              for l, (p, st) in zip(loras, cleaned)]
     if loras:
-        limit = h3.h3_lora_limit_ng(h3.H3_RUNNER, speed_adapter=bool(turbo or v13))
+        limit = h3.h3_lora_limit_ng(h3.H3_RUNNER, speed_adapter=bool(turbo or v13 or tristep))
         if len(loras) > limit:
             raise ValueError(
                 f"this H3 runner takes at most {limit} LoRA(s) with this setup "
@@ -220,7 +228,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
                   width=width, height=height, steps=steps, turbo=turbo, v13=v13,
-                  loras=loras, refmods=refmods, timeout_s=timeout_s)
+                  tristep=tristep, loras=loras, refmods=refmods, timeout_s=timeout_s)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()
@@ -277,6 +285,7 @@ def job_status_ng(job_id: str) -> dict:
         "steps": job.steps,
         "turbo": job.turbo,
         "v13": job.v13,
+        "tristep": job.tristep,
         "loras": [{"name": l["name"], "strength": l["strength"]} for l in job.loras],
         "refmods": [{"name": r["name"], "strength": r["strength"]} for r in job.refmods],
         "error": job.error,

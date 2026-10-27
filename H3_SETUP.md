@@ -154,3 +154,27 @@ separately and `ready` once all are true.
   only the Q8 engine this app defaults to. The bf16 weights ARE downloaded
   as part of step 3 (they're what the Q8 build quantizes from), so nothing
   extra needs fetching if you later want to wire up the larger tier.
+
+### Fast (3-step) and RefMods
+
+- **Fast** is the TaoMate-H3 3-step adapter, the same one Phosphene's Speed
+  row calls "Fast". It runs 3 forwards on its own sigma ladder (`--steps 4
+  --sigma-subset 50:0,16,33,49`). Unlike Turbo it works on the quantized DiTs
+  (the runner reports `208 applied`), and it is the one speed adapter allowed
+  together with a RefMod. It needs the adapter file
+  (`minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors`, or the
+  full-rank `taomate_h3_3step_ourlayout.safetensors`) in the H3 `turbo-lora`
+  folder and a runner that has `--sigma-subset`. If the runner ever reports the
+  adapter attached to 0 modules, the render is stopped, not finished undistilled.
+- A measured recipe on a 96 GB M2 Max: model **H3 Ref2VA Q8**, the **draft**
+  canvas (640x384), 5 s, **Fast**, one RefMod of about 8 images. The H3 stage
+  took 369 s with the likeness holding; Phosphene's x2 Upscale & Face Fix then
+  gets a 1280x768 result in about 10.6 minutes in total. A RefMod stacked from
+  22 images blended several looks of the same person and cost 482 s; fewer,
+  cleaner images hold one look and cost fewer attention rows.
+- **Low-memory load.** When the runner has `--lazy-adaln` (minimax-h3-mlx branch
+  `lazy-adaln`), Ring Visualizer passes it automatically. It builds the AdaLN
+  cache block by block so the ~24 GiB of AdaLN projections are never resident
+  together: the Q8 DiT load peak is 20 GiB instead of 44, and the output is
+  byte-identical. `RINGVIZ_H3_LAZY_ADALN=0` turns it off. `GET
+  /api/ng/h3/status` reports `tristep_ok`, `tristep_supported` and `lazy_adaln`.

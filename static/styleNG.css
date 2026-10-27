@@ -27,6 +27,15 @@ html, body {
   font-size: 14px;
 }
 
+/* Desktop size. The 14px basis puts most of the UI at 10-11px, which is small
+   on a large display, so the root is scaled by --ng-ui-scale: 1.25 by default
+   (17.5px basis, controls at ~14px). The page head sets the variable from
+   localStorage; open the page with ?ui=1.4 to change it (remembered) or
+   ?ui=reset to go back to the default. The tablet rule below still wins on
+   touch devices. */
+html { font-size: calc(14px * var(--ng-ui-scale, 1.25)); }
+body { font-size: 1rem; }
+
 /* Every font-size in this file is in rem against the 14px basis above, so
    bumping the root size here scales the whole NG UI at once. Targets
    touch tablets (iPad's ~768-1366 CSS-px range) without catching phones

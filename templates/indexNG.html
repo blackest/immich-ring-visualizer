@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>immichRingNG</title>
+    <script>
+      // UI size (see styleNG.css): ?ui=1.4 sets it and is remembered, ?ui=reset clears it.
+      (function () {
+        try {
+          var q = new URLSearchParams(location.search).get("ui");
+          if (q === "reset") localStorage.removeItem("ng-ui-scale");
+          else if (q && parseFloat(q) >= 0.8 && parseFloat(q) <= 2.5)
+            localStorage.setItem("ng-ui-scale", String(parseFloat(q)));
+          var s = parseFloat(localStorage.getItem("ng-ui-scale"));
+          if (s >= 0.8 && s <= 2.5)
+            document.documentElement.style.setProperty("--ng-ui-scale", String(s));
+        } catch (e) {}
+      })();
+    </script>
     <link
       rel="stylesheet"
       href="{{ url_for('static', filename='styleNG.css') }}"
@@ -2773,6 +2787,25 @@
                         </select>
                       </div>
                     </div>
+                    <div style="display: flex; align-items: center; gap: 8px; margin: 6px 0">
+                      <label class="ng-gen-label" for="ng-h3-steps" style="margin: 0"
+                        >Steps</label
+                      >
+                      <input
+                        type="number"
+                        id="ng-h3-steps"
+                        class="ng-gen-input"
+                        min="4"
+                        max="40"
+                        step="1"
+                        placeholder="16"
+                        style="width: 5em; margin: 0"
+                        title="Denoise steps. Blank = 16 (H3 default). 8 is a quick preview, about half the time."
+                      />
+                      <span class="ng-gen-hint" id="ng-h3-steps-hint" style="font-size: 0.85rem; opacity: 0.7"
+                        >blank = 16; 8 = quick preview (~half the time)</span
+                      >
+                    </div>
                     <label class="ng-checkbox-row" id="ng-h3-turbo-row"
                       ><input type="checkbox" id="ng-h3-turbo" /> Turbo
                       (4-step, ~3-4x faster, some quality
@@ -2782,6 +2815,11 @@
                       ><input type="checkbox" id="ng-h3-v13" /> Faster Best
                       (lightx2v v1.3, ~2x faster, near-full quality, High
                       only)</label
+                    >
+                    <label class="ng-checkbox-row" id="ng-h3-tristep-row"
+                      ><input type="checkbox" id="ng-h3-tristep" /> Fast
+                      (TaoMate 3-step, ~4-5x faster; works on the Q8 models
+                      and with RefMods)</label
                     >
                     <div id="ng-h3-loras-block" style="margin-top: 8px" hidden>
                       <label class="ng-gen-label" style="margin-top: 0"

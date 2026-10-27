@@ -63,10 +63,14 @@ def runner_supports_refmod_ng(runner) -> bool:
 
 
 def validate_refmods_ng(refmods, *, model: str, image_path, turbo: bool, v13: bool,
-                        chain_windows: int, runner) -> list:
+                        chain_windows: int, runner, tristep: bool = False) -> list:
     """`refmods`: [{"path", "strength", "images", "videos"}] -> the same list,
     cleaned. Raises ValueError with one plain sentence on anything the runner
-    cannot do. An empty list is always fine (a plain render on any model)."""
+    cannot do. An empty list is always fine (a plain render on any model).
+
+    `tristep` (Fast, the TaoMate 3-step adapter) is allowed: it was tested with a
+    RefMod on the Ref2VA Q8 (640x384, 5 s, the likeness held). The LightX2V
+    adapters (turbo, v1.3) still are not."""
     refmods = list(refmods or [])
     if not refmods:
         return []

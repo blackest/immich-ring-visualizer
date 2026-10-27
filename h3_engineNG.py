@@ -58,6 +58,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import re
 import subprocess
 import threading
 import time
@@ -149,6 +150,28 @@ H3_TURBO_STEPS = 4
 H3_V13_LORA_PATH = H3_MODELS_ROOT / "turbo-lora" / "lightx2v_v1.3_768p_phosphene.safetensors"
 H3_V13_STEPS = 7
 H3_V13_VIDEO_SHIFT = "6"  # LightX2V's training shift; only sent if the runner has --video-shift
+# TaoMate-H3's 3-step adapter ("Fast" in Phosphene). It was distilled onto FOUR points of the
+# 50-point shifted sigma grid, so it runs THREE forwards: `--steps 4 --sigma-subset
+# 50:0,16,33,49` on the runner, not `--steps 4` alone (the adapter never saw a re-spaced grid).
+# Candidates mirror Phosphene's own allowlist: a full-rank copy if one is there, else the
+# 182 MB rank-19 file; the size floor rejects a truncated download. Measured on the Ref2VA Q8
+# with an 8-image RefMod: 640x384, 5 s, 369 s on an M2 Max, and the likeness held. It goes in as
+# `--lora PATH:1.0` untouched -- Phosphene's Fast tier does the same, no qkv bake.
+H3_TRISTEP_STEPS = 4
+H3_TRISTEP_SIGMA_SUBSET = "50:0,16,33,49"
+H3_TRISTEP_CANDIDATES = (
+    (H3_MODELS_ROOT / "turbo-lora" / "taomate_h3_3step_ourlayout.safetensors", 2 * 1024 ** 3),
+    (H3_MODELS_ROOT / "turbo-lora" / "minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors",
+     150 * 1024 ** 2),
+)
+# The runner's own summary line for each adapter, e.g.
+# "LoRA name.safetensors scale 1 mode runtime: 208 applied, 0 skipped, ...". The speed adapter
+# is first on the command line, so its line is the first match.
+_H3_LORA_APPLIED_RE = re.compile(r"LoRA\s+\S+.*?:\s*(\d+)\s+applied")
+# `--lazy-adaln` (minimax-h3-mlx): builds the AdaLN cache block by block so the ~24 GiB of
+# projections are never resident together -- the Q8 DiT load peak drops from 44 to 20 GiB and the
+# output is byte-identical. Used automatically when the runner has it; RINGVIZ_H3_LAZY_ADALN=0 opts out.
+H3_LAZY_ADALN_FLAG = "--lazy-adaln"
 
 H3_FRAME_RATE = 24.0
 # packing.py: 17n+5 frame grid, 32px canvas grid -- duplicated here (not
@@ -369,6 +392,34 @@ def _h3_turbo_argv_ng(turbo_lora: str, turbo_adaln: Optional[str]) -> list:
     return ["--lora", turbo_lora, "--lora-adaln", turbo_adaln]
 
 
+def _resolve_h3_tristep_ng() -> Optional[str]:
+    """The TaoMate 3-step adapter on disk (first candidate that is a real file of at least its
+    floor size), or None."""
+    for path, floor in H3_TRISTEP_CANDIDATES:
+        try:
+            if path.is_file() and path.stat().st_size >= floor:
+                return str(path)
+        except OSError:
+            continue
+    return None
+
+
+def _h3_tristep_argv_ng(tristep_lora: str) -> list:
+    """The runner argv for Fast: the TaoMate ladder and the adapter at 1.0. `--steps` is set
+    separately (H3_TRISTEP_STEPS) like every speed adapter's."""
+    return ["--sigma-subset", H3_TRISTEP_SIGMA_SUBSET, "--lora", f"{tristep_lora}:1.0"]
+
+
+def _h3_lazy_adaln_argv_ng(runner, legacy_adaln: bool) -> list:
+    """`--lazy-adaln` when the runner has it. Not for the retired ckpt500 turbo, which folds adaLN
+    pairs into the cache (`--lora-adaln`) -- that combination is untested with the lazy load."""
+    if legacy_adaln:
+        return []
+    if os.environ.get("RINGVIZ_H3_LAZY_ADALN", "1").strip().lower() in ("0", "false", "off", "no"):
+        return []
+    return [H3_LAZY_ADALN_FLAG] if h3_lora.runner_has_flag_ng(runner, H3_LAZY_ADALN_FLAG) else []
+
+
 # The phrase the stackable runner's `--lora` help carries -- probing the help
 # text, not the flag, is what tells a repeatable `--lora` from the older
 # single-slot one (both spell the flag identically).
@@ -443,6 +494,11 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         "text_config_ok": text_config is not None,
         "text_config_path": text_config or str(H3_TEXT_CONFIG),
         "turbo_ok": turbo_lora is not None,
+        # Fast = the TaoMate 3-step adapter: needs the file AND a runner with --sigma-subset.
+        "tristep_ok": _resolve_h3_tristep_ng() is not None,
+        "tristep_supported": bool(runner) and h3_lora.runner_has_flag_ng(runner, "--sigma-subset"),
+        # Informational: this runner will use the lazy AdaLN load on its own.
+        "lazy_adaln": bool(runner) and bool(_h3_lazy_adaln_argv_ng(runner, legacy_adaln=False)),
         "v13_ok": H3_V13_LORA_PATH.is_file(),
         "ready": all((python, runner, dit, compact_root, text_config)),
     }
@@ -457,7 +513,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           loras: Optional[list] = None,
                           refmods: Optional[list] = None,
                           on_log: Optional[Callable[[str], None]] = None,
-                          on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
+                          on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None,
+                          tristep: bool = False) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -486,14 +543,25 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     refmods is an optional [{"path", "strength", "images", "videos"}] list of
     saved RefMod references (h3_refmod_libraryNG), each passed as a repeated
     --refmod PATH:STRENGTH. Needs model="h3ref" and a runner that takes
-    --refmod; single window only, no keyframe or speed adapter -- see
-    h3_ref2vaNG.validate_refmods_ng, which refuses the rest before launch."""
+    --refmod; single window only, no keyframe, and no LightX2V adapter (turbo /
+    v13) -- see h3_ref2vaNG.validate_refmods_ng, which refuses the rest before
+    launch.
+
+    tristep=True is "Fast": the TaoMate 3-step adapter on its own sigma ladder
+    (FORCES steps to H3_TRISTEP_STEPS, adds --sigma-subset). Unlike turbo it
+    works on the quantized DiTs -- the runner's runtime LoRA wrapping attaches
+    all 208 modules there -- and it is the one speed adapter that is allowed
+    with a RefMod. Needs a runner with --sigma-subset. If the runner reports
+    that the adapter attached 0 modules the render is stopped rather than
+    finished undistilled. One speed adapter per run."""
     loras = _validate_h3_loras_ng(loras)
     width = H3_WIDTH if width is None else int(width)
     height = H3_HEIGHT if height is None else int(height)
     if turbo and v13:
         raise ValueError("turbo and v13 are separate speed adapters -- pick one")
-    steps = (H3_TURBO_STEPS if turbo else H3_V13_STEPS if v13
+    if tristep and (turbo or v13):
+        raise ValueError("Fast (3-step) is its own speed adapter -- not with turbo or v13")
+    steps = (H3_TURBO_STEPS if turbo else H3_V13_STEPS if v13 else H3_TRISTEP_STEPS if tristep
              else (H3_STEPS if steps is None else int(steps)))
     _validate_h3_dims_ng(width, height)
     _validate_h3_duration_ng(duration_s)
@@ -535,6 +603,15 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                 f"H3 turbo LoRA not found -- expected {H3_TURBO_V1_LORA_PATH}, "
                 f"or both {H3_TURBO_LORA_PATH} and {H3_TURBO_ADALN_PATH}")
 
+    tristep_lora = None
+    if tristep:
+        tristep_lora = _resolve_h3_tristep_ng()
+        if not tristep_lora:
+            raise FileNotFoundError(
+                f"Fast (TaoMate 3-step) adapter not found -- expected "
+                f"{H3_TRISTEP_CANDIDATES[-1][0]} (or the full-rank copy beside it); "
+                f"Phosphene's Speed row downloads it")
+
     python = _resolve_h3_python_ng(config)
     if not python:
         raise FileNotFoundError(
@@ -544,6 +621,9 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     if not runner:
         raise FileNotFoundError(
             f"generate_staged.py not found at {config.runner_path or H3_RUNNER}")
+    if tristep and not h3_lora.runner_has_flag_ng(runner, "--sigma-subset"):
+        raise ValueError("this H3 runner has no --sigma-subset, which Fast (3-step) needs -- "
+                         "update the minimax-h3-mlx runner")
     dit = _resolve_h3_dit_ng(config)
     if not dit:
         expected = (H3_DIT_Q8_DIR if config.model == "h3q8"
@@ -563,11 +643,11 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     if image_path is not None and not Path(image_path).is_file():
         raise FileNotFoundError(f"H3 keyframe image not found at {image_path}")
     if loras:
-        limit = h3_lora_limit_ng(runner, speed_adapter=bool(turbo or v13))
+        limit = h3_lora_limit_ng(runner, speed_adapter=bool(turbo or v13 or tristep))
         if len(loras) > limit:
             raise ValueError(
                 f"this H3 runner takes at most {limit} LoRA(s) alongside "
-                f"{'a speed adapter' if turbo or v13 else 'a render'} "
+                f"{'a speed adapter' if turbo or v13 or tristep else 'a render'} "
                 f"(got {len(loras)}) -- update the H3 runner to stack more")
         for lora_path, _s in loras:
             if not Path(lora_path).is_file():
@@ -576,7 +656,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     window_frames, chain_windows, frames = _h3_chain_plan_ng(duration_s)
     refmods = h3_ref2va.validate_refmods_ng(
         refmods, model=config.model, image_path=image_path, turbo=turbo, v13=v13,
-        chain_windows=chain_windows, runner=runner)
+        chain_windows=chain_windows, runner=runner, tristep=tristep)
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
 
     output_dir = Path(output_dir)
@@ -623,6 +703,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         cmd += ["--lora", f"{H3_V13_LORA_PATH}:1.0"]
         if h3_lora.runner_has_flag_ng(runner, "--video-shift"):
             cmd += ["--video-shift", H3_V13_VIDEO_SHIFT]
+    if tristep:
+        cmd += _h3_tristep_argv_ng(tristep_lora)
     for lora_path, strength in loras:
         # A speed adapter's own file is already in the runner's order (turbo
         # is baked above, v1.3 ships that way); a user LoRA is not, so it goes
@@ -631,10 +713,15 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         runner_file, _qkv = h3_lora.lora_for_runner_ng(lora_path, runner, on_log)
         cmd += ["--lora", f"{runner_file}:{strength:g}"]
     cmd += h3_ref2va.refmod_argv_ng(refmods)
+    lazy_argv = _h3_lazy_adaln_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
+    cmd += lazy_argv
 
     if on_log:
         turbo_note = (" [turbo 4-step]" if turbo
-                      else " [lightx2v v1.3]" if v13 else "")
+                      else " [lightx2v v1.3]" if v13
+                      else " [fast 3-step]" if tristep else "")
+        if lazy_argv:
+            turbo_note += " [lazy adaln]"
         if loras:
             turbo_note += " [" + ", ".join(f"{Path(p).stem}@{s:g}" for p, s in loras) + "]"
         if refmods:
@@ -669,6 +756,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         stall_s = float(os.environ.get("RINGVIZ_H3_STALL_S", config.stall_s))
         timed_out = {"v": False}
         stalled = {"v": False}
+        adapter_seen = {"v": False}
+        adapter_failed = {"v": False}
         last_activity = {"t": time.time()}
 
         def _kill_proc():
@@ -717,11 +806,24 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                         continue
                     if on_log:
                         on_log(f"[h3] {line}")
+                    if tristep and not adapter_seen["v"]:
+                        # The first adapter summary is the speed adapter's. 0 modules means the
+                        # render would run undistilled at 4 steps, so stop it now, not in 6 minutes.
+                        m = _H3_LORA_APPLIED_RE.search(line)
+                        if m:
+                            adapter_seen["v"] = True
+                            if int(m.group(1)) == 0:
+                                adapter_failed["v"] = True
+                                _kill_proc()
             rc = proc.wait()
         finally:
             watchdog.cancel()
             stop_stall_watch.set()
 
+    if adapter_failed["v"]:
+        raise RuntimeError(
+            "the Fast (3-step) adapter attached to 0 modules on this DiT, so the render was "
+            "stopped instead of running undistilled -- check the runner's LoRA summary line")
     if stalled["v"]:
         raise H3JobCancelled(
             f"H3 gen produced no output for {stall_s:.0f}s and was "
