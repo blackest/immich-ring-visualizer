@@ -178,6 +178,14 @@ NG_ADDRESS_SETTINGS = [
         "probe": True,
     },
     {
+        "key": "h3ir_base_url",
+        "env": "RINGVIZ_H3IR_URL",
+        "default": "http://127.0.0.1:8700",
+        "label": "H3 compiler URL",
+        "description": "OpenH3-IR (`h3ir serve`) powering the Enhanced H3 view: turns a sentence and reference files into an H3 brief. Same machine; it calls your language model itself.",
+        "probe": True,
+    },
+    {
         "key": "ltx_output_preset",
         "env": "RINGVIZ_LTX_OUTPUT_PRESET",
         "default": "web",
@@ -445,3 +453,7 @@ def get_tailscale_hostname():
 
 def get_comfyui_base_url():
     return _ng_setting("comfyui_base_url").rstrip("/")
+
+
+def get_h3ir_base_url():
+    return _ng_setting("h3ir_base_url").rstrip("/")

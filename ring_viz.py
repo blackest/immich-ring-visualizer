@@ -34,6 +34,7 @@ from routes.videogenNG import videogenNG_bp  # NG: new blueprint, no changes to 
 from routes.hdmultiNG import hdmultiNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.comfyNG import comfyNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.h3NG import h3NG_bp  # NG: new blueprint, no changes to existing ones
+from routes.enhancedh3NG import enhancedh3NG_bp  # NG: new blueprint, no changes to existing ones
 from routes.musicNG import musicNG_bp  # NG: new blueprint, no changes to existing ones
 
 app = Flask(__name__)
@@ -57,6 +58,7 @@ app.register_blueprint(videogenNG_bp)  # NG: /api/ng/videogen/* (LTX image-to-vi
 app.register_blueprint(hdmultiNG_bp)  # NG: /api/ng/hdmulti/* (HiDream edit/multi-ref one-off jobs), additive only
 app.register_blueprint(comfyNG_bp)  # NG: /api/ng/comfy/* (arbitrary ComfyUI workflow from a PNG's metadata), additive only
 app.register_blueprint(h3NG_bp)  # NG: /api/ng/h3/* (MiniMax-H3 prompt/image-to-video job queue), additive only
+app.register_blueprint(enhancedh3NG_bp)  # NG: /api/ng/enhanced-h3/* (OpenH3-IR brief compiler, split per chained window), additive only
 app.register_blueprint(musicNG_bp)  # NG: /api/ng/music/* (YuE2 style+lyrics-to-song job queue), additive only
 if __name__ == "__main__":
     # use_reloader on its own (without debug=True) restarts the process
