@@ -527,6 +527,11 @@
     });
   }
 
+  // Strength a new RefMod row starts at, and what an unreadable box falls back to. 1.0 copied the
+  // reference too hard (the clip opened on the reference photo, its wall colour bled into the
+  // scene); 0.7 is the usual recommendation.
+  var REFMOD_DEFAULT_STRENGTH = 0.7;
+
   function addRefmodRow(name, strength) {
     if (!els.refmodsRows) return;
     var row = document.createElement("div");
@@ -591,7 +596,7 @@
     var first = refLib.refmods.filter(function (e) { return e.ok; })[0];
     if (name && refmodEntry(name) && refmodEntry(name).ok) select.value = name;
     else if (first) select.value = first.name;
-    strengthInput.value = strength != null ? strength : 1;
+    strengthInput.value = strength != null ? strength : REFMOD_DEFAULT_STRENGTH;
     select.addEventListener("change", function () { updateRefmodHint(row); });
     filter.addEventListener("input", populate);
     remove.addEventListener("click", function () {
@@ -608,8 +613,10 @@
     var out = [];
     Array.prototype.forEach.call(els.refmodsRows.children, function (row) {
       var name = row.querySelector("select").value;
-      var strength = parseFloat(row.querySelector("input").value);
-      if (name) out.push({ name: name, strength: isNaN(strength) ? 1.0 : strength });
+      // The row's FIRST <input> is the filter box, so ask for the number box by type: reading
+      // the first one gave NaN every time and sent strength 1.0 whatever was typed.
+      var strength = parseFloat(row.querySelector('input[type="number"]').value);
+      if (name) out.push({ name: name, strength: isNaN(strength) ? REFMOD_DEFAULT_STRENGTH : strength });
     });
     return out;
   }
