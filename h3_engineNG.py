@@ -42,11 +42,13 @@ own README is explicit about (4 steps without the adapter is
 free identical-quality shortcut). Both required files were already
 present on disk under H3_MODELS_ROOT/turbo-lora/ -- nothing to fetch.
 
-Deliberately still NOT wired: --chain-prompts (a different prompt per
-window -- phosphene derives that from a shot's "settle" state, which
-this app's plain prompt box has no equivalent of, so every window
-gets the same prompt, the runner's own documented fallback), live
-preview, draft/TAE decode, step-cache, prompt-cache reuse. User
+--chain-prompts (a different prompt per window) IS wired as the optional
+`chain_prompts` list, one string per window. Without it every window gets
+the same prompt (the runner's own fallback), so a multi-shot prompt plays
+its opening again in each window.
+
+Deliberately still NOT wired: live preview, draft/TAE decode, step-cache,
+prompt-cache reuse. User
 style/character LoRAs ARE wired: `loras=[(path, strength)]` becomes a
 repeated --lora PATH:SCALE after any speed adapter (names are resolved to
 paths by h3_lora_libraryNG.py; each file is first laid out in the base's
@@ -55,6 +57,7 @@ qkv row order by h3_loraNG.lora_for_runner_ng).
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import random
@@ -539,7 +542,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           refmods: Optional[list] = None,
                           on_log: Optional[Callable[[str], None]] = None,
                           on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None,
-                          tristep: bool = False) -> dict:
+                          tristep: bool = False,
+                          chain_prompts: Optional[list] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -690,9 +694,20 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     out_mp4 = output_dir / f"h3_{ts}.mp4"
     metrics_path = output_dir / f"h3_{ts}.metrics.json"
 
+    if chain_prompts:
+        # --chain-prompts and the positional prompt are mutually exclusive in
+        # the runner, and it wants exactly one prompt per window.
+        if chain_windows == 1:
+            raise ValueError("chain_prompts needs a clip longer than one window")
+        if len(chain_prompts) != chain_windows:
+            raise ValueError(f"this clip is {chain_windows} windows but {len(chain_prompts)} "
+                             f"chain prompts were given")
+        chain_prompts_path = output_dir / f"h3_{ts}.chain_prompts.json"
+        chain_prompts_path.write_text(json.dumps(chain_prompts))
+
     cmd = [
         python, runner,
-        prompt,
+        *([] if chain_prompts else [prompt]),
         "--dit", dit,
         "--compact-root", compact_root,
         "--text-config", text_config,
@@ -713,6 +728,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         # every window that finished before the failure on disk.
         cmd += ["--chain-windows", str(chain_windows), "--chain-total-frames", str(frames),
                 "--chain-keep-windows"]
+        if chain_prompts:
+            cmd += ["--chain-prompts", str(chain_prompts_path)]
     if image_path is not None:
         cmd += ["--first-frame", image_path]
     if turbo:

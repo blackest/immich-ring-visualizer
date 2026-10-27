@@ -218,6 +218,22 @@ def _loras_from_form() -> list:
     return out
 
 
+def _chain_prompts_from_form() -> list:
+    """The `chain_prompts` form field -> a list of prompt strings, one per
+    chained window. Raises ValueError (-> 400) for anything but a JSON array
+    of non-empty strings; the window count is checked by the engine."""
+    raw = (request.form.get("chain_prompts") or "").strip()
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except ValueError:
+        raise ValueError("chain_prompts must be a JSON array of strings") from None
+    if not isinstance(items, list) or not all(isinstance(i, str) and i.strip() for i in items):
+        raise ValueError("chain_prompts must be a JSON array of non-empty strings")
+    return [i.strip() for i in items]
+
+
 @h3NG_bp.route("/api/ng/h3/generate", methods=["POST"])
 def h3_generate_ng():
     """Form fields: file (multipart -- the keyframe image) OR
@@ -242,12 +258,19 @@ def h3_generate_ng():
     here, never taken from the client), refmods (optional JSON array of
     {"name": str, "strength": 0..1} -- library names from GET
     /api/ng/h3/refmods; needs model "h3ref", a single 5 s window, no
-    keyframe and no LightX2V speed adapter -- Fast (tristep) is allowed).
+    keyframe and no LightX2V speed adapter -- Fast (tristep) is allowed),
+    chain_prompts (optional JSON array of strings -- one prompt per chained
+    5 s window, exactly as many as the clip has windows; replaces `prompt`,
+    which is then optional).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
     the job's own permanent-for-its-lifetime directory."""
-    prompt = str(request.form.get("prompt") or "").strip()
+    try:
+        chain_prompts = _chain_prompts_from_form()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    prompt = str(request.form.get("prompt") or "").strip() or "\n\n".join(chain_prompts)
     if not prompt:
         return jsonify({"error": "prompt is required"}), 400
 
@@ -283,7 +306,8 @@ def h3_generate_ng():
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
             model=model, width=width, height=height, steps=steps, turbo=turbo, v13=v13,
-            loras=loras, refmods=refmods, timeout_s=timeout_s, tristep=tristep)
+            loras=loras, refmods=refmods, timeout_s=timeout_s, tristep=tristep,
+            chain_prompts=chain_prompts)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

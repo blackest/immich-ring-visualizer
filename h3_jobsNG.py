@@ -49,6 +49,7 @@ class H3JobNG:
     tristep: bool = False  # TaoMate 3-step "Fast" -- forces steps to H3_TRISTEP_STEPS; allowed with RefMods
     loras: list = field(default_factory=list)  # [{"name", "path", "strength"}] user LoRAs
     refmods: list = field(default_factory=list)  # [{"name", "path", "strength", "images", "videos"}] RefMods
+    chain_prompts: list = field(default_factory=list)  # one prompt per chained window; empty = `prompt` for every window
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
@@ -117,7 +118,7 @@ def _worker_loop() -> None:
                 width=job.width, height=job.height, steps=job.steps,
                 turbo=job.turbo, v13=job.v13, tristep=job.tristep,
                 loras=[(l["path"], l["strength"]) for l in job.loras],
-                refmods=job.refmods,
+                refmods=job.refmods, chain_prompts=job.chain_prompts,
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.mp4_path = result["mp4_path"]
@@ -150,7 +151,8 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      v13: bool = False, loras: Optional[list] = None,
                      refmods: Optional[list] = None,
                      timeout_s: Optional[float] = None,
-                     tristep: bool = False) -> H3JobNG:
+                     tristep: bool = False,
+                     chain_prompts: Optional[list] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
     video_jobsNG.start_video_job_ng (see its own docstring for the full
@@ -228,7 +230,8 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
                   width=width, height=height, steps=steps, turbo=turbo, v13=v13,
-                  tristep=tristep, loras=loras, refmods=refmods, timeout_s=timeout_s)
+                  tristep=tristep, loras=loras, refmods=refmods, timeout_s=timeout_s,
+                  chain_prompts=chain_prompts or [])
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()
