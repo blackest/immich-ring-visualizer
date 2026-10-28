@@ -59,9 +59,60 @@
         fillSelect(els.effort, o.limits.effort, "standard");
         fillSelect(els.director, o.directors);
         fillSelect(els.language, o.limits.dialogue_languages, "English");
+        restoreFields();
       }
       renderTray();
     }).catch(function () {});
+  }
+
+  // ---- keep the work across a page refresh ----
+  // Text, settings, the brief (with edited window prompts) and a running
+  // render's job id. Files can't be kept here: re-add the pictures after a refresh.
+
+  var STORE = "enhancedh3NG.state";
+  var FIELDS = ["intent", "seconds", "shots", "aspect", "creativity", "director", "effort", "seed",
+    "line", "speaker", "language", "delivery", "quality"];
+  var saved = null;
+  var renderJob = null;
+  var briefNeedsFirstFrame = false;
+  var saveTimer = null;
+
+  function loadSaved() {
+    try { saved = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) { saved = null; }
+  }
+
+  function saveNow() {
+    var state = { fields: {}, silent: els.silent.checked, fast: els.fast.checked,
+      brief: lastBrief, needsFirstFrame: briefNeedsFirstFrame, job: renderJob };
+    FIELDS.forEach(function (k) { state.fields[k] = els[k].value; });
+    if (lastBrief && lastBrief.windows) {
+      state.prompts = [].map.call(els.windows.querySelectorAll("textarea"), function (ta) { return ta.value; });
+    }
+    try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) { /* private window or full */ }
+  }
+
+  function saveSoon() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, 400);
+  }
+
+  function restoreFields() {
+    if (!saved) return;
+    FIELDS.forEach(function (k) {
+      var v = saved.fields && saved.fields[k];
+      if (v !== undefined && v !== null) els[k].value = v;
+    });
+    els.silent.checked = !!saved.silent;
+    if (saved.fast !== undefined) els.fast.checked = !!saved.fast;
+  }
+
+  function restoreBrief() {
+    if (!saved || !saved.brief) return;
+    briefNeedsFirstFrame = !!saved.needsFirstFrame;
+    showBrief(saved.brief);
+    var boxes = els.windows.querySelectorAll("textarea");
+    (saved.prompts || []).forEach(function (text, i) { if (boxes[i]) boxes[i].value = text; });
+    setMsg("Restored your last brief. Re-add any pictures before rendering.");
   }
 
   // ---- media tray ----
@@ -189,6 +240,7 @@
       form.append("dialogue", JSON.stringify(d));
       form.append("spoken_language", els.language.value || "English");
     }
+    briefNeedsFirstFrame = items.image.some(function (it) { return it.role === "frame_anchor_first"; });
     var assets = [], n = 0;
     ["image", "video", "audio"].forEach(function (kind) {
       items[kind].forEach(function (it) {
@@ -220,6 +272,7 @@
         showBrief(r.body);
         setMsg(r.body.windows ? "Brief ready: " + r.body.windows.length + " window(s). Edit below, then Render." : "");
         els.result.scrollIntoView({ behavior: "smooth", block: "start" });
+        saveNow();
       })
       .catch(function (e) { setMsg(e.message); })
       .then(function () { busy = false; els.write.disabled = false; els.refine.disabled = false; });
@@ -280,6 +333,10 @@
     if (els.fast.checked) form.append("tristep", "true");
     if (els.seed.value) form.append("seed", els.seed.value);
     var first = items.image.filter(function (it) { return it.role === "frame_anchor_first"; })[0];
+    if (!first && briefNeedsFirstFrame) {
+      setRender("This brief used a first-frame picture. Add it again (role: frame anchor first), or it would render as text-only.");
+      return;
+    }
     if (first) form.append("file", first.file, first.file.name);
 
     els.render.disabled = true;
@@ -289,6 +346,8 @@
       .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (r) {
         if (!r.ok || !r.body.job_id) { setRender(r.body.error || "Could not start the render."); els.render.disabled = false; return; }
+        renderJob = r.body.job_id;
+        saveNow();
         pollJob(r.body.job_id);
       })
       .catch(function (e) { setRender(e.message); els.render.disabled = false; });
@@ -298,14 +357,21 @@
     clearInterval(pollTimer);
     var tick = function () {
       fetch("/api/ng/h3/jobs/" + jobId).then(function (r) { return r.json(); }).then(function (job) {
-        if (job.status === "completed") {
+        if (!job.status) {
           clearInterval(pollTimer);
+          renderJob = null; saveNow();
+          setRender("That render is no longer on the server (it restarted?). Check the H3 view's job log.");
+          els.render.disabled = false;
+        } else if (job.status === "completed") {
+          clearInterval(pollTimer);
+          renderJob = null; saveNow();
           setRender("Done.");
           els.video.src = job.video_url + "?v=" + Date.now();
           els.video.style.display = "";
           els.render.disabled = false;
         } else if (job.status === "failed") {
           clearInterval(pollTimer);
+          renderJob = null; saveNow();
           setRender("Failed: " + (job.error || "unknown error"));
           els.render.disabled = false;
         } else {
@@ -324,6 +390,16 @@
     els.write.onclick = writeBrief;
     els.refine.onclick = refine;
     els.render.onclick = render;
+    loadSaved();
+    restoreFields();
+    restoreBrief();
+    els.main.addEventListener("input", saveSoon);
+    els.main.addEventListener("change", saveSoon);
+    if (saved && saved.job) {
+      renderJob = saved.job;
+      els.render.disabled = true;
+      pollJob(saved.job);
+    }
     wireTray();
     loadOptions();
     renderTray();
