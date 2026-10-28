@@ -82,8 +82,16 @@ class PreviewVideoTests(_StoreCleanup):
 
 
 class DownloadVideoUrlTests(unittest.TestCase):
-    def _post(self, body, run=None, files=("My Clip.mp4",), payload=b"MP4"):
+    def _post(self, body, run=None, files=("My Clip.mp4",), payload=b"MP4", codec="h264", conversions=None):
+        conversions = [] if conversions is None else conversions
         def fake_run(cmd, **kw):
+            if cmd[0].endswith("ffprobe"):
+                return SimpleNamespace(returncode=0, stdout=codec + "\n", stderr="")
+            if cmd[0].endswith("ffmpeg"):
+                conversions.append(cmd)
+                with open(cmd[-1], "wb") as fh:
+                    fh.write(b"H264")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
             outdir = os.path.dirname(cmd[cmd.index("-o") + 1])
             for name in files:
                 with open(os.path.join(outdir, name), "wb") as fh:
@@ -102,9 +110,21 @@ class DownloadVideoUrlTests(unittest.TestCase):
         r, m = self._post({"url": "http://v"})
         self.assertEqual((r.status_code, r.mimetype, r.data), (200, "video/mp4", b"MP4"))
         self.assertEqual(r.headers["X-Video-Filename"], "My%20Clip.mp4")
-        cmd = m.call_args.args[0]
+        cmd = m.call_args_list[0].args[0]
         self.assertIn("--no-playlist", cmd)
         self.assertEqual(cmd[-1], "http://v")
+
+    def test_av1_is_converted_to_h264(self):
+        conversions = []
+        r, _ = self._post({"url": "u"}, codec="av1", conversions=conversions)
+        self.assertEqual((r.status_code, r.data), (200, b"H264"))
+        self.assertEqual(r.headers["X-Video-Filename"], "My%20Clip.mp4")
+        self.assertIn("libx264", conversions[0])
+
+    def test_h264_is_left_alone(self):
+        conversions = []
+        r, _ = self._post({"url": "u"}, codec="h264", conversions=conversions)
+        self.assertEqual((r.data, conversions), (b"MP4", []))
 
     def test_ytdlp_failure_returns_stderr_tail(self):
         res = SimpleNamespace(returncode=1, stdout="", stderr="\n".join(f"e{i}" for i in range(20)))

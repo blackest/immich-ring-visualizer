@@ -16,6 +16,7 @@ character tabs can analyze in parallel -- no queuing at this layer
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -66,6 +67,32 @@ def preview_video_ng():
     })
 
 
+def _convert_to_h264_ng(path):
+    """QuickTime, Preview and Resolve's free build cannot decode AV1 or VP9, which
+    sites like Facebook and YouTube serve in mp4/webm. Re-encode those to H.264 in
+    place; anything else is left alone. Returns an error string, or None."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    ffprobe_bin = shutil.which("ffprobe")
+    if not (ffmpeg_bin and ffprobe_bin):
+        return None
+    probe = subprocess.run(
+        [ffprobe_bin, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+        capture_output=True, text=True, timeout=60)
+    if probe.stdout.strip() not in ("av1", "vp9"):
+        return None
+    out = path + ".h264.mp4"
+    conv = subprocess.run(
+        [ffmpeg_bin, "-v", "error", "-y", "-i", path,
+         "-c:v", "libx264", "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out],
+        capture_output=True, text=True, timeout=600)
+    if conv.returncode != 0:
+        return "H.264 conversion failed: " + "\n".join((conv.stderr or "").strip().splitlines()[-5:])
+    os.replace(out, path)
+    return None
+
+
 @videoNG_bp.route("/api/ng/download-video-url", methods=["POST"])
 def download_video_url_ng():
     """Fetch a video from a URL via yt-dlp and hand the raw bytes back to
@@ -91,7 +118,7 @@ def download_video_url_ng():
             result = subprocess.run(
                 [
                     sys.executable, "-m", "yt_dlp",
-                    "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                    "-f", "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4][vcodec^=avc1]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
                     "--merge-output-format", "mp4",
                     "--no-playlist",
                     "-o", outtmpl,
@@ -115,6 +142,12 @@ def download_video_url_ng():
             return jsonify({"error": "yt-dlp reported success but produced no file"}), 500
 
         filename = downloaded[0]
+        try:
+            error = _convert_to_h264_ng(os.path.join(tmpdir, filename))
+        except subprocess.TimeoutExpired:
+            return jsonify({"error": "H.264 conversion timed out."}), 504
+        if error:
+            return jsonify({"error": error}), 500
         with open(os.path.join(tmpdir, filename), "rb") as f:
             video_bytes = f.read()
 
