@@ -34,6 +34,7 @@ _SHOT_RE = re.compile(r"\[Shot (\d+)\]")
 # "At 00:07.500, the camera cuts to ..." -- a time on the whole clip's clock,
 # wrong inside a window that starts partway through it.
 _CLOCK_RE = re.compile(r"^\s*At \d{2}:\d{2}(?:\.\d+)?,\s*")
+_CLOCK_ANY_RE = re.compile(r"\bAt (\d{2}):(\d{2}(?:\.\d+)?)\b")
 _CLOCK_TIME_RE = re.compile(r"^\s*At (\d{2}):(\d{2}(?:\.\d+)?),")
 
 
@@ -60,12 +61,21 @@ def _error_text(res):
     try:
         body = res.json()
     except ValueError:
+        if res.status_code >= 500:
+            return "The compiler failed on this brief (see its log); try again or change the inputs."
         return f"HTTP {res.status_code}"
     if isinstance(body, dict):
         for key in ("message", "error", "detail"):
             if body.get(key):
                 return str(body[key])
     return json.dumps(body)[:400]
+
+
+def _window_clock(match, window_start_s):
+    """A whole-clip clock inside a shot's text -> the same moment on the
+    window's own clock (a later window starts again at 00:00)."""
+    t = max(0.0, int(match.group(1)) * 60 + float(match.group(2)) - window_start_s)
+    return f"At {int(t // 60):02d}:{t % 60:06.3f}"
 
 
 def _split_windows(ir, plan, seconds):
@@ -101,9 +111,10 @@ def _split_windows(ir, plan, seconds):
             starts[n] = int(clock.group(1)) * 60 + float(clock.group(2))
     stride_s = (window_frames - 1) / h3_engineNG.H3_FRAME_RATE
 
-    # The plan rounds shot times to 0.1 s (a shot at 5.1 s, a window edge at
-    # 5.125 s), so a shot starting just short of an edge opens that window.
-    edge_slack_s = 0.25
+    # A shot starting just short of an edge opens that window: the plan rounds
+    # times to 0.1 s (5.1 s vs an edge at 5.125 s), and a shot that began 0.6 s
+    # before the edge would otherwise be written twice, once in each window.
+    edge_slack_s = 1.0
     owned = [[] for _ in range(windows)]
     for n in sorted(shot_text):
         start = starts.get(n, 0.0)
@@ -121,6 +132,7 @@ def _split_windows(ir, plan, seconds):
             if i > 0:
                 text = _CLOCK_RE.sub("", text)
                 text = text[:1].upper() + text[1:]
+                text = _CLOCK_ANY_RE.sub(lambda m: _window_clock(m, i * stride_s), text)
             texts.append(f"[Shot {k}] {text}")
         window = "integrated_multimodal_description: " + " ".join(texts) + tail
         if i == 0 and header:
@@ -231,7 +243,7 @@ def _upload_assets():
 @enhancedh3NG_bp.route("/api/ng/enhanced-h3/brief", methods=["POST"])
 def enhanced_h3_brief_ng():
     """Form fields: intent (required), seconds, aspect, shots, creativity,
-    director, effort, seed, silent, spoken_language, dialogue (JSON array of
+    director, effort, seed, silent, dialogue (JSON array of
     {text, language, speaker, voiceover}), assets (JSON array of {field, kind,
     role, note, paired_field}) plus the files those `field` names point at.
     Returns the compiler's plan, prompt and diagnostics, and `windows`: one
@@ -243,7 +255,7 @@ def enhanced_h3_brief_ng():
     seconds = form.get("seconds", 5.167, type=float)
 
     payload = {"intent": intent, "seconds": seconds}
-    for key in ("aspect", "creativity", "director", "effort", "spoken_language"):
+    for key in ("aspect", "creativity", "director", "effort"):
         if form.get(key):
             payload[key] = form[key]
     if form.get("shots"):
@@ -263,11 +275,24 @@ def enhanced_h3_brief_ng():
         if assets:
             payload["assets"] = assets
         res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, json=payload)
+        fallback = None
+        if res.status_code == 500 and payload.get("dialogue"):
+            # open-h3-ir 0.4.1 crashes on a first-frame picture plus a dialogue
+            # entry ("<Subject 1> is used but never defined"). The same line
+            # written into the sentence still compiles to a <d> tag.
+            lines = payload.pop("dialogue")
+            payload["intent"] += "".join(
+                f' {(d.get("speaker") or "A character").capitalize()} says: "{d["text"]}".' for d in lines)
+            fallback = "The compiler can't take a spoken line with these pictures, so the line was written into the sentence instead."
+            res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, json=payload)
     except _ServiceError as e:
         return jsonify({"error": str(e)}), e.status
     if not res.ok:
         return jsonify({"error": _error_text(res)}), res.status_code
-    return jsonify(_shape(res.json(), seconds)), 201
+    out = _shape(res.json(), seconds)
+    if fallback:
+        out["note"] = fallback
+    return jsonify(out), 201
 
 
 @enhancedh3NG_bp.route("/api/ng/enhanced-h3/refine", methods=["POST"])

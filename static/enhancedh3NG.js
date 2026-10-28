@@ -238,7 +238,6 @@
     var d = dialogue();
     if (d) {
       form.append("dialogue", JSON.stringify(d));
-      form.append("spoken_language", els.language.value || "English");
     }
     briefNeedsFirstFrame = items.image.some(function (it) { return it.role === "frame_anchor_first"; });
     var assets = [], n = 0;
@@ -270,7 +269,7 @@
       .then(function (r) {
         if (!r.ok) { setMsg(r.body.error || "Failed."); return; }
         showBrief(r.body);
-        setMsg(r.body.windows ? "Brief ready: " + r.body.windows.length + " window(s). Edit below, then Render." : "");
+        setMsg(r.body.windows ? "Brief ready: " + r.body.windows.length + " window(s). Edit below, then Render." + (r.body.note ? " " + r.body.note : "") : "");
         els.result.scrollIntoView({ behavior: "smooth", block: "start" });
         saveNow();
       })
