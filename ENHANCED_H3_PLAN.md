@@ -1,7 +1,10 @@
 # Enhanced H3: compiled briefs, per-window prompts, and full references
 
-**Status: PLAN (study done, 2026-10-27). Only step 1 below is built.** Nothing in
-the H3 runner fork, Phosphene or ComfyUI has been changed for this.
+**Status (2026-10-28): steps 1-3 below are built** (per-window prompts, the Enhanced H3
+pane, render through the H3 queue). The runner fork, Phosphene and ComfyUI have not
+been changed. Tested: text-only and picture+audio briefs, refine, a 5 s i2v draft
+render. Not tested: video clips in the tray, a 15 s three-window chain from the pane,
+a spoken line through the pane.
 
 ## The goal, in one sentence
 
@@ -77,7 +80,7 @@ behave differently from the official ref2va. Unverified.
 
 1. **DONE: per-window prompts.** `chain_prompts` through `h3_engineNG.py`,
    `h3_jobsNG.py`, `routes/h3NG.py` (`d09753e`).
-2. **`enhancedh3` pane** (follow `ADDING_A_PANEL.md`). Sentence + optional
+2. **DONE: `enhancedh3` pane** (`routes/enhancedh3NG.py`, `static/enhancedh3NG.js`; follow `ADDING_A_PANEL.md`). Sentence + optional
    keyframe + the compiler controls; "Write brief" calls `h3ir` and shows the
    result in editable boxes, one per window, split at `[Shot N]`; Render sends
    `chain_prompts`. Known limit: the compiler places shots by time (shot 2 at

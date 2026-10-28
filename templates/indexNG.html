@@ -1124,6 +1124,17 @@
             <div id="ng-h3-queue"></div>
           </div>
 
+          <!-- Enhanced H3 view's rail pane -- compiler status and notes.
+               See static/enhancedh3NG.js. The render itself goes through
+               the H3 view's queue (POST /api/ng/h3/generate). -->
+          <div id="ng-enhancedh3-pane" style="display: none">
+            <div class="ng-gen-label" style="text-transform: none; letter-spacing: 0">
+              Writes an H3 brief with OpenH3-IR, one prompt per 5 s window,
+              from a sentence and up to 9 pictures, 3 clips and 3 sounds.
+            </div>
+            <div id="ng-enhancedh3-status" class="ng-gen-status"></div>
+          </div>
+
           <!-- Music view's rail pane -- render queue for YuE2
                style+lyrics-to-song jobs. See static/musicNG.js. -->
           <div id="ng-music-pane" style="display: none">
@@ -2936,6 +2947,95 @@
               </div>
             </div>
 
+            <!-- Enhanced H3 view's main region -- sentence + media tray +
+                 compiler controls in, editable per-window prompts out.
+                 See static/enhancedh3NG.js / routes/enhancedh3NG.py. -->
+            <div id="ng-enhancedh3-main" style="display: none">
+              <div class="ng-gen-canvas" id="ng-enhancedh3-compose">
+                <label class="ng-gen-label" for="ng-enhancedh3-intent">What happens</label>
+                <textarea id="ng-enhancedh3-intent" class="ng-gen-input" rows="4"
+                  placeholder="A woman in a brown leather jacket walks along a rusted gantry at night..."></textarea>
+
+                <div class="ng-gen-label" style="margin-top: 10px">Media</div>
+                <div id="ng-enhancedh3-tray">
+                  <div class="ng-eh3-group" data-kind="image">
+                    <div class="ng-eh3-head"><span>Pictures <span class="ng-eh3-count"></span></span>
+                      <button type="button" class="ng-gen-btn ng-eh3-add" style="width: auto">+ Add</button></div>
+                    <div class="ng-eh3-drop" tabindex="0">Drop, paste or add pictures</div>
+                    <div class="ng-eh3-items"></div>
+                  </div>
+                  <div class="ng-eh3-group" data-kind="video">
+                    <div class="ng-eh3-head"><span>Clips <span class="ng-eh3-count"></span></span>
+                      <button type="button" class="ng-gen-btn ng-eh3-add" style="width: auto">+ Add</button></div>
+                    <div class="ng-eh3-drop" tabindex="0">Drop clips here (2-15 s each)</div>
+                    <div class="ng-eh3-items"></div>
+                  </div>
+                  <div class="ng-eh3-group" data-kind="audio">
+                    <div class="ng-eh3-head"><span>Sounds <span class="ng-eh3-count"></span></span>
+                      <button type="button" class="ng-gen-btn ng-eh3-add" style="width: auto">+ Add</button></div>
+                    <div class="ng-eh3-drop" tabindex="0">Drop audio here</div>
+                    <div class="ng-eh3-items"></div>
+                  </div>
+                  <input type="file" id="ng-enhancedh3-file" multiple hidden />
+                </div>
+                <div class="ng-gen-label" id="ng-enhancedh3-refnote"
+                  style="text-transform: none; letter-spacing: 0"></div>
+
+                <div class="ng-eh3-grid">
+                  <label>Seconds<input type="number" id="ng-enhancedh3-seconds" class="ng-gen-input" value="10" min="2" max="60" step="0.5" /></label>
+                  <label>Shots<input type="number" id="ng-enhancedh3-shots" class="ng-gen-input" min="1" max="10" placeholder="auto" /></label>
+                  <label>Aspect<select id="ng-enhancedh3-aspect" class="ng-gen-input"></select></label>
+                  <label>Creativity<select id="ng-enhancedh3-creativity" class="ng-gen-input"></select></label>
+                  <label>Director<select id="ng-enhancedh3-director" class="ng-gen-input"><option value="">none</option></select></label>
+                  <label>Effort<select id="ng-enhancedh3-effort" class="ng-gen-input"></select></label>
+                  <label>Seed<input type="number" id="ng-enhancedh3-seed" class="ng-gen-input" placeholder="random" /></label>
+                </div>
+
+                <div class="ng-gen-label" style="margin-top: 10px">Spoken line (optional)</div>
+                <div class="ng-eh3-grid">
+                  <input type="text" id="ng-enhancedh3-line" class="ng-gen-input" placeholder="Where are you, Marko?" style="grid-column: span 2" />
+                  <input type="text" id="ng-enhancedh3-speaker" class="ng-gen-input" placeholder="who says it (e.g. the woman)" />
+                  <select id="ng-enhancedh3-language" class="ng-gen-input"></select>
+                  <select id="ng-enhancedh3-delivery" class="ng-gen-input">
+                    <option value="spoken">spoken</option>
+                    <option value="sung">sung</option>
+                  </select>
+                </div>
+                <label class="ng-checkbox-row"><input type="checkbox" id="ng-enhancedh3-silent" /> Silent (no sound at all)</label>
+
+                <div class="ng-gen-action-bar">
+                  <button type="button" id="ng-enhancedh3-write" class="ng-gen-btn">Write brief</button>
+                  <div id="ng-enhancedh3-msg" class="ng-gen-status"></div>
+                </div>
+              </div>
+
+              <div class="ng-gen-canvas">
+                <video id="ng-enhancedh3-video" controls style="display: none; width: 100%"></video>
+              </div>
+
+              <div id="ng-enhancedh3-result" class="ng-gen-canvas" style="display: none">
+                <div id="ng-enhancedh3-summary" class="ng-gen-label" style="text-transform: none; letter-spacing: 0"></div>
+                <div id="ng-enhancedh3-diag"></div>
+                <div id="ng-enhancedh3-windows"></div>
+                <div class="ng-eh3-grid">
+                  <label>Quality<select id="ng-enhancedh3-quality" class="ng-gen-input">
+                    <option value="draft">Draft (640&times;384)</option>
+                    <option value="standard">Standard (768&times;448)</option>
+                    <option value="high" selected>High</option>
+                  </select></label>
+                  <label class="ng-checkbox-row" style="align-self: end"><input type="checkbox" id="ng-enhancedh3-fast" checked /> Fast (3 steps)</label>
+                </div>
+                <div class="ng-gen-action-bar">
+                  <button type="button" id="ng-enhancedh3-render" class="ng-gen-btn">Render video</button>
+                  <div id="ng-enhancedh3-renderstatus" class="ng-gen-status"></div>
+                </div>
+                <div class="ng-eh3-refine">
+                  <input type="text" id="ng-enhancedh3-change" class="ng-gen-input" placeholder="Change it: make it darker, add rain..." />
+                  <button type="button" id="ng-enhancedh3-refine" class="ng-gen-btn" style="width: auto">Change</button>
+                </div>
+              </div>
+            </div>
+
             <!-- Music view's main region -- style + lyrics + length +
                  mode form. See static/musicNG.js. Text in, audio out --
                  no reference image at all, unlike every other Generate-
@@ -3772,6 +3872,7 @@
         <button class="ng-task-btn" data-task="generate">Generate</button>
         <button class="ng-task-btn" data-task="videogen">Animate</button>
         <button class="ng-task-btn" data-task="h3">H3</button>
+        <button class="ng-task-btn" data-task="enhancedh3">Enhanced H3</button>
         <button class="ng-task-btn" data-task="music">Music</button>
         <button class="ng-task-btn" data-task="musicedit">Music Edit</button>
         <button class="ng-task-btn" data-task="chat">Chat</button>
@@ -3829,6 +3930,7 @@
     <script src="{{ url_for('static', filename='videogenNG.js') }}"></script>
     <script src="{{ url_for('static', filename='h3NG.js') }}"></script>
     <script src="{{ url_for('static', filename='h3LogNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='enhancedh3NG.js') }}"></script>
     <!-- Vendored (not CDN, same convention as every other static file
          here), MIT-licensed -- renders a cover job's transcribed ABC
          score to an inline SVG staff. See static/musicNG.js. -->

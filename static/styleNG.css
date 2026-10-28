@@ -3466,6 +3466,48 @@ textarea.ng-gen-input.ng-textarea-expanded {
 }
 
 /* ============================================================
+   Enhanced H3 view (task === "enhancedh3") -- OpenH3-IR brief writer.
+   Rail=notes / main=sentence, media tray, per-window prompts.
+   ============================================================ */
+#ng-enhancedh3-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#ng-enhancedh3-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 16px 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ng-eh3-group { margin-bottom: 10px; }
+.ng-eh3-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.8571rem; color: var(--ng-text); margin-bottom: 4px; }
+.ng-eh3-count { color: var(--ng-text-dim); }
+.ng-eh3-drop { border: 1px dashed var(--ng-text-dim); border-radius: 6px; padding: 10px; text-align: center; font-size: 0.8571rem; color: var(--ng-text-dim); }
+.ng-eh3-drop.over { border-color: var(--ng-text); color: var(--ng-text); }
+.ng-eh3-items { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.ng-eh3-item { display: grid; grid-template-columns: 72px 1fr auto; gap: 8px; align-items: center; }
+.ng-eh3-item img, .ng-eh3-item video { width: 72px; height: 48px; object-fit: cover; border-radius: 4px; }
+.ng-eh3-item audio { width: 72px; }
+.ng-eh3-item .ng-eh3-fields { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ng-eh3-item .ng-gen-input { margin-bottom: 0; }
+.ng-eh3-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; font-size: 0.8571rem; }
+.ng-eh3-grid label { display: flex; flex-direction: column; gap: 2px; }
+.ng-eh3-window { margin-top: 10px; }
+.ng-eh3-window textarea { min-height: 160px; }
+.ng-eh3-warn { color: var(--ng-text-dim); font-size: 0.8571rem; margin-top: 4px; }
+.ng-eh3-refine { display: flex; gap: 6px; margin-top: 10px; }
+.ng-eh3-refine .ng-gen-input { flex: 1; margin-bottom: 0; }
+
+/* ============================================================
    Music view (task === "music") -- YuE2 style+lyrics-to-song. Same
    rail=queue/main=form split as H3/Animate above.
    ============================================================ */
