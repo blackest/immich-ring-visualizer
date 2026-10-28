@@ -173,6 +173,60 @@ style drafts (DIRECTOR_PROFILES.md, untested).
   generate_staged.py). It needs runner-fork work (reference video/image conditioning),
   which is the existing "raw references" step below. Plan it as its own task.
 
+### Replace in a video: ComfyUI test and fork design (2026-10-28)
+
+**Test (ComfyUI, `MiniMaxH3ReferenceToVideo`, ref2va int8 DiT, GGUF Q4_K_M encoder, 640x384,
+124 frames, 20 steps, seed 1234, one hand-written prompt).** Source: 5 s of a bedroom render, one
+woman on a bed. References: that clip as `<Video 1>`, a portrait of another woman as `<Picture 1>`.
+Result: scene, camera, pose and timing held; her clothes changed to the picture's black leather
+jacket and pendant; her face and loose hair stayed the source woman's, so identity did not
+transfer. One seed and one prompt only, with `ref_image_size` left at `match`, so it is unknown
+whether `max` or a compiler-written prompt would carry the face. Cost: ~85 min for 5 s on this Mac
+(about 4.4 min per step, DiT quantization emulated), against minutes in the MLX runner. The NVFP4
+text encoder cannot run on MPS (float8 block scales); the GGUF encoder does. Silicon-Implants puts
+the encoder on MPS globally. The compiler 500s on a real `edit_source` clip (the Gemma/video crash
+again), so an edit prompt had to be written by hand. ComfyUI has no edit mode: an edit is
+Ref2VA with the clip and the replacement picture as references and a prompt that says what changes.
+Its Fun ControlNet patch is a separate masked inpaint route; no controlnet weights are installed.
+
+**What the runner has.** `ref2va_packing.py` packs reference blocks from geometry alone;
+`--refmod` supplies saved latents (single window, no other media); `conditioning.encode_video_rows`
+and `encode_audio_rows` already encode a source clip for `--extend-from` and `--video-to-audio`;
+the text encoder (`text_encoder.build_request`) takes pictures only (`<Picture N>: ` + a vision
+block tagged video). The upstream reference under `reference/diffusers/modular/packing_ref2va.py`
+defines the full presentation and decoders, so build from that.
+
+**Fork work, in order (each testable alone):**
+1. `--reference PATH` (repeatable, order is meaning). Kind from the file type: image, video, audio.
+   Images go through `refmod_encode.encode_images` (cover-crop onto a canvas sized like the
+   reference's `resolve_reference_image_size`); a clip through the video VAE as 17n+5 frames
+   (`decode_reference_video`, `video_latents_for_frames`) with its own soundtrack through
+   `encode_audio_rows` when it has one; audio on its own likewise. Output feeds the existing
+   `build_ref2va_packed_sequence`, so the `--refmod` row path is reused, not duplicated.
+2. Text encoder presentation for references: `<Picture i>: ` + vision block, `<Audio j>: ` alone
+   (audio never enters Qwen; a clip's soundtrack label comes right before its `<Video k>: `), and
+   per clip `<Video k>: ` then, per 2-frame block at 2 fps, `<T.T seconds>` + a 2-frame vision
+   block. Mean of the pair's two timestamps, formatted `{:.1f}` (rounds half to even, so the first
+   block reads `<0.2 seconds>`). Needs a video processor path beside the image one.
+3. Guards in `media_mode_errors`: `--reference` composes with no `--first-frame`, `--last-frame`,
+   `--keyframe`, `--extend-from`, `--audio-drive`, `--video-to-audio`, no chaining, and needs a
+   Ref2VA `--dit`. Limits 9 pictures, 3 clips, 3 sounds, 12 in all; a clip at most the window.
+4. A `--reference-size match|max` switch (the reference-image sizing ComfyUI exposes); default
+   `match`.
+
+**Test order for the fork:** (a) one picture reference only, to prove the encoder labels and rows
+against a known `--refmod` of the same picture; (b) picture + clip, the edit above with the same
+seed, compared with the ComfyUI output; (c) `max` sizing and a prompt that names the face and hair.
+Bytes will not match ComfyUI (different stack); judge on scene hold, clothing and face.
+
+**immichring after that.** Add `reference_files` + `reference_roles` to `/api/ng/h3/generate`
+(files into the job dir as `ref_N.*`, never client paths; refuse with first/last/keyframes/extend
+exactly as the runner does), a Runner flag probe, and send `edit_source` and the replacement
+picture from the pane. Two gaps found on the way: immichring's `_upload_assets` in
+`routes/enhancedh3NG.py` drops the `replaces` field (h3ir's own client comment describes the same
+bug), and the compiler 500s on a real edit clip, so until that is fixed the edit prompt is
+written by hand or by a Qwen3-VL compile.
+
 **Also queued:** character-note box (saved text prepended to every sentence), a
 `director_profile` box (format not yet confirmed from the h3ir source; do NOT run a
 whole-disk `find` to locate the package, look in the venv that runs `h3ir serve`),
