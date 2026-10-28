@@ -34,6 +34,7 @@ _SHOT_RE = re.compile(r"\[Shot (\d+)\]")
 # "At 00:07.500, the camera cuts to ..." -- a time on the whole clip's clock,
 # wrong inside a window that starts partway through it.
 _CLOCK_RE = re.compile(r"^\s*At \d{2}:\d{2}(?:\.\d+)?,\s*")
+_CLOCK_TIME_RE = re.compile(r"^\s*At (\d{2}):(\d{2}(?:\.\d+)?),")
 
 
 class _ServiceError(Exception):
@@ -90,7 +91,14 @@ def _split_windows(ir, plan, seconds):
 
     parts = _SHOT_RE.split(description)  # ["", "1", text1, "2", text2, ...]
     shot_text = {int(parts[i]): parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}
+    # The plan's shot times and the clock the compiler writes into the shot
+    # text can disagree (plan: shot 2 at 3.4 s, text: "At 00:05.500"). The
+    # text is what the video model reads, so it decides where a shot starts.
     starts = {s["n"]: float(s["from"]) for s in plan.get("shots", [])}
+    for n, text in shot_text.items():
+        clock = _CLOCK_TIME_RE.match(text)
+        if clock:
+            starts[n] = int(clock.group(1)) * 60 + float(clock.group(2))
     stride_s = (window_frames - 1) / h3_engineNG.H3_FRAME_RATE
 
     # The plan rounds shot times to 0.1 s (a shot at 5.1 s, a window edge at
