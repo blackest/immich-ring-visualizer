@@ -128,6 +128,61 @@ be an explicit per-clip choice in the pane, not a hidden rule.
 Ideas (untested): music video via `--audio-drive` using a song from the Music
 pane (YuE2); check immichring passes the flag through first.
 
+## Status and next steps (2026-10-28, end of a long session)
+
+**Built and committed:** pane (brief, per-window prompts, render, progress bar,
+refresh-safe state), Extend (`--extend-from`, commit 4c9ae5b), director/cinematographer
+style drafts (DIRECTOR_PROFILES.md, untested).
+
+**Findings worth keeping**
+- Extend works when the new section gets a compiled brief. A one-line hand-written prompt
+  lost the face; the same source, seed and a Gemma-compiled prompt held identity
+  (jobs af306abbe17b vs 602dff368f9d, Draft 640x384, ~6.5 min per 5 s).
+- Native 640x384 Draft already gives good face detail. Phosphene's "Upscale & Face Fix"
+  (LTX 2.3 x2 spatial upscaler, 1 refine step from the clip, weights in
+  Pinkio/.../mlx_models/ltx-2.3-mlx-q8/) is the quality route to 1280x768; the runner's
+  `hires_refine.py` is a latent refine that needs a `--save-stage-a` cache (chain/extend
+  compatibility unchecked). Neither is wired into immichring.
+- Gemma crashes the compiler on video clips; Qwen3-VL-8B-8bit reads clips but its brief
+  came back `degraded`.
+- H3's trained lengths are 124 and 362 frames (compiler `/options`), so a 6 s window
+  (141 frames) is not a trained length; 362 (~15 s single pass) is, and is untested here.
+- Only the first-frame picture and the extend clip reach the renderer. Other pictures,
+  clips and sounds are described to the compiler, which writes `<Picture N>` labels the
+  renderer cannot honour. Warn or stop sending them.
+- Compiler quirks seen: prompts under the 350-token band; later windows can open with
+  "The camera cuts to"; a continuation can end "fades to black"; each window repeats a
+  "music begins" line (may restart the score at each seam, unheard).
+
+**Next (user approved this order):** 1. last frame, 2. keyframes, 3. replace in a video.
+- Runner side is ready: `--last-frame PATH` (lands on the last delivered frame),
+  `--keyframe PATH@WHEN` (frame index or `2.5s`, repeatable, routed to the window that
+  owns it), alignment sentence added automatically unless the prompt already starts with
+  "For the target video" / "How the reference pictures". Extend allows `--last-frame` but
+  not `--first-frame` or `--keyframe`. `--refmod` allows none of them.
+- Plumbing to do: `h3_engineNG.generate_h3_video_ng` (`last_frame_path`, `keyframes`
+  [(path, when)], validate files and the `when` pattern, refuse with RefMod and
+  with extend+keyframes), `h3_jobsNG` (write `last.*` / `kf_N.*` into the job dir; never
+  take client paths), `routes/h3NG.py` (`last_file`, `keyframe_files` + `keyframe_times`),
+  pane (role `frame_anchor_last` -> `last_file`; a stills-at-time control for mid
+  keyframes that goes to the renderer only). Then test: first+last on a 5 s clip, last
+  frame on the final window of a 10 s chain, then Extend + last frame. How `--last-frame`
+  behaves across chained windows is untested.
+- Replace in a video: the compiler has `edit_source`, `replacement_subject`,
+  `placed_subject` roles, but the runner has no edit/replace mode (nothing in
+  generate_staged.py). It needs runner-fork work (reference video/image conditioning),
+  which is the existing "raw references" step below. Plan it as its own task.
+
+**Also queued:** character-note box (saved text prepended to every sentence), a
+`director_profile` box (format not yet confirmed from the h3ir source; do NOT run a
+whole-disk `find` to locate the package, look in the venv that runs `h3ir serve`),
+effort-level comparison of briefs, a scene-planner above the compiler, managed
+`h3ir serve` / Gemma launcher, standalone packaging (the H3 code is mostly
+self-contained: engine, jobs, logs, lora, ref2va plus routes; ties are configNG,
+model_offloadNG, install helpers and video_analysisNG).
+
+Do not edit any `.py` while a render runs (the Flask reloader kills the job).
+
 ## Licences
 
 Ring Viz: PolyForm Small Business 1.0.0 (from 2026-08-23). H3 runner: Apache-2.0
