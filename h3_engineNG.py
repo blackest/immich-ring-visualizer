@@ -544,7 +544,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None,
                           tristep: bool = False,
                           chain_prompts: Optional[list] = None,
-                          extend_from: Optional[str] = None) -> dict:
+                          extend_from: Optional[str] = None,
+                          last_frame_path: Optional[str] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -584,6 +585,9 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     with a RefMod. Needs a runner with --sigma-subset. If the runner reports
     that the adapter attached 0 modules the render is stopped rather than
     finished undistilled. One speed adapter per run.
+
+    last_frame_path is an optional still the clip ends on (--last-frame), alone
+    or with image_path or extend_from; not with RefMods.
 
     extend_from is an existing clip to continue (--extend-from): duration_s is
     then the NEW time added after it, the output is the source followed by the
@@ -678,6 +682,13 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             f"{config.text_config or H3_TEXT_CONFIG}")
     if image_path is not None and not Path(image_path).is_file():
         raise FileNotFoundError(f"H3 keyframe image not found at {image_path}")
+    if last_frame_path is not None:
+        if not Path(last_frame_path).is_file():
+            raise FileNotFoundError(f"H3 last-frame image not found at {last_frame_path}")
+        if refmods:
+            raise ValueError("a RefMod render takes no first or last frame")
+        if not h3_lora.runner_has_flag_ng(runner, "--last-frame"):
+            raise ValueError("this H3 runner has no --last-frame -- update the minimax-h3-mlx runner")
     if extend_from is not None:
         if not Path(extend_from).is_file():
             raise FileNotFoundError(f"H3 extend source not found at {extend_from}")
@@ -756,6 +767,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             cmd += ["--chain-prompts", str(chain_prompts_path)]
     if image_path is not None:
         cmd += ["--first-frame", image_path]
+    if last_frame_path is not None:
+        cmd += ["--last-frame", last_frame_path]
     if turbo:
         # The pinned runner only re-orders a speed adapter's qkv rows under
         # --lora-qkv-permute (off by default, global to the run); without

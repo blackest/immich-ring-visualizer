@@ -178,10 +178,10 @@
 
   // The renderer takes first/last frames only today; the rest shape the brief.
   function updateRefNote() {
-    var extra = items.image.filter(function (it) { return it.role !== "frame_anchor_first"; }).length +
+    var extra = items.image.filter(function (it) { return it.role !== "frame_anchor_first" && it.role !== "frame_anchor_last"; }).length +
       items.video.length + items.audio.length;
     els.refnote.textContent = extra
-      ? "Only the first-frame picture reaches the video model for now; the rest shape the brief's wording."
+      ? "Only the first- and last-frame pictures reach the video model for now; the rest shape the brief's wording."
       : "";
   }
 
@@ -357,6 +357,8 @@
       return;
     }
     if (first) form.append("file", first.file, first.file.name);
+    var last = items.image.filter(function (it) { return it.role === "frame_anchor_last"; })[0];
+    if (last) form.append("last_file", last.file, last.file.name);
 
     els.render.disabled = true;
     els.video.style.display = "none";
