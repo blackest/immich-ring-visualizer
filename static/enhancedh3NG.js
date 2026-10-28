@@ -217,8 +217,9 @@
     request.then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (r) {
         if (!r.ok) { setMsg(r.body.error || "Failed."); return; }
-        setMsg("");
         showBrief(r.body);
+        setMsg(r.body.windows ? "Brief ready: " + r.body.windows.length + " window(s). Edit below, then Render." : "");
+        els.result.scrollIntoView({ behavior: "smooth", block: "start" });
       })
       .catch(function (e) { setMsg(e.message); })
       .then(function () { busy = false; els.write.disabled = false; els.refine.disabled = false; });
