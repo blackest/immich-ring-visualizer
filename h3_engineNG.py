@@ -124,6 +124,7 @@ H3_REPO_DIR = _resolve_h3_repo_dir_ng()
 H3_MODELS_ROOT = _resolve_h3_models_root_ng()
 H3_DEFAULT_PYTHON = H3_REPO_DIR / ".venv" / "bin" / "python"
 H3_RUNNER = H3_REPO_DIR / "scripts" / "generate_staged.py"
+H3_KEYFRAME_WHEN_RE = re.compile(r"-?\d+|\d+(\.\d+)?s")  # --keyframe PATH@WHEN: a frame index or seconds
 
 H3_DIT_BF16 = H3_MODELS_ROOT / "deepbeep-pruned-bf16" / "MiniMax-H3-FL2VA-pruned_bf16.safetensors"
 H3_DIT_Q8_DIR = H3_MODELS_ROOT / "h3-dit-q8"
@@ -545,7 +546,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           tristep: bool = False,
                           chain_prompts: Optional[list] = None,
                           extend_from: Optional[str] = None,
-                          last_frame_path: Optional[str] = None) -> dict:
+                          last_frame_path: Optional[str] = None,
+                          keyframes: Optional[list] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -588,6 +590,10 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
 
     last_frame_path is an optional still the clip ends on (--last-frame), alone
     or with image_path or extend_from; not with RefMods.
+
+    keyframes is an optional [(image path, when)] list of stills the clip passes
+    through (--keyframe PATH@WHEN); when is a frame index or seconds ("2.5s"). Not
+    with extend_from or RefMods.
 
     extend_from is an existing clip to continue (--extend-from): duration_s is
     then the NEW time added after it, the output is the source followed by the
@@ -689,6 +695,16 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             raise ValueError("a RefMod render takes no first or last frame")
         if not h3_lora.runner_has_flag_ng(runner, "--last-frame"):
             raise ValueError("this H3 runner has no --last-frame -- update the minimax-h3-mlx runner")
+    if keyframes:
+        if refmods or extend_from is not None:
+            raise ValueError("keyframes do not combine with a RefMod or an extend")
+        for kf_path, when in keyframes:
+            if not Path(kf_path).is_file():
+                raise FileNotFoundError(f"H3 keyframe image not found at {kf_path}")
+            if not H3_KEYFRAME_WHEN_RE.fullmatch(when):
+                raise ValueError(f"keyframe time must be a frame number or seconds like 2.5s (got {when!r})")
+        if not h3_lora.runner_has_flag_ng(runner, "--keyframe"):
+            raise ValueError("this H3 runner has no --keyframe -- update the minimax-h3-mlx runner")
     if extend_from is not None:
         if not Path(extend_from).is_file():
             raise FileNotFoundError(f"H3 extend source not found at {extend_from}")
@@ -769,6 +785,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         cmd += ["--first-frame", image_path]
     if last_frame_path is not None:
         cmd += ["--last-frame", last_frame_path]
+    for kf_path, when in keyframes or []:
+        cmd += ["--keyframe", f"{kf_path}@{when}"]
     if turbo:
         # The pinned runner only re-orders a speed adapter's qkv rows under
         # --lora-qkv-permute (off by default, global to the run); without

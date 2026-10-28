@@ -154,7 +154,7 @@ style drafts (DIRECTOR_PROFILES.md, untested).
   "The camera cuts to"; a continuation can end "fades to black"; each window repeats a
   "music begins" line (may restart the score at each seam, unheard).
 
-**Next (user approved this order):** 1. last frame (done 2026-10-28: first+last, 10 s chain, extend+last and compiled brief all end on the still), 2. keyframes, 3. replace in a video.
+**Next (user approved this order):** 1. last frame (done 2026-10-28: first+last, 10 s chain, extend+last and compiled brief all end on the still), 2. keyframes (done 2026-10-28: first + 2.5 s mid + last on a 5 s clip, mid frame matches; untested on a chain), 3. replace in a video.
 - Runner side is ready: `--last-frame PATH` (lands on the last delivered frame),
   `--keyframe PATH@WHEN` (frame index or `2.5s`, repeatable, routed to the window that
   owns it), alignment sentence added automatically unless the prompt already starts with

@@ -264,7 +264,9 @@ def h3_generate_ng():
     which is then optional), extend_file (optional multipart mp4 -- a finished
     clip to continue; duration_s is then the NEW time added after it, and no
     keyframe or RefMod is allowed), last_file (optional multipart image -- the still
-    the clip ends on; not with a RefMod).
+    the clip ends on; not with a RefMod), keyframe_files + keyframe_times (optional
+    images and one time each, a frame number or seconds like "2.5s" -- stills the clip
+    passes through; not with a RefMod or extend_file).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -308,6 +310,10 @@ def h3_generate_ng():
     try:
         extend_file = request.files.get("extend_file")
         last_file = request.files.get("last_file")
+        kf_files = request.files.getlist("keyframe_files")
+        kf_times = [t.strip() for t in request.form.getlist("keyframe_times")]
+        if len(kf_files) != len(kf_times):
+            return jsonify({"error": "each keyframe image needs a time"}), 400
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
             model=model, width=width, height=height, steps=steps, turbo=turbo, v13=v13,
@@ -315,7 +321,9 @@ def h3_generate_ng():
             chain_prompts=chain_prompts,
             extend_bytes=extend_file.read() if extend_file else None,
             last_bytes=last_file.read() if last_file else None,
-            last_ext=os.path.splitext(last_file.filename or "")[1] if last_file else ".jpg")
+            last_ext=os.path.splitext(last_file.filename or "")[1] if last_file else ".jpg",
+            keyframes=[(f.read(), os.path.splitext(f.filename or "")[1], t)
+                       for f, t in zip(kf_files, kf_times)])
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

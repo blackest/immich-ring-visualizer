@@ -160,11 +160,19 @@
         });
         sel.value = it.role;
         sel.onchange = function () { it.role = sel.value; updateRefNote(); };
+        var at = null;
+        if (kind === "image") {
+          at = document.createElement("input");
+          at.type = "text"; at.className = "ng-gen-input"; at.placeholder = "keyframe at, e.g. 2.5s (optional)";
+          at.value = it.at || "";
+          at.oninput = function () { it.at = at.value.trim(); updateRefNote(); };
+        }
         var note = document.createElement("input");
         note.type = "text"; note.className = "ng-gen-input"; note.placeholder = "note (optional)";
         note.value = it.note;
         note.oninput = function () { it.note = note.value; };
         fields.appendChild(sel); fields.appendChild(note);
+        if (at) fields.appendChild(at);
         row.appendChild(fields);
         var rm = document.createElement("button");
         rm.type = "button"; rm.className = "ng-gen-btn"; rm.style.width = "auto"; rm.textContent = "×";
@@ -178,10 +186,10 @@
 
   // The renderer takes first/last frames only today; the rest shape the brief.
   function updateRefNote() {
-    var extra = items.image.filter(function (it) { return it.role !== "frame_anchor_first" && it.role !== "frame_anchor_last"; }).length +
+    var extra = items.image.filter(function (it) { return it.role !== "frame_anchor_first" && it.role !== "frame_anchor_last" && !it.at; }).length +
       items.video.length + items.audio.length;
     els.refnote.textContent = extra
-      ? "Only the first- and last-frame pictures reach the video model for now; the rest shape the brief's wording."
+      ? "Only the first-, last-frame and timed keyframe pictures reach the video model for now; the rest shape the brief's wording."
       : "";
   }
 
@@ -359,6 +367,10 @@
     if (first) form.append("file", first.file, first.file.name);
     var last = items.image.filter(function (it) { return it.role === "frame_anchor_last"; })[0];
     if (last) form.append("last_file", last.file, last.file.name);
+    if (!extendFrom) items.image.filter(function (it) { return it.at; }).forEach(function (it) {
+      form.append("keyframe_files", it.file, it.file.name);
+      form.append("keyframe_times", it.at);
+    });
 
     els.render.disabled = true;
     els.video.style.display = "none";
