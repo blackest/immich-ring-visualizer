@@ -13,6 +13,8 @@
   var items = { image: [], video: [], audio: [] };
   var lastBrief = null;
   var busy = false;
+  var lastDone = null;    // job id of the latest finished render: what Extend continues
+  var extendFrom = null;  // job id being continued; null = a normal brief and render
 
   var LABEL = { image: "Picture", video: "Clip", audio: "Sound" };
   var ACCEPT = { image: "image/", video: "video/", audio: "audio/" };
@@ -23,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "fast", "render", "renderstatus", "video"
+      "quality", "fast", "render", "renderstatus", "progress", "video", "extend", "extendnote"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -83,7 +85,8 @@
 
   function saveNow() {
     var state = { fields: {}, silent: els.silent.checked, fast: els.fast.checked,
-      brief: lastBrief, needsFirstFrame: briefNeedsFirstFrame, job: renderJob };
+      brief: lastBrief, needsFirstFrame: briefNeedsFirstFrame, job: renderJob,
+      lastDone: lastDone, extendFrom: extendFrom };
     FIELDS.forEach(function (k) { state.fields[k] = els[k].value; });
     if (lastBrief && lastBrief.windows) {
       state.prompts = [].map.call(els.windows.querySelectorAll("textarea"), function (ta) { return ta.value; });
@@ -239,9 +242,12 @@
     if (d) {
       form.append("dialogue", JSON.stringify(d));
     }
-    briefNeedsFirstFrame = items.image.some(function (it) { return it.role === "frame_anchor_first"; });
+    briefNeedsFirstFrame = !extendFrom && items.image.some(function (it) { return it.role === "frame_anchor_first"; });
     var assets = [], n = 0;
+    // An extension is written as plain text: the earlier clip goes to the renderer
+    // only, and a tray picture would add a <Picture 1> header the extend path lacks.
     ["image", "video", "audio"].forEach(function (kind) {
+      if (extendFrom) return;
       items[kind].forEach(function (it) {
         var field = "f" + n++;
         form.append(field, it.file, it.file.name);
@@ -319,6 +325,20 @@
 
   function setRender(text) { els.renderstatus.textContent = text || ""; }
 
+  function updateExtend() {
+    els.extend.style.display = lastDone || extendFrom ? "" : "none";
+    els.extend.textContent = extendFrom ? "Stop extending" : "Extend this video";
+    els.extendnote.textContent = extendFrom
+      ? "Extending the last render. Describe the same people and place and what happens next; Seconds is the time to add. Tray items are ignored."
+      : "";
+  }
+
+  function toggleExtend() {
+    extendFrom = extendFrom ? null : lastDone;
+    updateExtend();
+    saveNow();
+  }
+
   function render() {
     if (!lastBrief || !lastBrief.windows) return;
     var prompts = [].map.call(els.windows.querySelectorAll("textarea"), function (ta) { return ta.value.trim(); });
@@ -331,7 +351,7 @@
     form.append("quality", els.quality.value);
     if (els.fast.checked) form.append("tristep", "true");
     if (els.seed.value) form.append("seed", els.seed.value);
-    var first = items.image.filter(function (it) { return it.role === "frame_anchor_first"; })[0];
+    var first = extendFrom ? null : items.image.filter(function (it) { return it.role === "frame_anchor_first"; })[0];
     if (!first && briefNeedsFirstFrame) {
       setRender("This brief used a first-frame picture. Add it again (role: frame anchor first), or it would render as text-only.");
       return;
@@ -341,7 +361,13 @@
     els.render.disabled = true;
     els.video.style.display = "none";
     setRender("Submitting...");
-    fetch("/api/ng/h3/generate", { method: "POST", body: form })
+    var source = extendFrom
+      ? fetch("/api/ng/h3/jobs/" + extendFrom + "/video").then(function (r) {
+        if (!r.ok) throw new Error("The clip to extend is no longer on the server.");
+        return r.blob();
+      }).then(function (blob) { form.append("extend_file", blob, "extend.mp4"); })
+      : Promise.resolve();
+    source.then(function () { return fetch("/api/ng/h3/generate", { method: "POST", body: form }); })
       .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (r) {
         if (!r.ok || !r.body.job_id) { setRender(r.body.error || "Could not start the render."); els.render.disabled = false; return; }
@@ -350,6 +376,43 @@
         pollJob(r.body.job_id);
       })
       .catch(function (e) { setRender(e.message); els.render.disabled = false; });
+  }
+
+  // Where a running job is, from the runner's log lines: the current window
+  // (it prints "### window k/n ###" from window 2 on), stage and denoise step.
+  var STAGES = [["text_encode", 0.00, "encoding the prompt"], ["keyframe_encode", 0.12, "encoding the start frame"],
+    ["dit_load", 0.14, "loading the model"], ["joint_denoise", 0.20, "denoising"],
+    ["video_vae_decode", 0.90, "decoding the video"], ["audio_vae_decode", 0.98, "decoding the sound"]];
+
+  function progressOf(job) {
+    var log = job.log_tail || [];
+    var windows = (lastBrief && lastBrief.windows && lastBrief.windows.length) || 1;
+    var start = 0, win = 1;
+    log.forEach(function (line, i) {
+      var m = /### window (\d+)\/(\d+) ###/.exec(line);
+      if (m) { start = i; win = parseInt(m[1], 10); windows = parseInt(m[2], 10); }
+    });
+    var stage = null, step = null;
+    log.slice(start).forEach(function (line) {
+      var m = /== w\d+_(\w+?) ==/.exec(line);
+      if (m) { stage = m[1].replace(/_q8$/, ""); step = null; }
+      var s2 = /step (\d+)\/(\d+):/.exec(line);
+      if (s2) step = [parseInt(s2[1], 10), parseInt(s2[2], 10)];
+    });
+    var inWindow = 0, what = "starting";
+    STAGES.forEach(function (st) {
+      if (stage && stage.indexOf(st[0]) === 0) { inWindow = st[1]; what = st[2]; }
+    });
+    if (stage && stage.indexOf("joint_denoise") === 0 && step) inWindow = 0.20 + 0.70 * (step[0] / step[1]);
+    var frac = Math.min(0.99, (win - 1 + inWindow) / windows);
+    var elapsed = job.dispatched_at ? Date.now() / 1000 - job.dispatched_at : 0;
+    var text = "Window " + win + " of " + windows + " · " + what +
+      (step ? ", step " + step[0] + " of " + step[1] : "");
+    if (elapsed) {
+      text += " · " + Math.floor(elapsed / 60) + ":" + ("0" + Math.floor(elapsed % 60)).slice(-2) + " elapsed";
+      if (frac > 0.15) text += " · about " + Math.max(1, Math.round(elapsed * (1 - frac) / frac / 60)) + " min left";
+    }
+    return { frac: frac, text: text };
   }
 
   function pollJob(jobId) {
@@ -364,18 +427,27 @@
         } else if (job.status === "completed") {
           clearInterval(pollTimer);
           renderJob = null; saveNow();
+          els.progress.style.display = "none";
           setRender("Done.");
+          lastDone = jobId; extendFrom = null; updateExtend(); saveNow();
           els.video.src = job.video_url + "?v=" + Date.now();
           els.video.style.display = "";
           els.render.disabled = false;
         } else if (job.status === "failed") {
           clearInterval(pollTimer);
           renderJob = null; saveNow();
+          els.progress.style.display = "none";
           setRender("Failed: " + (job.error || "unknown error"));
           els.render.disabled = false;
         } else {
-          var tail = job.log_tail && job.log_tail.length ? " -- " + job.log_tail[job.log_tail.length - 1] : "";
-          setRender((job.status || "queued") + tail);
+          if (job.status === "rendering") {
+            var pr = progressOf(job);
+            setRender(pr.text);
+            els.progress.style.display = "";
+            els.progress.value = Math.round(pr.frac * 100);
+          } else {
+            setRender(job.status || "queued");
+          }
         }
       }).catch(function () {});
     };
@@ -389,6 +461,7 @@
     els.write.onclick = writeBrief;
     els.refine.onclick = refine;
     els.render.onclick = render;
+    els.extend.onclick = toggleExtend;
     loadSaved();
     restoreFields();
     restoreBrief();
@@ -399,6 +472,8 @@
       els.render.disabled = true;
       pollJob(saved.job);
     }
+    if (saved) { lastDone = saved.lastDone || null; extendFrom = saved.extendFrom || null; }
+    updateExtend();
     wireTray();
     loadOptions();
     renderTray();

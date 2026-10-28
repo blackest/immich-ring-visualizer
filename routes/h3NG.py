@@ -261,7 +261,9 @@ def h3_generate_ng():
     keyframe and no LightX2V speed adapter -- Fast (tristep) is allowed),
     chain_prompts (optional JSON array of strings -- one prompt per chained
     5 s window, exactly as many as the clip has windows; replaces `prompt`,
-    which is then optional).
+    which is then optional), extend_file (optional multipart mp4 -- a finished
+    clip to continue; duration_s is then the NEW time added after it, and no
+    keyframe or RefMod is allowed).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -303,11 +305,13 @@ def h3_generate_ng():
         return jsonify({"error": str(e)}), 404
 
     try:
+        extend_file = request.files.get("extend_file")
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
             model=model, width=width, height=height, steps=steps, turbo=turbo, v13=v13,
             loras=loras, refmods=refmods, timeout_s=timeout_s, tristep=tristep,
-            chain_prompts=chain_prompts)
+            chain_prompts=chain_prompts,
+            extend_bytes=extend_file.read() if extend_file else None)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

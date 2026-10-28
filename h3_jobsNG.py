@@ -29,6 +29,8 @@ import h3_ref2vaNG as h3_ref2va
 import h3_job_logsNG
 from configNG import H3GEN_DIR
 
+EXTEND_SOURCE_NAME = "extend_src.mp4"
+
 _MAX_JOBS_KEPT = 20  # ring-buffer cap, same reasoning as video_jobsNG
 
 
@@ -50,6 +52,7 @@ class H3JobNG:
     loras: list = field(default_factory=list)  # [{"name", "path", "strength"}] user LoRAs
     refmods: list = field(default_factory=list)  # [{"name", "path", "strength", "images", "videos"}] RefMods
     chain_prompts: list = field(default_factory=list)  # one prompt per chained window; empty = `prompt` for every window
+    extends: bool = False  # continue extend_src.mp4 in the job dir; duration_s is the new time added
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
@@ -105,6 +108,7 @@ def _worker_loop() -> None:
             continue
         job.dispatched_at = time.time()
         image_path = next(job.job_dir.glob("ref.*"), None)
+        extend_path = job.job_dir / EXTEND_SOURCE_NAME
         try:
             if job.has_image and image_path is None:
                 raise FileNotFoundError("keyframe image went missing before render")
@@ -119,6 +123,7 @@ def _worker_loop() -> None:
                 turbo=job.turbo, v13=job.v13, tristep=job.tristep,
                 loras=[(l["path"], l["strength"]) for l in job.loras],
                 refmods=job.refmods, chain_prompts=job.chain_prompts,
+                extend_from=str(extend_path) if job.extends else None,
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.mp4_path = result["mp4_path"]
@@ -152,13 +157,16 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      refmods: Optional[list] = None,
                      timeout_s: Optional[float] = None,
                      tristep: bool = False,
-                     chain_prompts: Optional[list] = None) -> H3JobNG:
+                     chain_prompts: Optional[list] = None,
+                     extend_bytes: Optional[bytes] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
     video_jobsNG.start_video_job_ng (see its own docstring for the full
     reasoning). `loras` is an optional [{"name", "path", "strength"}] list
     (paths resolved from h3_lora_libraryNG by the route). image_bytes may be None for a text-to-video job -- H3
-    generates from the prompt alone, no --first-frame keyframe."""
+    generates from the prompt alone, no --first-frame keyframe. extend_bytes is
+    a finished clip to continue (--extend-from): duration_s is then the time
+    added after it, and no keyframe image or RefMod is allowed."""
     prompt = (prompt or "").strip()
     if not prompt:
         raise ValueError("prompt is required")
@@ -181,6 +189,9 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         raise FileNotFoundError(
             "Fast (TaoMate 3-step) adapter not found in the H3 turbo-lora folder")
     h3._validate_h3_duration_ng(duration_s)
+    if extend_bytes is not None and (image_bytes is not None or refmods):
+        raise ValueError("extend continues the source clip's own last frame -- "
+                         "no keyframe image or RefMod with it")
     # RefMods are checked here too, so a combination the runner cannot do (a speed
     # adapter, a keyframe, a chained length, the wrong model) fails the POST
     # synchronously instead of after the DiT has loaded.
@@ -226,12 +237,14 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     if has_image:
         ext = image_ext.lower() if image_ext and image_ext.lower() in (".png", ".jpg", ".jpeg", ".webp") else ".jpg"
         (job_dir / f"ref{ext}").write_bytes(image_bytes)
+    if extend_bytes is not None:
+        (job_dir / EXTEND_SOURCE_NAME).write_bytes(extend_bytes)
 
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
                   width=width, height=height, steps=steps, turbo=turbo, v13=v13,
                   tristep=tristep, loras=loras, refmods=refmods, timeout_s=timeout_s,
-                  chain_prompts=chain_prompts or [])
+                  chain_prompts=chain_prompts or [], extends=extend_bytes is not None)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()

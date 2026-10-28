@@ -543,7 +543,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           on_log: Optional[Callable[[str], None]] = None,
                           on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None,
                           tristep: bool = False,
-                          chain_prompts: Optional[list] = None) -> dict:
+                          chain_prompts: Optional[list] = None,
+                          extend_from: Optional[str] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -582,7 +583,13 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     all 208 modules there -- and it is the one speed adapter that is allowed
     with a RefMod. Needs a runner with --sigma-subset. If the runner reports
     that the adapter attached 0 modules the render is stopped rather than
-    finished undistilled. One speed adapter per run."""
+    finished undistilled. One speed adapter per run.
+
+    extend_from is an existing clip to continue (--extend-from): duration_s is
+    then the NEW time added after it, the output is the source followed by the
+    continuation, and the runner takes the hand-over from the source's own tail,
+    so no keyframe image and no RefMod. Each new window adds window_frames - 1
+    frames; chain_prompts, if given, names one prompt per new window."""
     loras = _validate_h3_loras_ng(loras)
     width = H3_WIDTH if width is None else int(width)
     height = H3_HEIGHT if height is None else int(height)
@@ -671,6 +678,14 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             f"{config.text_config or H3_TEXT_CONFIG}")
     if image_path is not None and not Path(image_path).is_file():
         raise FileNotFoundError(f"H3 keyframe image not found at {image_path}")
+    if extend_from is not None:
+        if not Path(extend_from).is_file():
+            raise FileNotFoundError(f"H3 extend source not found at {extend_from}")
+        if image_path is not None or refmods:
+            raise ValueError("extend continues the source clip's own last frame -- "
+                             "no keyframe image or RefMod with it")
+        if not h3_lora.runner_has_flag_ng(runner, "--extend-from"):
+            raise ValueError("this H3 runner has no --extend-from -- update the minimax-h3-mlx runner")
     if loras:
         limit = h3_lora_limit_ng(runner, speed_adapter=bool(turbo or v13 or tristep))
         if len(loras) > limit:
@@ -683,6 +698,10 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                 raise FileNotFoundError(f"H3 LoRA not found at {lora_path}")
 
     window_frames, chain_windows, frames = _h3_chain_plan_ng(duration_s)
+    if extend_from is not None:
+        window_frames = _align_h3_frames_ng(H3_CHAIN_WINDOW_S)
+        frames = round(duration_s * H3_FRAME_RATE)
+        chain_windows = math.ceil(frames / (window_frames - 1))
     refmods = h3_ref2va.validate_refmods_ng(
         refmods, model=config.model, image_path=image_path, turbo=turbo, v13=v13,
         chain_windows=chain_windows, runner=runner, tristep=tristep)
@@ -697,7 +716,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     if chain_prompts:
         # --chain-prompts and the positional prompt are mutually exclusive in
         # the runner, and it wants exactly one prompt per window.
-        if chain_windows == 1:
+        if chain_windows == 1 and extend_from is None:
             raise ValueError("chain_prompts needs a clip longer than one window")
         if len(chain_prompts) != chain_windows:
             raise ValueError(f"this clip is {chain_windows} windows but {len(chain_prompts)} "
@@ -719,7 +738,12 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "-o", str(out_mp4),
         "--metrics", str(metrics_path),
     ]
-    if chain_windows > 1:
+    if extend_from is not None:
+        cmd += ["--extend-from", extend_from, "--extend-frames", str(frames),
+                "--chain-windows", str(chain_windows), "--chain-keep-windows"]
+        if chain_prompts:
+            cmd += ["--chain-prompts", str(chain_prompts_path)]
+    elif chain_windows > 1:
         # --chain-keep-windows: also write each window's own mp4 beside
         # the stitched output. Costs almost nothing (small per-window
         # files) and means a crash/kill partway through a long chain --
@@ -773,7 +797,12 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         if refmods:
             turbo_note += " [refmods " + ", ".join(
                 f"{Path(r['path']).stem}@{r['strength']:g}" for r in refmods) + "]"
-        if chain_windows > 1:
+        if extend_from is not None:
+            on_log(f"[h3] launching {config.model} extend: {chain_windows} new window(s) "
+                   f"(+{frames} frames, ~{frames / H3_FRAME_RATE:.1f}s) after "
+                   f"{Path(extend_from).name} at {width}x{height}, "
+                   f"{steps} steps{turbo_note}, seed={seed}")
+        elif chain_windows > 1:
             on_log(f"[h3] launching {config.model} {chain_windows} chained windows "
                    f"({window_frames}f each) -> {frames} frames "
                    f"(~{frames / H3_FRAME_RATE:.1f}s) at {width}x{height}, "
