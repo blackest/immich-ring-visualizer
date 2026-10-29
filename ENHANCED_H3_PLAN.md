@@ -237,6 +237,74 @@ model_offloadNG, install helpers and video_analysisNG).
 
 Do not edit any `.py` while a render runs (the Flask reloader kills the job).
 
+## Status 2026-10-29 (written before a reboot; read this first)
+
+**Done and committed.** immichring: last frame `48ba9e3`, timed keyframes `997cf5c`, replace design
+`d9b4188`, video tab converts AV1/VP9 downloads to H.264 `3d74a52` (QuickTime/Preview cannot play AV1 on
+an M2), `gemma_server.sh` fixed `aee9a89`, `upscale_x2NG.py` WIP `964f82f`. Fork (`minimax-h3-mlx`),
+branch `reference-flag`: `--reference` pictures `3e507c0`, clips `1166cff`. The branch lives in a
+worktree at `/Volumes/AI/worktrees/minimax-h3-mlx-reference-flag` (tests: `.venv/bin/python
+tests/test_reference_encode.py` there). It is NOT merged: the live install is still on `adaln-cache`, so
+immichring cannot use `--reference` yet. The install has an untracked `refmod_encode.py` that the branch
+now tracks; delete the untracked copy before merging.
+
+**What the tests showed.** `--reference` picture: identity carried well (portrait, 5.5 min). Picture + clip
+edit (bedroom clip + portrait, hand-written prompt, seed 1234): clothes changed, scene held, face stayed the
+source woman's, identical failure to ComfyUI (which took ~85 min, 20 steps; fork 12.5 min, Fast 3-step).
+Untried: `--reference-size max` plus a prompt naming face and hair. Not built: a clip's soundtrack
+(`<Audio j>` label and audio rows). `test_text_encoder_parity` needs `torch`, absent from the fork venv, so
+the `build_request` refactor is only indirectly covered. Clips for reference are in `~/Movies/h3-fork-tests/`.
+
+**Models moved to `/Volumes/AI/models/` (symlinks left at `/Users/john/models/<name>`):** Qwen3.8-27B-4bit,
+Qwen3-Coder-Next-4bit, h3-ref2va (all verified, originals removed; internal free 28 GB -> 190 GB).
+`gemma4-26b-mlx` is copied and verified at `/Volumes/AI/models/gemma4-26b-mlx` but NOT swapped: the original
+is still at `/Users/john/models/gemma4-26b-mlx`. To finish (server stays up, launchd restarts it):
+`mv /Users/john/models/gemma4-26b-mlx /Users/john/models/gemma4-26b-mlx.old && ln -s
+/Volumes/AI/models/gemma4-26b-mlx /Users/john/models/gemma4-26b-mlx`, then `kill` the :8080 server (PID from
+`pgrep -f "mlx_vlm.server.*8080"`), check `curl 127.0.0.1:8080/v1/models`, then `rm -rf` the `.old`. The
+Qwen3-VL-8B-8bit was already in `/Volumes/AI/models/`. These models need `/Volumes/AI` mounted.
+
+**Services.** `com.john.mlx-server` (LaunchDaemon, KeepAlive): Gemma 4 26B on :8080 via
+`/Users/john/mlxenv/bin/python`, model path `/Users/john/models/gemma4-26b-mlx`. `com.ringviz.gemma-server`
+(LaunchAgent): `gemma_server.sh`, Gemma 3 12B on :8811, had been crash-looping on a missing `uvicorn` (180k
+failures, 82 MB `~/Library/Logs/gemma-server.log`, safe to clear); fixed by running under `mlxenv`. Kokoro on
+:8880. `h3ir serve` on :8700 needs `H3IR_LLM_URL=http://127.0.0.1:8080/v1` and
+`H3IR_LLM_MODEL=/Users/john/models/gemma4-26b-mlx`; I did not find how it is launched, so restart it by hand
+from `/Volumes/AI/ComfyUI` (`venv/bin/h3ir serve --host 127.0.0.1 --port 8700`). ComfyUI was on :8182 (killed).
+The :8080 Gemma server held 17 GB of the 26 GB swap, which was full.
+
+**2x upscale / face fix, outside Phosphene.** Phosphene's "Upscale & Face Fix" is a `generate_restore` job
+to its warm helper, which wraps upstream `ICLoraPipeline.generate_and_save(source_video=..., refine_steps=3)`
+with the LTX 2.5 q8 pack, the `ltx-2.5-22b-ic-lora-pixel-spatial-upscaler-x2` adapter and Gemma 4 12B
+(`gemma4-12b-ltx25-q4`) as encoder; all on `/Volumes/AI/Pinkio/.../mlx_models`. The helper cannot be imported
+(its main loop is module-level), so `upscale_x2NG.py` calls `ICLoraPipeline` directly with the helper's
+environment settings (run it with `ltx-2-mlx/env/bin/python3.11`). It crashed twice, right after the text
+encoder loaded, on a Metal "Impacting Interactivity" watchdog error, once before and once after adding the
+M1/M2 buffer limits (`MLX_MAX_OPS_PER_BUFFER`/`MLX_MAX_MB_PER_BUFFER` 10; `--short-gpu` uses 1). Likely cause:
+full swap. Retry after the reboot. Sizes: 640x384 is 5:3, so x2 = 1280x768 is not 720p; a 640x352 draft gives
+1280x704, a 960x544 draft gives 1920x1088. Phosphene's "720p fit" is a Lanczos cover-and-crop (up to 8% trim).
+Idea: trace which library lines run during one upscale with stdlib `sys.settrace` (no `coverage` in that env).
+
+**Next, in order.**
+1. After reboot: `/Volumes/AI` mounted; :8080, :8811, :8700, immichring :5050 up; swap low.
+2. Finish the Gemma move (above).
+3. Retry `upscale_x2NG.py` on `~/Movies/h3-fork-tests/edit_fork.mp4`; time it; then the trace.
+4. `--reference-size max` + face/hair prompt test; encode the same picture as a RefMod and as `--reference`
+   at the same size and compare the rows numerically.
+5. Qwen/Gemma: a second `h3ir serve` (:8701) on a Qwen vision model; immichring sends a brief there when
+   the tray holds a clip. First test whether Qwen avoids the compiler 500 on the bedroom clip. (Gemma's clip
+   output is rejected by the compiler; Qwen's is accepted but its story is weaker.)
+6. immichring for references: `reference_files` on `/api/ng/h3/generate`, job files, pane, runner flag probe;
+   an in-app RefMod builder (pick ~8 images with the image picker, encode with `refmod_encode`, save to the
+   RefMod library; one stacked block, unlike 8 separate `--reference` pictures); a 640x352 draft preset; an
+   "Upscale 2x" step after a render; keyframes on a chained 10 s clip; click through the "keyframe at" field.
+7. Fork: soundtrack references, then merge `reference-flag`.
+8. Bugs: `_upload_assets` in `routes/enhancedh3NG.py` drops `replaces`; the compiler 500s on a real
+   `edit_source` clip; clear the 82 MB log.
+
+The user prefers smaller, modular ports over wrapping Phosphene or ComfyUI code; prefer calling the library
+class directly (about 25 lines for the upscale) to importing a large wrapper.
+
 ## Licences
 
 Ring Viz: PolyForm Small Business 1.0.0 (from 2026-08-23). H3 runner: Apache-2.0
