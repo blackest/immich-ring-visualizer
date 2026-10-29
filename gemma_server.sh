@@ -5,9 +5,8 @@
 # reload when this is running (falls back to the subprocess path
 # automatically if it's not).
 #
-# Same venv and path-resolution convention as ltx_engineNG.py:
-# LTX_MLX_DIR (repo) / LTX_MLX_MODELS_DIR (weights root), with the same
-# conventional fallback locations.
+# Weights root resolves like ltx_engineNG.py: LTX_MLX_MODELS_DIR, then the
+# conventional fallback locations. Python is RINGVIZ_GEMMA_PYTHON or ~/mlxenv.
 #
 # Run this, then before an LTX render acquires the GPU you'd want to
 # POST /unload to this server first (not wired up yet -- see
@@ -19,20 +18,6 @@ PORT="${RINGVIZ_GEMMA_SERVER_PORT:-8811}"
 # 0.0.0.0 so LAN peers (e.g. the Hermes/Rachel gateway) can reach this
 # directly, not just processes on this machine.
 HOST="${RINGVIZ_GEMMA_SERVER_HOST:-0.0.0.0}"
-
-resolve_repo_dir() {
-    if [ -n "${LTX_MLX_DIR:-}" ]; then
-        echo "$LTX_MLX_DIR"
-        return
-    fi
-    for cand in "$HOME/ltx-2-mlx" "$HOME/AI/ltx-2-mlx" "/Volumes/AI/Pinkio/api/phosphene.git/ltx-2-mlx"; do
-        if [ -d "$cand" ]; then
-            echo "$cand"
-            return
-        fi
-    done
-    echo "$HOME/ltx-2-mlx"
-}
 
 resolve_weights_root() {
     if [ -n "${LTX_MLX_MODELS_DIR:-}" ]; then
@@ -47,13 +32,13 @@ resolve_weights_root() {
     echo "$HOME/mlx_models"
 }
 
-REPO_DIR="$(resolve_repo_dir)"
 WEIGHTS_ROOT="$(resolve_weights_root)"
-PYTHON="$REPO_DIR/env/bin/python"
+# mlx_vlm.server needs uvicorn and fastapi, which the ltx-2-mlx env does not have
+PYTHON="${RINGVIZ_GEMMA_PYTHON:-$HOME/mlxenv/bin/python}"
 GEMMA="$WEIGHTS_ROOT/gemma-3-12b-it-4bit"
 
 if [ ! -x "$PYTHON" ]; then
-    echo "ltx-2-mlx venv python not found at $PYTHON" >&2
+    echo "python with mlx_vlm, uvicorn and fastapi not found at $PYTHON" >&2
     exit 1
 fi
 if [ ! -d "$GEMMA" ]; then
