@@ -283,7 +283,10 @@ def resolve_h3_quality_timeout_ng(quality: Optional[str],
 
 
 def _validate_h3_duration_ng(duration_s: float) -> None:
-    if not (H3_MIN_DURATION_S <= duration_s <= H3_MAX_DURATION_S):
+    # The cap is on the frame count, not the raw seconds: the compiler snaps 30 s to its frame
+    # grid and sends 30.677, which is the same 736 frames and 6 windows as 30.0.
+    if not (H3_MIN_DURATION_S <= duration_s
+            and _align_h3_frames_ng(duration_s) <= _align_h3_frames_ng(H3_MAX_DURATION_S)):
         raise ValueError(
             f"duration_s must be between {H3_MIN_DURATION_S} and "
             f"{H3_MAX_DURATION_S} (got {duration_s})")
