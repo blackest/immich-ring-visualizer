@@ -353,6 +353,51 @@ before a render.
 **Still open.** `h3ir serve` is stopped (start with `./h3ir_serveNG.sh gemma`). Steps 4 (RefMod vs
 `--reference` row comparison), 6, 7, 8 above; clear the 82 MB `~/Library/Logs/gemma-server.log`.
 
+## Update 2026-10-29, evening: references in the app, and two 30 s boxer chains
+
+**References are in the app** (`82e04c7`, `h3_referencesNG.py`; fork `reference-flag` fast-forwarded into the
+install, not pushed). Verified: a render through `/api/ng/h3/generate` is byte-identical to the command-line
+one. Found in the browser and fixed: a first picture defaulted to a first-frame role (now `subject` once a clip
+is in the tray, unless the user chose); Seconds defaulted to 10 (a reference brief is one 5 s window, so it is
+capped at 5.167 with a note); the compiler's refusal showed as a Python dict. Also fixed (`38e5b9b`): the length
+cap compares frames, so the compiler's 30.677 s (736 frames, 6 windows, same as 30.0) is accepted. A swap wants
+roles `edit_source` (clip) + `replacement_subject` (picture) + a note naming who it replaces; the compiler refuses
+`replacement-target-unnamed` otherwise. Per-window references are untested: a reference render is one window only.
+
+**How a chain really works** (read from `generate_staged.py` ~2290 and the job metrics). Window 1 starts from
+`--first-frame` if given. Each later window gets the previous window's last frame as its "first" keyframe
+(delivered frames = 124 + 5 x 123 = 739, trimmed to 736; audio crossfade one frame). `chain_context_frames` is 0
+in the app: no motion or voice history crosses a join, so a window restarts the action from one still (window 2
+re-raised the head window 1 had just lowered). The runner's comment says carried context brings motion AND voice
+across; it is in steps of 17 frames, not exposed by the app, untested. Timed keyframes ARE per-window anchors
+inside a chain (a keyframe at frame 0 of a later window is skipped; the runner prepends an alignment line to the
+window prompt), so a face picture can be pinned at chosen times; it pins the whole frame, so only where the shot
+matches. `<Picture N>` in a window after the first points at nothing (only window 1 has the picture).
+
+**The boxer test** (intent "An old boxer reminices about his former career and the fight he lost , improvise
+dialogue", 29.5 s, bold, tarantino, effort max, seed 42, line "I should have won", draft 640x384, Fast).
+Run 1, no picture: ~33 min; style, voice and pacing held; the compiler split the supplied line one or two words
+per window ("I should" / "have"), a drawn-out word worked; the face changed from silver-haired/clean (window 1)
+to bearded after a cut to the hands. Re-render of scene 1 as a reference render (bearded frame, 5.8 min) kept the
+face but copied the reference's whole frontal framing, not the low-angle close-up asked for, and window 2 of run
+1 opens on the OLD silver man for ~1.1 s (it continues the old window 1, and "have" is spoken over it), so a
+hand-spliced replacement would flash him: replace-a-window needs window 2 re-rendered from the new last frame
+(Extend). Run 2: first-frame = the bearded frame, same settings, 34.0 min, 719 frames: bearded man held through
+the hands (windows 3-4, ~10 s, long, same text twice) and the cut back to the face (window 5, relit with a blue
+window drawn from a wind-on-glass sound cue). Gemma compiled it in ~30 s. Backups: `~/Movies/h3-fork-tests/
+boxer_30s/` and `boxer_30s_v2/`; the view's saved state is backed up in `boxer_30s/enhancedh3_state_backup.json`.
+
+**Compiler facts.** Creativity is an h3ir input (restrained/balanced/bold/extreme; default balanced); speech is
+licensed from bold. h3ir 0.4.1 500s on a first-frame picture plus a dialogue entry; the app works around it by
+writing the line into the sentence. With 3 shots over 6 windows the same shot text is repeated in two windows
+(flagged "carries on the previous shot"; the line is spoken twice, which here worked as emphasis). Setting Shots
+to 6 gives one shot per window.
+
+**Ideas, not built.** Expose `--chain-context-frames`; per-window references (one reference job per window,
+face repeated, then a join); a replace-a-window-and-re-extend step in the app; strip dangling `<Picture N>`
+labels from later windows; a second speaker / off-screen word via Extend (text prompt, no compiler); a hint for
+swap roles; numeric `--reference-size`; reference audio in the runner.
+
 ## Licences
 
 Ring Viz: PolyForm Small Business 1.0.0 (from 2026-08-23). H3 runner: Apache-2.0
