@@ -228,13 +228,16 @@ H3_QUALITY_TIMEOUTS = {
 
 H3_MIN_DURATION_S = 3.0
 # 15.0 was phosphene's own validated ceiling (3 chained windows -- nobody,
-# including phosphene, has data past that). Raised to 30.0 (6 windows) to
-# test past it, 2026-09-29 -- the runner itself has no hard cap
-# (chain_windows math in _h3_chain_plan_ng is unbounded), this is purely
-# an "our own choice, untested past 3 windows" ceiling. Revisit if a
-# 6-window chain's seams/drift look worse than the validated 3-window
-# ones did.
-H3_MAX_DURATION_S = 30.0
+# including phosphene, has data past that). Raised to 30.0 (6 windows) on
+# 2026-09-29, and a 6-window chain held its style, voice and (with a first-frame
+# picture) the subject's face (2026-10-29). Raised to 300.0 (59 windows) the same
+# day at John's call: the runner has no hard cap (chain_windows math in
+# _h3_chain_plan_ng is unbounded) and the compiler snaps 300 s to 7213 frames, so
+# this is "our own choice, untested past 6 windows". A window is ~6 min at 640x384
+# with Fast, so a full-length clip is ~6 hours, the watchdog scales with the window
+# count, and there is no resume: a crash keeps the windows already finished on disk
+# (--chain-keep-windows) but the chain does not continue from them.
+H3_MAX_DURATION_S = 300.0
 
 # The dense (--chain-windows 1) path's proven-reliable ceiling -- phosphene
 # chains anything longer into this many seconds per window (see
