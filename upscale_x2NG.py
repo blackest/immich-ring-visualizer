@@ -24,13 +24,14 @@ from pathlib import Path
 # Read by ltx_core_mlx / MLX at import time, so they go in before the pipeline import below.
 os.environ.setdefault("LTX2_DIT_EVAL_EVERY", "1")
 os.environ.setdefault("LTX2_GEMMA_EVAL_EVERY", "1")
-# M1/M2 GPUs kill a command buffer that runs too long ("Impacting Interactivity"). Smaller buffers
-# give identical output; --short-gpu is the stricter setting for after a kill.
+# M1/M2 GPUs kill a command buffer that runs too long ("Impacting Interactivity"). One op per buffer
+# gives identical output and was the only setting that got through (10 died right after the text
+# encoder loaded, three times), so it is the default there; --short-gpu forces it on other chips.
 SHORT_GPU = "--short-gpu" in sys.argv
 if SHORT_GPU or re.search(r"Apple M[12]\b", subprocess.run(
         ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True).stdout):
-    os.environ.setdefault("MLX_MAX_OPS_PER_BUFFER", "1" if SHORT_GPU else "10")
-    os.environ.setdefault("MLX_MAX_MB_PER_BUFFER", "1" if SHORT_GPU else "10")
+    os.environ.setdefault("MLX_MAX_OPS_PER_BUFFER", "1")
+    os.environ.setdefault("MLX_MAX_MB_PER_BUFFER", "1")
 
 PHOSPHENE = Path(os.environ.get("LTX_STUDIO_ROOT", "/Volumes/AI/Pinkio/api/phosphene.git"))
 MODELS = PHOSPHENE / "mlx_models"
@@ -64,7 +65,7 @@ def main() -> int:
     ap.add_argument("--keep", type=float, default=1.0, help="how tightly the clip is held (0.3 to 1)")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--prompt", default=DEFAULT_PROMPT)
-    ap.add_argument("--short-gpu", action="store_true", help="one op per Metal buffer, for after a GPU watchdog kill")
+    ap.add_argument("--short-gpu", action="store_true", help="one op per Metal buffer (already the default on M1/M2)")
     args = ap.parse_args()
 
     for path in (PACK, TEXT_ENCODER, ADAPTER):
