@@ -305,6 +305,54 @@ Idea: trace which library lines run during one upscale with stdlib `sys.settrace
 The user prefers smaller, modular ports over wrapping Phosphene or ComfyUI code; prefer calling the library
 class directly (about 25 lines for the upscale) to importing a large wrapper.
 
+## Update 2026-10-29, later (steps 1-3 done, step 5 mostly done, step 4 changed)
+
+**Done.** Reboot checks passed. Gemma move finished: `gemma4-26b-mlx` is now a symlink to
+`/Volumes/AI/models/`, :8080 restarted on it, the 15 GB `.old` removed (internal free 259 GB).
+`upscale_x2NG.py` crashed a third time on the Metal watchdog with buffers at 10 and swap at 0 (so not
+swap); with `--short-gpu` (1 op per buffer) it ran clean: 640x384 -> 1280x768, 124 frames, audio kept,
+8 min 35 s (3 denoise steps at ~2 min 18 s, VAE decode 44 s). One op per buffer is now the default on
+M1/M2 (`ba99d3f`). Output: `~/Movies/h3-fork-tests/edit_fork_x2.mp4`.
+
+**`--reference-size max` is not worth testing.** It means upstream's 2048 px short edge, about 10x the
+pixels of a 640x384 render. At 1.5 min it had 24.7 GB resident, 52 GB wired and swap climbing, so it was
+stopped. The flag only takes `match|max`; if size is ever worth testing, add a numeric value (768 or
+1024) in `refmod_encode.reference_size` and the argparse choice.
+
+**The compiler and video.** `h3ir` does not send the model a video: `analyse.py` samples three frames
+(10/50/90%) and sends them as `image_url` stills, so the model infers the motion between three panels.
+Both Gemma 4 and Qwen have a `video_token_id`; neither is used. What differed is how well each followed
+the compiler's format on the bedroom `edit_source` clip:
+- Gemma 4 26B: card `lighting` came back as a dict, `style._tidy()` called `.strip()` on it, 500.
+- Qwen3-VL-8B: cards fine, but the written brief failed R24 (and R2, T12 on a retry) twice, so the
+  compiler returned its fallback draft, which kept BOTH women. Unusable for an edit.
+- Qwen3.8-27B-4bit (`/Volumes/AI/models/`, `Qwen3_5ForConditionalGeneration`): status `ready`, a proper
+  edit brief (`<Subject 1>` portrait woman preserved, `<Subject 2>` motion/timing only).
+A possible Gemma fix is coercing non-string card fields; untested. The "heretic" Qwen models are not on
+disk (the cached `Youssofal/Qwen3.6-27B-...Heretic` has only config and index; the 32B
+`llmfan46/Qwen3-VL-32B-Instruct-ultra-uncensored-heretic` has GGUF and bf16 but no MLX build).
+
+**Edit test, compiled brief (seed 1234, 640x384, 124 frames, Fast 3-step, Ref2VA Q8, `match`).**
+`--reference` portrait (`pg-z-image-turbo_00367_.png`) + the bedroom clip
+(`exportsNG/_h3gen/602dff368f9d/extend_src.mp4`), prompt = the 27B's brief
+(`~/Movies/h3-fork-tests/edit_prompt_compiled.txt`). 13.6 min, ~20 GB active, swap peaked ~7.5 GB. Result
+(`edit_compiled.mp4`): face, straight dark shoulder-length hair and jacket all match the portrait; room,
+moon, window, headboard, camera and seated pose held. The earlier hand-written run kept the source
+woman's face and wavy hair. Caveats: one seed; the brief and my added face/hair wording changed together
+(a hand-written run with that sentence at `match` would say which did it); the satin skirt vanished and
+her legs are bare, because the brief says nothing below the jacket (a compiler gap).
+
+**Wired into immichring (uncommitted until now).** `h3ir_serveNG.sh gemma|qwen` starts the compiler on
+:8700 (Gemma 26B on :8080) or :8701 (Qwen3.8-27B on :8082, started if not up). New setting
+`h3ir_video_base_url` (:8701). `routes/enhancedh3NG.py` sends the uploads and the brief to :8701 when any
+asset is a video, remembers which compiler wrote each brief for refine, and the "isn't running" error
+names the right launch command. Tests: `tests/test_enhancedh3_routingNG.py` (8). The launcher itself was
+only syntax-checked. The Qwen server holds ~15 GB: stop it (`pkill -f "mlx_vlm.server.*--port 8082"`)
+before a render.
+
+**Still open.** `h3ir serve` is stopped (start with `./h3ir_serveNG.sh gemma`). Steps 4 (RefMod vs
+`--reference` row comparison), 6, 7, 8 above; clear the 82 MB `~/Library/Logs/gemma-server.log`.
+
 ## Licences
 
 Ring Viz: PolyForm Small Business 1.0.0 (from 2026-08-23). H3 runner: Apache-2.0

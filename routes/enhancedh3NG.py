@@ -44,15 +44,20 @@ class _ServiceError(Exception):
         self.status = status
 
 
-def _h3ir(method, path, timeout=_QUICK_TIMEOUT_S, **kwargs):
-    url = configNG.get_h3ir_base_url() + path
+# A brief lives in the compiler that wrote it, so a refine goes back to the same one.
+_brief_base = {}
+
+
+def _h3ir(method, path, timeout=_QUICK_TIMEOUT_S, base=None, **kwargs):
+    base = base or configNG.get_h3ir_base_url()
     try:
-        return requests.request(method, url, timeout=timeout, **kwargs)
+        return requests.request(method, base + path, timeout=timeout, **kwargs)
     except requests.exceptions.ConnectionError:
+        video = base == configNG.get_h3ir_video_base_url()
         raise _ServiceError(
-            f"The H3 compiler isn't running at {configNG.get_h3ir_base_url()} -- "
-            f"start it with `h3ir serve --host 127.0.0.1 --port 8700` (or change "
-            f"its address in Settings).", 503) from None
+            f"The H3 compiler isn't running at {base} -- start it with "
+            f"`./h3ir_serveNG.sh {'qwen' if video else 'gemma'}` (or change its address in Settings).",
+            503) from None
     except requests.exceptions.Timeout:
         raise _ServiceError("The H3 compiler took too long to answer.", 504) from None
 
@@ -199,9 +204,8 @@ def enhanced_h3_options_ng():
     })
 
 
-def _upload_assets():
-    """The `assets` form field (JSON: [{field, kind, role, note, paired_field}])
-    plus the files it names -> the compiler's asset list, bytes uploaded."""
+def _asset_items():
+    """The `assets` form field (JSON: [{field, kind, role, note, paired_field}]) as a list."""
     raw = (request.form.get("assets") or "").strip()
     if not raw:
         return []
@@ -211,6 +215,19 @@ def _upload_assets():
         raise _ServiceError("assets must be a JSON array", 400) from None
     if not isinstance(items, list):
         raise _ServiceError("assets must be a JSON array", 400)
+    return items
+
+
+def _compiler_base(items):
+    """Gemma's compiler for text and pictures; the Qwen one when any asset is a video, since
+    Gemma's description of a real clip crashed the compiler (see h3ir_serveNG.sh)."""
+    if any(isinstance(i, dict) and i.get("kind") == "video" for i in items):
+        return configNG.get_h3ir_video_base_url()
+    return configNG.get_h3ir_base_url()
+
+
+def _upload_assets(items, base):
+    """The files `items` name -> the compiler's asset list, bytes uploaded to `base`."""
 
     digests = {}
 
@@ -221,7 +238,7 @@ def _upload_assets():
                 raise _ServiceError(f"file {field!r} was not sent", 400)
             data = fld.read()
             sha = hashlib.sha256(data).hexdigest()
-            res = _h3ir("PUT", f"/v1/assets/{sha}", timeout=_UPLOAD_TIMEOUT_S, data=data,
+            res = _h3ir("PUT", f"/v1/assets/{sha}", timeout=_UPLOAD_TIMEOUT_S, base=base, data=data,
                         headers={"Content-Type": "application/octet-stream"})
             if not res.ok:
                 raise _ServiceError(_error_text(res), res.status_code)
@@ -271,10 +288,12 @@ def enhanced_h3_brief_ng():
             return jsonify({"error": "dialogue must be a JSON array"}), 400
 
     try:
-        assets = _upload_assets()
+        items = _asset_items()
+        base = _compiler_base(items)
+        assets = _upload_assets(items, base)
         if assets:
             payload["assets"] = assets
-        res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, json=payload)
+        res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, base=base, json=payload)
         fallback = None
         if res.status_code == 500 and payload.get("dialogue"):
             # open-h3-ir 0.4.1 crashes on a first-frame picture plus a dialogue
@@ -284,12 +303,14 @@ def enhanced_h3_brief_ng():
             payload["intent"] += "".join(
                 f' {(d.get("speaker") or "A character").capitalize()} says: "{d["text"]}".' for d in lines)
             fallback = "The compiler can't take a spoken line with these pictures, so the line was written into the sentence instead."
-            res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, json=payload)
+            res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, base=base, json=payload)
     except _ServiceError as e:
         return jsonify({"error": str(e)}), e.status
     if not res.ok:
         return jsonify({"error": _error_text(res)}), res.status_code
     out = _shape(res.json(), seconds)
+    if out.get("id"):
+        _brief_base[out["id"]] = base
     if fallback:
         out["note"] = fallback
     return jsonify(out), 201
@@ -306,7 +327,7 @@ def enhanced_h3_refine_ng():
         return jsonify({"error": "id and change are required"}), 400
     try:
         res = _h3ir("PATCH", f"/v1/briefs/{brief_id}", timeout=_BRIEF_TIMEOUT_S,
-                    json={"change": change})
+                    base=_brief_base.get(brief_id), json={"change": change})
     except _ServiceError as e:
         return jsonify({"error": str(e)}), e.status
     if not res.ok:
