@@ -95,5 +95,16 @@ class BriefRouting(CompilerBase):
         self.assertEqual(self.calls, [("PATCH", GEMMA + "/v1/briefs/zzz")])
 
 
+class ErrorText(unittest.TestCase):
+    def test_a_nested_detail_shows_its_message_not_a_dict(self):
+        text = routes._error_text(_Res(422, {"detail": {"code": "replacement-target-unnamed",
+                                                       "message": "Say who it replaces."}}))
+        self.assertEqual(text, "Say who it replaces.")
+
+    def test_flat_forms_still_work(self):
+        self.assertEqual(routes._error_text(_Res(400, {"detail": "plain"})), "plain")
+        self.assertEqual(routes._error_text(_Res(400, {"message": "m", "detail": "d"})), "m")
+
+
 if __name__ == "__main__":
     unittest.main()

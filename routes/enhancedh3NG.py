@@ -71,8 +71,11 @@ def _error_text(res):
         return f"HTTP {res.status_code}"
     if isinstance(body, dict):
         for key in ("message", "error", "detail"):
-            if body.get(key):
-                return str(body[key])
+            value = body.get(key)
+            if isinstance(value, dict):  # {"detail": {"code": ..., "message": ...}}
+                value = value.get("message") or value.get("error")
+            if value:
+                return str(value)
     return json.dumps(body)[:400]
 
 

@@ -266,7 +266,10 @@ def h3_generate_ng():
     keyframe or RefMod is allowed), last_file (optional multipart image -- the still
     the clip ends on; not with a RefMod), keyframe_files + keyframe_times (optional
     images and one time each, a frame number or seconds like "2.5s" -- stills the clip
-    passes through; not with a RefMod or extend_file).
+    passes through; not with a RefMod or extend_file), reference_files (optional pictures
+    and clips for a Ref2VA render, in order: the first picture is <Picture 1>, the first clip
+    <Video 1>; needs model "h3ref", a single 5 s window, and no keyframe, RefMod or extend),
+    reference_size ("match", the default, or "max": upstream's 2048 px, several times slower).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -312,6 +315,7 @@ def h3_generate_ng():
         last_file = request.files.get("last_file")
         kf_files = request.files.getlist("keyframe_files")
         kf_times = [t.strip() for t in request.form.getlist("keyframe_times")]
+        ref_files = request.files.getlist("reference_files")
         if len(kf_files) != len(kf_times):
             return jsonify({"error": "each keyframe image needs a time"}), 400
         job = h3_jobs.start_h3_job_ng(
@@ -323,7 +327,9 @@ def h3_generate_ng():
             last_bytes=last_file.read() if last_file else None,
             last_ext=os.path.splitext(last_file.filename or "")[1] if last_file else ".jpg",
             keyframes=[(f.read(), os.path.splitext(f.filename or "")[1], t)
-                       for f, t in zip(kf_files, kf_times)])
+                       for f, t in zip(kf_files, kf_times)],
+            references=[(f.read(), os.path.splitext(f.filename or "")[1]) for f in ref_files],
+            reference_size=str(request.form.get("reference_size") or "match").strip().lower())
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

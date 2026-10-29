@@ -71,6 +71,7 @@ from typing import Callable, Literal, Optional
 
 import h3_loraNG as h3_lora
 import h3_ref2vaNG as h3_ref2va
+import h3_referencesNG as h3_references
 
 # "h3ref" is the official Ref2VA transformer (own Q8, see h3_ref2vaNG.py): the only
 # model that reads RefMod reference rows. Same compact VAE/text-encoder pack.
@@ -514,6 +515,7 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         # UI shows its rows only when `refmod_ready`, with the missing half spelled out.
         "ref2va_ok": h3_ref2va.resolve_ref2va_dit_ng("", H3_MODELS_ROOT) is not None,
         "refmod_supported": bool(runner) and h3_ref2va.runner_supports_refmod_ng(runner),
+        "reference_supported": bool(runner) and h3_references.runner_supports_reference_ng(runner),
         "refmod_ready": h3_ref2va.resolve_ref2va_dit_ng("", H3_MODELS_ROOT) is not None
                         and bool(runner) and h3_ref2va.runner_supports_refmod_ng(runner),
         "compact_ok": compact_root is not None,
@@ -547,7 +549,9 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           chain_prompts: Optional[list] = None,
                           extend_from: Optional[str] = None,
                           last_frame_path: Optional[str] = None,
-                          keyframes: Optional[list] = None) -> dict:
+                          keyframes: Optional[list] = None,
+                          references: Optional[list] = None,
+                          reference_size: str = "match") -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -732,6 +736,10 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     refmods = h3_ref2va.validate_refmods_ng(
         refmods, model=config.model, image_path=image_path, turbo=turbo, v13=v13,
         chain_windows=chain_windows, runner=runner, tristep=tristep)
+    references = h3_references.validate_references_ng(
+        references, reference_size, model=config.model, image_path=image_path,
+        last_frame_path=last_frame_path, keyframes=keyframes, extend_from=extend_from,
+        refmods=refmods, turbo=turbo, v13=v13, chain_windows=chain_windows, runner=runner)
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
 
     output_dir = Path(output_dir)
@@ -810,6 +818,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         runner_file, _qkv = h3_lora.lora_for_runner_ng(lora_path, runner, on_log)
         cmd += ["--lora", f"{runner_file}:{strength:g}"]
     cmd += h3_ref2va.refmod_argv_ng(refmods)
+    cmd += h3_references.reference_argv_ng(references, reference_size)
     lazy_argv = _h3_lazy_adaln_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
     cmd += lazy_argv
     adaln_cache_argv = _h3_adaln_cache_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
@@ -828,6 +837,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         if refmods:
             turbo_note += " [refmods " + ", ".join(
                 f"{Path(r['path']).stem}@{r['strength']:g}" for r in refmods) + "]"
+        if references:
+            turbo_note += f" [{len(references)} reference(s), size {reference_size}]"
         if extend_from is not None:
             on_log(f"[h3] launching {config.model} extend: {chain_windows} new window(s) "
                    f"(+{frames} frames, ~{frames / H3_FRAME_RATE:.1f}s) after "
@@ -959,4 +970,5 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "frames": frames,
         "duration_s": frames / H3_FRAME_RATE,
         "refmods": [{"name": Path(r["path"]).stem, "strength": r["strength"]} for r in refmods],
+        "references": [Path(r).name for r in references],
     }

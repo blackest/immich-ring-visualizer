@@ -26,6 +26,7 @@ from typing import Optional
 
 import h3_engineNG as h3
 import h3_ref2vaNG as h3_ref2va
+import h3_referencesNG as h3_references
 import h3_job_logsNG
 from configNG import H3GEN_DIR
 
@@ -53,6 +54,8 @@ class H3JobNG:
     tristep: bool = False  # TaoMate 3-step "Fast" -- forces steps to H3_TRISTEP_STEPS; allowed with RefMods
     loras: list = field(default_factory=list)  # [{"name", "path", "strength"}] user LoRAs
     refmods: list = field(default_factory=list)  # [{"name", "path", "strength", "images", "videos"}] RefMods
+    references: list = field(default_factory=list)  # reference_N.<ext> file names in the job dir, in order
+    reference_size: str = "match"  # "max" = upstream's 2048 px picture size (several times slower)
     chain_prompts: list = field(default_factory=list)  # one prompt per chained window; empty = `prompt` for every window
     extends: bool = False  # continue extend_src.mp4 in the job dir; duration_s is the new time added
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
@@ -130,6 +133,8 @@ def _worker_loop() -> None:
                 turbo=job.turbo, v13=job.v13, tristep=job.tristep,
                 loras=[(l["path"], l["strength"]) for l in job.loras],
                 refmods=job.refmods, chain_prompts=job.chain_prompts,
+                references=[str(job.job_dir / n) for n in job.references],
+                reference_size=job.reference_size,
                 extend_from=str(extend_path) if job.extends else None,
                 last_frame_path=str(last_path) if last_path else None,
                 keyframes=keyframes,
@@ -170,7 +175,9 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      extend_bytes: Optional[bytes] = None,
                      last_bytes: Optional[bytes] = None,
                      last_ext: str = ".jpg",
-                     keyframes: Optional[list] = None) -> H3JobNG:
+                     keyframes: Optional[list] = None,
+                     references: Optional[list] = None,
+                     reference_size: str = "match") -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
     video_jobsNG.start_video_job_ng (see its own docstring for the full
@@ -181,7 +188,9 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     added after it, and no keyframe image or RefMod is allowed. last_bytes is a
     still the clip ends on (--last-frame); it may join a first frame or an extend.
     keyframes is a [(bytes, ext, when)] list of stills the clip passes through
-    (--keyframe); not with an extend or a RefMod."""
+    (--keyframe); not with an extend or a RefMod. references is a [(bytes, ext)] list of
+    pictures and clips for a Ref2VA render (--reference), stored as reference_N.<ext> in
+    the job dir; see h3_referencesNG.py for what they do not combine with."""
     prompt = (prompt or "").strip()
     if not prompt:
         raise ValueError("prompt is required")
@@ -221,6 +230,15 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         refmods, model=model, image_path="keyframe" if image_bytes is not None else None,
         turbo=turbo, v13=v13, chain_windows=h3._h3_chain_plan_ng(duration_s)[1],
         runner=h3._resolve_h3_runner_ng(h3.H3Config()) or h3.H3_RUNNER, tristep=tristep)
+
+    reference_names = [f"reference_{n}{h3_references.clean_ext_ng('x' + ext)}"
+                       for n, (_b, ext) in enumerate(references or [])]
+    h3_references.validate_references_ng(
+        reference_names, reference_size, model=model, image_path="keyframe" if image_bytes is not None else None,
+        last_frame_path="last" if last_bytes is not None else None, keyframes=keyframes,
+        extend_from="extend" if extend_bytes is not None else None, refmods=refmods, turbo=turbo, v13=v13,
+        chain_windows=h3._h3_chain_plan_ng(duration_s)[1],
+        runner=h3._resolve_h3_runner_ng(h3.H3Config()) or h3.H3_RUNNER, check_files=False)
 
     width = h3.H3_WIDTH if width is None else int(width)
     height = h3.H3_HEIGHT if height is None else int(height)
@@ -267,13 +285,16 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         (job_dir / f"kf_{n}{kf_ext}").write_bytes(kf_bytes)
     if extend_bytes is not None:
         (job_dir / EXTEND_SOURCE_NAME).write_bytes(extend_bytes)
+    for name, (ref_bytes, _ext) in zip(reference_names, references or []):
+        (job_dir / name).write_bytes(ref_bytes)
 
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
                   has_last_frame=last_bytes is not None,
                   keyframe_times=[w for _b, _e, w in keyframes or []], width=width, height=height, steps=steps, turbo=turbo, v13=v13,
                   tristep=tristep, loras=loras, refmods=refmods, timeout_s=timeout_s,
-                  chain_prompts=chain_prompts or [], extends=extend_bytes is not None)
+                  chain_prompts=chain_prompts or [], extends=extend_bytes is not None,
+                  references=reference_names, reference_size=reference_size)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()
@@ -333,6 +354,7 @@ def job_status_ng(job_id: str) -> dict:
         "tristep": job.tristep,
         "loras": [{"name": l["name"], "strength": l["strength"]} for l in job.loras],
         "refmods": [{"name": r["name"], "strength": r["strength"]} for r in job.refmods],
+        "references": len(job.references),
         "error": job.error,
         "error_type": job.error_type,
         "queued_at": job.queued_at,

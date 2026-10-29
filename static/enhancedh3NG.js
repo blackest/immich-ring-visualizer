@@ -124,9 +124,14 @@
     Array.prototype.forEach.call(files, function (f) {
       if (f.type.indexOf(ACCEPT[kind]) !== 0) return;
       if (items[kind].length >= limit(kind)) return;
-      var defaultRole = kind === "image" ? (items.image.length ? "subject" : "frame_anchor_first")
+      // With a clip in the tray the first picture is the person to swap in, not a start frame.
+      var defaultRole = kind === "image" ? (items.image.length || items.video.length ? "subject" : "frame_anchor_first")
         : kind === "video" ? "subject" : "bgm";
-      items[kind].push({ file: f, url: URL.createObjectURL(f), role: defaultRole, note: "" });
+      items[kind].push({ file: f, url: URL.createObjectURL(f), role: defaultRole, note: "",
+        auto: kind === "image" && defaultRole === "frame_anchor_first" });
+      if (kind === "video") items.image.forEach(function (it) {
+        if (it.auto && it.role === "frame_anchor_first") it.role = "subject";  // still the role picked for it, not yours
+      });
     });
     renderTray();
   }
@@ -159,7 +164,7 @@
           sel.appendChild(o);
         });
         sel.value = it.role;
-        sel.onchange = function () { it.role = sel.value; updateRefNote(); };
+        sel.onchange = function () { it.role = sel.value; it.auto = false; updateRefNote(); };
         var at = null;
         if (kind === "image") {
           at = document.createElement("input");
@@ -184,13 +189,20 @@
     updateRefNote();
   }
 
-  // The renderer takes first/last frames only today; the rest shape the brief.
+  // Pictures that are not a first, last or timed frame, then the clips, are references for the
+  // renderer (the Ref2VA model): <Picture N> and <Video N> number within their own kind, in tray order.
+  function referenceItems() {
+    var pictures = items.image.filter(function (it) { return it.role !== "frame_anchor_first" && it.role !== "frame_anchor_last" && !it.at; });
+    return pictures.concat(items.video);
+  }
+
   function updateRefNote() {
-    var extra = items.image.filter(function (it) { return it.role !== "frame_anchor_first" && it.role !== "frame_anchor_last" && !it.at; }).length +
-      items.video.length + items.audio.length;
-    els.refnote.textContent = extra
-      ? "Only the first-, last-frame and timed keyframe pictures reach the video model for now; the rest shape the brief's wording."
-      : "";
+    var refs = referenceItems().length;
+    var frames = items.image.length - items.image.filter(function (it) { return it.role !== "frame_anchor_first" && it.role !== "frame_anchor_last" && !it.at; }).length;
+    els.refnote.textContent = refs
+      ? (frames ? "Pictures and clips here are rendered as references, which cannot be mixed with first, last or timed frames: change those pictures' role, or remove them."
+        : "Pictures and clips here are rendered as references (the Ref2VA model, one 5 s window). Sound is not used yet.")
+      : (items.audio.length ? "Sound files only shape the brief's wording for now." : "");
   }
 
   function wireTray() {
@@ -241,7 +253,15 @@
 
     var form = new FormData();
     form.append("intent", intent);
-    form.append("seconds", els.seconds.value || "10");
+    // A reference render is one 5 s window (chained windows carry no references yet).
+    var seconds = parseFloat(els.seconds.value) || 10;
+    capNote = "";
+    if (!extendFrom && referenceItems().length && seconds > REF_MAX_SECONDS) {
+      seconds = REF_MAX_SECONDS;
+      els.seconds.value = String(seconds);
+      capNote = " Seconds was set to " + seconds + ": references render one 5 s window.";
+    }
+    form.append("seconds", String(seconds));
     ["shots", "aspect", "creativity", "director", "effort", "seed"].forEach(function (k) {
       if (els[k].value) form.append(k, els[k].value);
     });
@@ -283,7 +303,7 @@
       .then(function (r) {
         if (!r.ok) { setMsg(r.body.error || "Failed."); return; }
         showBrief(r.body);
-        setMsg(r.body.windows ? "Brief ready: " + r.body.windows.length + " window(s). Edit below, then Render." + (r.body.note ? " " + r.body.note : "") : "");
+        setMsg(r.body.windows ? "Brief ready: " + r.body.windows.length + " window(s). Edit below, then Render." + (r.body.note ? " " + r.body.note : "") + capNote : "");
         els.result.scrollIntoView({ behavior: "smooth", block: "start" });
         saveNow();
       })
@@ -330,6 +350,8 @@
   // ---- render ----
 
   var pollTimer = null;
+  var REF_MAX_SECONDS = 5.167;
+  var capNote = "";  // set when Write brief shortened Seconds for a reference render
 
   function setRender(text) { els.renderstatus.textContent = text || ""; }
 
@@ -371,6 +393,16 @@
       form.append("keyframe_files", it.file, it.file.name);
       form.append("keyframe_times", it.at);
     });
+
+    var refs = extendFrom ? [] : referenceItems();
+    if (refs.length) {
+      if (first || last || items.image.some(function (it) { return it.at; })) {
+        setRender("References cannot be mixed with a first, last or timed frame picture. Change the role of those pictures (the portrait to be swapped in should be a subject), or remove them.");
+        return;
+      }
+      refs.forEach(function (it) { form.append("reference_files", it.file, it.file.name); });
+      form.append("model", "h3ref");
+    }
 
     els.render.disabled = true;
     els.video.style.display = "none";
