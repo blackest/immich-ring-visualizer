@@ -2832,6 +2832,7 @@
                       (TaoMate 3-step, ~4-5x faster; works on the Q8 models
                       and with RefMods)</label
                     >
+                    <div id="ng-h3-loras-fix" style="margin-top: 8px" hidden></div>
                     <div id="ng-h3-loras-block" style="margin-top: 8px" hidden>
                       <label class="ng-gen-label" style="margin-top: 0"
                         >LoRAs</label
@@ -2868,6 +2869,7 @@
                       >
                         + Add RefMod
                       </button>
+                      <div id="ng-h3-refmod-make" style="margin-top: 8px"></div>
                     </div>
                     <div
                       class="ng-gen-label"
@@ -3013,6 +3015,7 @@
                 <video id="ng-enhancedh3-video" controls style="display: none; width: 100%"></video>
                 <div class="ng-gen-action-bar">
                   <button type="button" id="ng-enhancedh3-extend" class="ng-gen-btn" style="display: none">Extend this video</button>
+                  <button type="button" id="ng-enhancedh3-upscale" class="ng-gen-btn" style="display: none">Upscale 2x</button>
                   <div id="ng-enhancedh3-extendnote" class="ng-gen-status"></div>
                 </div>
                 <div id="ng-enhancedh3-rerolls" style="display: none"></div>
@@ -3936,6 +3939,7 @@
     <script src="{{ url_for('static', filename='videogenNG.js') }}"></script>
     <script src="{{ url_for('static', filename='h3NG.js') }}"></script>
     <script src="{{ url_for('static', filename='h3LogNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='h3RefmodMakeNG.js') }}"></script>
     <script src="{{ url_for('static', filename='enhancedh3RerollNG.js') }}"></script>
     <script src="{{ url_for('static', filename='enhancedh3NG.js') }}"></script>
     <!-- Vendored (not CDN, same convention as every other static file

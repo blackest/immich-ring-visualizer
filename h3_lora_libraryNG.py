@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 import h3_engineNG as h3
+import h3_lora_convertNG as h3_lora_convert
 import h3_loraNG
 
 H3_LORAS_DIR = h3.H3_MODELS_ROOT / "loras"
@@ -88,6 +89,7 @@ def list_h3_loras_ng() -> list[dict]:
             "size_mb": round(size / 1e6),
             "ok": reason is None,
             "reason": reason,
+            "convertible": reason is not None and h3_lora_convert.is_kohya_ng(p),
             "title": extras.get("title"),
             "trigger_words": extras.get("trigger_words", []),
             "recommended_strength": extras.get("recommended_strength") or DEFAULT_STRENGTH,

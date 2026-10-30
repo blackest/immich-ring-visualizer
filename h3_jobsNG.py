@@ -63,6 +63,9 @@ class H3JobNG:
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
     reroll: Optional[dict] = None  # {"source", "window", "joins", "version"} on a one-window re-roll job
     on_done: Optional[Callable] = field(default=None, repr=False)  # called with the job after a clean render
+    task: Optional[str] = None  # "upscale": not an H3 render but another GPU task sharing this queue
+    run: Optional[Callable] = field(default=None, repr=False)  # task jobs: run(job) -> the output mp4 path
+    meta: dict = field(default_factory=dict)  # task jobs: what the UI shows (source, estimate)
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
     finished_at: Optional[float] = None
@@ -121,6 +124,15 @@ def _worker_loop() -> None:
         last_path = next(job.job_dir.glob("last.*"), None)
         keyframes = [(str(next(job.job_dir.glob(f"kf_{n}.*"))), when)
                      for n, when in enumerate(job.keyframe_times)]
+        if job.run is not None:  # a task job: its own runner instead of the H3 engine
+            try:
+                job.mp4_path = job.run(job)
+            except Exception as e:  # noqa: BLE001 -- job.error is the report
+                job.error = str(e)
+                job.error_type = type(e).__name__
+            finally:
+                job.finished_at = time.time()
+            continue
         try:
             if job.has_image and image_path is None:
                 raise FileNotFoundError("keyframe image went missing before render")
@@ -319,6 +331,23 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     return job
 
 
+def start_task_job_ng(task: str, label: str, run: Callable, meta: Optional[dict] = None) -> H3JobNG:
+    """Queue a non-render GPU task (see h3_upscaleNG.py) behind whatever is rendering. `run(job)`
+    does the work in the worker thread, writes into job.job_dir, logs with job.append_log, keeps
+    its subprocess in job._proc so cancel works, and returns the path of the mp4 it made."""
+    _ensure_worker_started()
+    job_id = uuid.uuid4().hex[:12]
+    job_dir = Path(H3GEN_DIR) / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    job = H3JobNG(job_id=job_id, prompt=label, duration_s=0.0, seed=None, job_dir=job_dir,
+                  has_image=False, task=task, run=run, meta=meta or {})
+    with _JOBS_LOCK:
+        _JOBS[job_id] = job
+        _prune_old_jobs_locked()
+    _QUEUE.put(job_id)
+    return job
+
+
 def get_job_ng(job_id: str) -> Optional[H3JobNG]:
     with _JOBS_LOCK:
         return _JOBS.get(job_id)
@@ -373,6 +402,8 @@ def job_status_ng(job_id: str) -> dict:
         "refmods": [{"name": r["name"], "strength": r["strength"]} for r in job.refmods],
         "references": len(job.references),
         "reroll": job.reroll,
+        "task": job.task,
+        "meta": job.meta,
         "error": job.error,
         "error_type": job.error_type,
         "queued_at": job.queued_at,

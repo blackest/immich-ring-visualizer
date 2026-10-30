@@ -87,11 +87,13 @@
     els.tristep = document.getElementById("ng-h3-tristep");
     els.lorasBlock = document.getElementById("ng-h3-loras-block");
     els.lorasRows = document.getElementById("ng-h3-loras-rows");
+    els.lorasFix = document.getElementById("ng-h3-loras-fix");
     els.loraAdd = document.getElementById("ng-h3-lora-add");
     els.refmodsBlock = document.getElementById("ng-h3-refmods-block");
     els.refmodsNote = document.getElementById("ng-h3-refmods-note");
     els.refmodsRows = document.getElementById("ng-h3-refmods-rows");
     els.refmodAdd = document.getElementById("ng-h3-refmod-add");
+    els.refmodMake = document.getElementById("ng-h3-refmod-make");
 
     els.generateBtn = document.getElementById("ng-h3-generate-btn");
     els.status = document.getElementById("ng-h3-status");
@@ -450,6 +452,52 @@
     return out;
   }
 
+  // LoRAs the runner cannot read as they are but that can be converted (kohya-format): one row
+  // each with a button. The original is kept in the loras folder's _originals.
+  function drawLoraFixes() {
+    if (!els.lorasFix) return;
+    var fixable = loraLib.loras.filter(function (e) { return !e.ok && e.convertible; });
+    els.lorasFix.hidden = !fixable.length;
+    els.lorasFix.textContent = "";
+    if (!fixable.length) return;
+    var head = document.createElement("div");
+    head.className = "ng-gen-label";
+    head.textContent = "LoRAs that need converting";
+    els.lorasFix.appendChild(head);
+    fixable.forEach(function (entry) {
+      var line = document.createElement("div");
+      line.style.cssText = "display: flex; gap: 6px; align-items: center; margin-bottom: 4px";
+      var name = document.createElement("span");
+      name.style.cssText = "flex: 1; overflow: hidden; text-overflow: ellipsis";
+      name.textContent = (entry.title || entry.name) + " (kohya, " + entry.size_mb + " MB)";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ng-gen-btn";
+      btn.style.cssText = "width: auto";
+      btn.textContent = "Make usable";
+      btn.title = "Rewrites it for the H3 runner. The original is kept in _originals.";
+      var note = document.createElement("div");
+      note.className = "ng-gen-label";
+      note.style.cssText = "text-transform: none; letter-spacing: 0";
+      btn.addEventListener("click", function () {
+        btn.disabled = true;
+        note.textContent = "Converting...";
+        fetch(API + "/loras/" + encodeURIComponent(entry.name) + "/convert", { method: "POST" })
+          .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (r) {
+            if (!r.ok) { note.textContent = r.body.error || "Could not convert it."; btn.disabled = false; return; }
+            loraLib.loaded = false;
+            ensureLorasLoaded();
+          })
+          .catch(function (e) { note.textContent = e.message; btn.disabled = false; });
+      });
+      line.appendChild(name);
+      line.appendChild(btn);
+      els.lorasFix.appendChild(line);
+      els.lorasFix.appendChild(note);
+    });
+  }
+
   function ensureLorasLoaded() {
     if (loraLib.loaded) return;
     loraLib.loaded = true;
@@ -459,7 +507,12 @@
         loraLib.loras = (payload && payload.loras) || [];
         loraLib.max = (payload && payload.max_stack) || 0;
         loraLib.maxSpeed = (payload && payload.max_stack_with_speed) || 0;
+        // Rebuild the rows so a just-converted LoRA appears in their dropdowns.
+        var kept = selectedLoras();
+        if (els.lorasRows) els.lorasRows.textContent = "";
+        kept.forEach(function (k) { addLoraRow(k.name, k.strength); });
         syncLoraControls();
+        drawLoraFixes();
       })
       .catch(function () {
         loraLib.loaded = false; // let a later sync retry
@@ -960,6 +1013,9 @@
     refreshEls();
     if (!els.pane) return;
     inited = true;
+    if (window.H3RefmodMakeNG) window.H3RefmodMakeNG.init(els.refmodMake, {
+      reload: function () { refLib.loaded = false; ensureRefmodsLoaded(); }
+    });
 
     if (els.installBtn) els.installBtn.addEventListener("click", startInstall);
     if (els.licenseCb) els.licenseCb.addEventListener("change", onLicenseCbChange);
