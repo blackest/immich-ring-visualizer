@@ -124,7 +124,13 @@ def _resolve_h3_models_root_ng() -> Path:
 H3_REPO_DIR = _resolve_h3_repo_dir_ng()
 H3_MODELS_ROOT = _resolve_h3_models_root_ng()
 H3_DEFAULT_PYTHON = H3_REPO_DIR / ".venv" / "bin" / "python"
-H3_RUNNER = H3_REPO_DIR / "scripts" / "generate_staged.py"
+# The runner is the copy in this repository (vendor/minimax_h3_mlx, see its VENDORED.md): it carries the
+# flags this app needs (--reference, --refmod, --lazy-adaln, --adaln-cache-dir), and Phosphene's own copy of
+# the engine is moved to an exact commit by every Update. Only the python and the models still come from
+# Phosphene's install. A checkout without vendor/ falls back to Phosphene's runner.
+H3_VENDOR_DIR = Path(__file__).resolve().parent / "vendor" / "minimax_h3_mlx"
+H3_RUNNER = (H3_VENDOR_DIR if (H3_VENDOR_DIR / "scripts" / "generate_staged.py").is_file()
+             else H3_REPO_DIR) / "scripts" / "generate_staged.py"
 H3_KEYFRAME_WHEN_RE = re.compile(r"-?\d+|\d+(\.\d+)?s")  # --keyframe PATH@WHEN: a frame index or seconds
 
 H3_DIT_BF16 = H3_MODELS_ROOT / "deepbeep-pruned-bf16" / "MiniMax-H3-FL2VA-pruned_bf16.safetensors"
@@ -869,7 +875,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             stderr=subprocess.STDOUT,
             text=True,
             env=_clean_subprocess_env_ng(),
-            cwd=str(H3_REPO_DIR),
+            cwd=str(Path(runner).parent.parent),  # the runner's own folder
             start_new_session=True,
         )
         if on_proc_start:

@@ -451,6 +451,21 @@ Aim: each file readable on its own in a small context. Still large: `h3_engineNG
 "replace and re-extend" for continuity-sensitive seams; split `h3_engineNG.py` (argv building from health and
 config); measure the upscale on a 20 s film.
 
+## Update 2026-10-30, later: the H3 runner now lives in this repository
+
+Phosphene v4.19.14 (FLUX 3 Klein images) was applied, and its updater re-pinned the vendored engine to its exact
+commit `3f6c75c` (`scripts/pinokio/h3_checkout.sh` runs on every Update and on a re-install). That commit is the base
+my six commits sit on, and they were safe on the fork's `reference-flag` branch, but the checked-out runner lost
+`--reference`, `--refmod`, `--lazy-adaln` and `--adaln-cache-dir`: the app reported `reference_supported: False`, the
+RefMod rows and the RefMod maker stopped working, and chains lost the AdaLN cache. So the runner is now vendored in
+`vendor/minimax_h3_mlx/` (the `minimax_h3_mlx` package, `scripts/generate_staged.py`, `make_refmod.py`,
+`refmod_roundtrip.py`, 12 logic tests, the Apache-2.0 `LICENSE` and `VENDORED.md` listing what we changed and the
+base commit). `h3_engineNG.H3_RUNNER` points at it (falling back to Phosphene's copy only if `vendor/` is missing); the
+python and the models still come from Phosphene's install, so its venv and model downloads still matter. A
+Phosphene Update can no longer change what runs. The cost: when Phosphene moves its pin, the engine changes
+there are ours to bring over by hand (`VENDORED.md` says how). Tests: `tests/test_h3_vendoredNG.py` (the runner is
+the vendored one and takes the nine flags the app passes) and `vendor/minimax_h3_mlx/run_tests.sh`.
+
 ## Licences
 
 Ring Viz: PolyForm Small Business 1.0.0 (from 2026-08-23). H3 runner: Apache-2.0
