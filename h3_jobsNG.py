@@ -12,6 +12,7 @@ sibling module, not a branch inside the first one's queue.
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import shutil
@@ -22,7 +23,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import h3_engineNG as h3
 import h3_ref2vaNG as h3_ref2va
@@ -31,6 +32,7 @@ import h3_job_logsNG
 from configNG import H3GEN_DIR
 
 EXTEND_SOURCE_NAME = "extend_src.mp4"
+SETTINGS_NAME = "settings.json"  # what a re-roll needs to render one window the same way (h3_rerollNG.py)
 
 _MAX_JOBS_KEPT = 20  # ring-buffer cap, same reasoning as video_jobsNG
 
@@ -59,6 +61,8 @@ class H3JobNG:
     chain_prompts: list = field(default_factory=list)  # one prompt per chained window; empty = `prompt` for every window
     extends: bool = False  # continue extend_src.mp4 in the job dir; duration_s is the new time added
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
+    reroll: Optional[dict] = None  # {"source", "window", "joins", "version"} on a one-window re-roll job
+    on_done: Optional[Callable] = field(default=None, repr=False)  # called with the job after a clean render
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
     finished_at: Optional[float] = None
@@ -141,6 +145,11 @@ def _worker_loop() -> None:
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.mp4_path = result["mp4_path"]
+            if job.on_done is not None:
+                try:
+                    job.on_done(job)
+                except Exception as e:  # noqa: BLE001
+                    raise RuntimeError(f"the render finished but the follow-up failed: {e}") from e
         except Exception as e:  # noqa: BLE001 -- job.error is the report
             job.error = str(e)
             job.error_type = type(e).__name__
@@ -177,7 +186,9 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      last_ext: str = ".jpg",
                      keyframes: Optional[list] = None,
                      references: Optional[list] = None,
-                     reference_size: str = "match") -> H3JobNG:
+                     reference_size: str = "match",
+                     reroll: Optional[dict] = None,
+                     on_done: Optional[Callable] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
     H3GEN_DIR -- same "this write IS the job's own copy" shape as
     video_jobsNG.start_video_job_ng (see its own docstring for the full
@@ -294,7 +305,13 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                   keyframe_times=[w for _b, _e, w in keyframes or []], width=width, height=height, steps=steps, turbo=turbo, v13=v13,
                   tristep=tristep, loras=loras, refmods=refmods, timeout_s=timeout_s,
                   chain_prompts=chain_prompts or [], extends=extend_bytes is not None,
-                  references=reference_names, reference_size=reference_size)
+                  references=reference_names, reference_size=reference_size,
+                  reroll=reroll, on_done=on_done)
+    (job_dir / SETTINGS_NAME).write_text(json.dumps({
+        "model": model, "width": width, "height": height, "steps": steps, "turbo": turbo, "v13": v13,
+        "tristep": tristep, "has_image": has_image, "timeout_s": timeout_s,
+        "loras": [{"name": l["name"], "path": l["path"], "strength": l["strength"]} for l in loras],
+    }, indent=2), encoding="utf-8")
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()
@@ -355,6 +372,7 @@ def job_status_ng(job_id: str) -> dict:
         "loras": [{"name": l["name"], "strength": l["strength"]} for l in job.loras],
         "refmods": [{"name": r["name"], "strength": r["strength"]} for r in job.refmods],
         "references": len(job.references),
+        "reroll": job.reroll,
         "error": job.error,
         "error_type": job.error_type,
         "queued_at": job.queued_at,

@@ -21,6 +21,7 @@ import h3_engineNG
 import h3_installNG
 import h3_job_logsNG
 import h3_jobsNG as h3_jobs
+import h3_rerollNG as h3_reroll
 from h3_lora_libraryNG import list_h3_loras_ng, resolve_h3_lora_path_ng
 from h3_refmod_libraryNG import list_h3_refmods_ng, refmods_dir_ng, resolve_h3_refmod_ng
 from video_analysisNG import find_cache_frame_ng
@@ -360,10 +361,14 @@ def h3_cancel_job_ng(job_id):
 
 @h3NG_bp.route("/api/ng/h3/jobs/<job_id>/video", methods=["GET"])
 def h3_serve_video_ng(job_id):
-    """Inline playback -- fed to the queue row's <video src>."""
+    """Inline playback -- fed to the queue row's <video src>. After a restart a chained job is
+    still found by its saved settings, so its latest film version keeps playing."""
     job = h3_jobs.get_job_ng(job_id)
     if job is None:
-        return jsonify({"error": f"no such job {job_id!r}"}), 404
+        try:
+            job = h3_reroll.resolve_source_ng(job_id)
+        except (LookupError, ValueError):
+            return jsonify({"error": f"no such job {job_id!r}"}), 404
     if not job.mp4_path or not os.path.isfile(job.mp4_path):
         return jsonify({"error": "video not ready"}), 404
     return send_file(job.mp4_path, mimetype="video/mp4")

@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "fast", "render", "renderstatus", "progress", "video", "extend", "extendnote"
+      "quality", "fast", "render", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -406,6 +406,7 @@
 
     els.render.disabled = true;
     els.video.style.display = "none";
+    if (window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.hide();
     setRender("Submitting...");
     var source = extendFrom
       ? fetch("/api/ng/h3/jobs/" + extendFrom + "/video").then(function (r) {
@@ -434,6 +435,7 @@
     var log = job.log_tail || [];
     var windows = (lastBrief && lastBrief.windows && lastBrief.windows.length) || 1;
     var start = 0, win = 1;
+    if (job.reroll) windows = 1;  // a re-roll renders one window
     log.forEach(function (line, i) {
       var m = /### window (\d+)\/(\d+) ###/.exec(line);
       if (m) { start = i; win = parseInt(m[1], 10); windows = parseInt(m[2], 10); }
@@ -475,9 +477,12 @@
           renderJob = null; saveNow();
           els.progress.style.display = "none";
           setRender("Done.");
-          lastDone = jobId; extendFrom = null; updateExtend(); saveNow();
-          els.video.src = job.video_url + "?v=" + Date.now();
+          // A re-roll's film is the source job's latest version, not the one-window job's clip.
+          var film = job.reroll ? job.reroll.source : jobId;
+          lastDone = film; extendFrom = null; updateExtend(); saveNow();
+          els.video.src = "/api/ng/h3/jobs/" + film + "/video?v=" + Date.now();
           els.video.style.display = "";
+          if (window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.show(film);
           els.render.disabled = false;
         } else if (job.status === "failed") {
           clearInterval(pollTimer);
@@ -508,6 +513,11 @@
     els.refine.onclick = refine;
     els.render.onclick = render;
     els.extend.onclick = toggleExtend;
+    if (window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.init(els.rerolls, {
+      say: setRender,
+      playUrl: function (url) { els.video.src = url; els.video.style.display = ""; els.video.play(); },
+      startPolling: function (jobId) { renderJob = jobId; saveNow(); els.render.disabled = true; pollJob(jobId); }
+    });
     loadSaved();
     restoreFields();
     restoreBrief();
@@ -519,6 +529,7 @@
       pollJob(saved.job);
     }
     if (saved) { lastDone = saved.lastDone || null; extendFrom = saved.extendFrom || null; }
+    if (lastDone && window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.show(lastDone);
     updateExtend();
     wireTray();
     loadOptions();
