@@ -3587,3 +3587,64 @@ textarea.ng-gen-input.ng-textarea-expanded {
   padding: 8px 10px;
   overflow-x: auto;
 }
+
+/* Klein view (static/kleinNG.js): three reference slots, options row, and a gallery of jobs. */
+#ng-klein-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 16px 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ng-klein-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+.ng-klein-slot .ng-gen-ref-paste {
+  min-height: 120px;
+  padding: 8px 10px;
+  border: 1px dashed var(--ng-border);
+  border-radius: 4px;
+  font-size: 0.7857rem;
+  color: var(--ng-text-dim);
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ng-klein-slot .ng-gen-ref-paste:focus { outline: none; border-color: var(--ng-accent); color: var(--ng-text); }
+.ng-klein-slot .ng-gen-ref-paste.ng-gen-ref-paste-filled { padding: 0; border-style: solid; overflow: hidden; }
+.ng-klein-slot .ng-gen-ref-paste.ng-gen-ref-paste-filled img { max-height: 200px; }
+.ng-klein-opts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+.ng-klein-field { display: flex; flex-direction: column; gap: 4px; }
+.ng-klein-job {
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  background: var(--ng-panel);
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+.ng-klein-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  margin: 8px 0;
+}
+.ng-klein-pic img {
+  width: 100%;
+  display: block;
+  border-radius: 6px;
+  border: 1px solid var(--ng-border);
+}
+.ng-klein-pic-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.ng-klein-pic-btns .ng-gen-btn { font-size: 0.7143rem; padding: 3px 8px; margin: 0; }

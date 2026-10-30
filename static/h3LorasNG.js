@@ -18,7 +18,7 @@
 
     function loraLimit() {
       var speed = !!((els.turbo && els.turbo.checked) || (els.v13 && els.v13.checked)
-        || (els.tristep && els.tristep.checked));
+        || (els.tristep && els.tristep.checked) || (els.flex && els.flex.checked));
       return speed ? loraLib.maxSpeed : loraLib.max;
     }
 

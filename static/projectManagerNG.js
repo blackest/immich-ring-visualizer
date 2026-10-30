@@ -328,6 +328,7 @@
       // multi-ref jobs. Same "owns its own pane/main region" deal as the
       // others above.
       if (window.HdMultiNG) window.HdMultiNG.sync(active);
+      if (window.KleinNG) window.KleinNG.sync(active);
       // ComfyUI view (task === "comfy") -- arbitrary workflow from a
       // PNG's embedded metadata. Same "owns its own pane/main" deal.
       if (window.ComfyNG) window.ComfyNG.sync(active);
@@ -420,7 +421,7 @@
       // switches over to showing the ring (see placeVideoPreview() in
       // videoNG.js). The Generate view takes over the whole main stage
       // and rail, so the preview is fully hidden there regardless.
-      if (!active || !active.video || active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "h3" || active.task === "enhancedh3" || active.task === "music" || active.task === "musicedit" || active.task === "hdmulti" || active.task === "comfy") {
+      if (!active || !active.video || active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "h3" || active.task === "enhancedh3" || active.task === "music" || active.task === "musicedit" || active.task === "hdmulti" || active.task === "klein" || active.task === "comfy") {
         placeVideoPreview("hidden");
       } else if (active.ring) {
         placeVideoPreview("rail");
@@ -447,7 +448,7 @@
         showPlaceholder("Pick Video, Immich, Folder / Zip, Generate, Animate, Chat, or Rachel below to get started with “" + active.name + "”.");
         return;
       }
-      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "h3" || active.task === "enhancedh3" || active.task === "music" || active.task === "musicedit" || active.task === "hdmulti" || active.task === "comfy") {
+      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "h3" || active.task === "enhancedh3" || active.task === "music" || active.task === "musicedit" || active.task === "hdmulti" || active.task === "klein" || active.task === "comfy") {
         // The Generate/Chat/Rachel view's main region (#ng-generate-main /
         // #ng-chat-main / #ng-rachel-main) is shown by that view's sync();
         // everything else in the main stage stays hidden.
@@ -932,7 +933,7 @@
       }
       leftRailEmptyEl.style.display = "none";
 
-      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "h3" || active.task === "enhancedh3" || active.task === "music" || active.task === "musicedit" || active.task === "hdmulti" || active.task === "comfy") {
+      if (active.task === "generate" || active.task === "chat" || active.task === "rachel" || active.task === "videogen" || active.task === "h3" || active.task === "enhancedh3" || active.task === "music" || active.task === "musicedit" || active.task === "hdmulti" || active.task === "klein" || active.task === "comfy") {
         // Generate/Chat/Rachel views swap the whole rail body for their own
         // pane (#ng-generate-pane / #ng-chat-pane / #ng-rachel-pane, siblings
         // of #ng-leftrail-body under #ng-leftrail, shown by that view's sync).

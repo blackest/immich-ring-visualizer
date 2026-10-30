@@ -184,7 +184,7 @@ def start_reroll_ng(job_id: str, window: int, *, seed=None, prompt=None, from_pr
     return h3_jobs.start_h3_job_ng(
         first, first_ext, text, window_seconds_ng(), int(seed), model=src.model, width=src.width,
         height=src.height, steps=src.steps, turbo=src.turbo, v13=getattr(src, "v13", False),
-        tristep=src.tristep, loras=[dict(l) for l in src.loras],
+        tristep=src.tristep, flex=getattr(src, "flex", False), loras=[dict(l) for l in src.loras],
         reroll={"source": job_id, "window": window, "joins": joins, "version": None},
         on_done=finish_reroll_ng)
 

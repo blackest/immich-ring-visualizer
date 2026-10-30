@@ -931,6 +931,17 @@
             </button>
           </div>
 
+          <!-- Klein view's rail pane -- a short explainer; the controls live in the
+               main region. See static/kleinNG.js. -->
+          <div id="ng-klein-pane" style="display: none">
+            <p class="ng-video-hint">
+              FLUX 3 Klein pictures: describe a picture in words, or give it up
+              to three references (the subject, the location, anything else)
+              and say how to combine them. Make several variations, then send a
+              favourite on as a reference, a video first frame or a RefMod.
+            </p>
+          </div>
+
           <!-- Hd-Multi view's rail pane -- just a short explainer; every
                actual control (K selector, ref slots, prompt, result)
                lives in the main region. See static/hdmultiNG.js. -->
@@ -2102,6 +2113,11 @@
             </div>
           </div>
 
+          <!-- Klein view's main region -- built by static/kleinNG.js into this container. -->
+          <div id="ng-klein-main" style="display: none">
+            <div id="ng-klein-compose" class="ng-gen-canvas"></div>
+          </div>
+
           <!-- ComfyUI view's main region -- pick a PNG, get a dynamic
                form for whatever plain values its embedded workflow has,
                Generate, one result image back. See static/comfyNG.js. -->
@@ -2831,6 +2847,11 @@
                       ><input type="checkbox" id="ng-h3-tristep" /> Fast
                       (TaoMate 3-step, ~4-5x faster; works on the Q8 models
                       and with RefMods)</label
+                    >
+                    <label class="ng-checkbox-row" id="ng-h3-flex-row"
+                      ><input type="checkbox" id="ng-h3-flex" /> Flex (Pika H3
+                      Flex, 6 steps; between Fast and Best for quality, text or
+                      first frame only, no RefMods)</label
                     >
                     <div id="ng-h3-loras-fix" style="margin-top: 8px" hidden></div>
                     <div id="ng-h3-loras-block" style="margin-top: 8px" hidden>
@@ -3887,6 +3908,7 @@
         <button class="ng-task-btn" data-task="chat">Chat</button>
         <button class="ng-task-btn" data-task="rachel">Rachel</button>
         <button class="ng-task-btn" data-task="hdmulti">Hd-Multi</button>
+        <button class="ng-task-btn" data-task="klein">Klein</button>
         <button class="ng-task-btn" data-task="comfy">ComfyUI</button>
       </footer>
     </div>
@@ -3951,6 +3973,7 @@
     <script src="{{ url_for('static', filename='musicNG.js') }}"></script>
     <script src="{{ url_for('static', filename='musiceditNG.js') }}"></script>
     <script src="{{ url_for('static', filename='hdmultiNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='kleinNG.js') }}"></script>
     <script src="{{ url_for('static', filename='comfyNG.js') }}"></script>
     <script src="{{ url_for('static', filename='bootstrapWiringNG.js') }}"></script>
     <script src="{{ url_for('static', filename='settingsNG.js') }}"></script>

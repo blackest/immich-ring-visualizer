@@ -69,6 +69,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Optional
 
+import h3_flexNG as h3_flex
 import h3_loraNG as h3_lora
 import h3_ref2vaNG as h3_ref2va
 import h3_referencesNG as h3_references
@@ -538,6 +539,9 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         # Fast = the TaoMate 3-step adapter: needs the file AND a runner with --sigma-subset.
         "tristep_ok": _resolve_h3_tristep_ng() is not None,
         "tristep_supported": bool(runner) and h3_lora.runner_has_flag_ng(runner, "--sigma-subset"),
+        # Flex = Pika's 6-forward adapter: needs the built file AND a runner with --pika-flex.
+        "flex_ok": h3_flex.resolve_flex_ng(H3_MODELS_ROOT) is not None,
+        "flex_supported": bool(runner) and h3_flex.runner_supports_flex_ng(runner),
         # Informational: this runner will use the lazy AdaLN load on its own.
         "lazy_adaln": bool(runner) and bool(_h3_lazy_adaln_argv_ng(runner, legacy_adaln=False)),
         # Informational: this runner will store and reuse the AdaLN tables on its own.
@@ -558,6 +562,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           on_log: Optional[Callable[[str], None]] = None,
                           on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None,
                           tristep: bool = False,
+                          flex: bool = False,
                           chain_prompts: Optional[list] = None,
                           extend_from: Optional[str] = None,
                           last_frame_path: Optional[str] = None,
@@ -596,6 +601,9 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     v13) -- see h3_ref2vaNG.validate_refmods_ng, which refuses the rest before
     launch.
 
+    flex=True is "Flex": Pika H3 Flex's six-forward sampler and adapter (h3_flexNG.py); steps is forced to
+    its seven knots, and it takes no RefMod or reference pictures and no other speed adapter.
+
     tristep=True is "Fast": the TaoMate 3-step adapter on its own sigma ladder
     (FORCES steps to H3_TRISTEP_STEPS, adds --sigma-subset). Unlike turbo it
     works on the quantized DiTs -- the runner's runtime LoRA wrapping attaches
@@ -623,8 +631,11 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         raise ValueError("turbo and v13 are separate speed adapters -- pick one")
     if tristep and (turbo or v13):
         raise ValueError("Fast (3-step) is its own speed adapter -- not with turbo or v13")
+    if flex:
+        h3_flex.check_flex_ng(turbo=turbo, v13=v13, tristep=tristep, refmods=refmods,
+                              references=references, model=config.model)
     steps = (H3_TURBO_STEPS if turbo else H3_V13_STEPS if v13 else H3_TRISTEP_STEPS if tristep
-             else (H3_STEPS if steps is None else int(steps)))
+             else h3_flex.FLEX_STEPS if flex else (H3_STEPS if steps is None else int(steps)))
     _validate_h3_dims_ng(width, height)
     _validate_h3_duration_ng(duration_s)
     if v13:
@@ -674,6 +685,14 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                 f"{H3_TRISTEP_CANDIDATES[-1][0]} (or the full-rank copy beside it); "
                 f"Phosphene's Speed row downloads it")
 
+    flex_lora = None
+    if flex:
+        flex_lora = h3_flex.resolve_flex_ng(H3_MODELS_ROOT)
+        if not flex_lora:
+            raise FileNotFoundError(
+                f"the Pika H3 Flex adapter is not at {H3_MODELS_ROOT / h3_flex.FLEX_DIRNAME / h3_flex.FLEX_FILE} -- "
+                "build it with Phosphene's scripts/fetch_h3_flex.py (or its H3 Flex engine picker)")
+
     python = _resolve_h3_python_ng(config)
     if not python:
         raise FileNotFoundError(
@@ -686,6 +705,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     if tristep and not h3_lora.runner_has_flag_ng(runner, "--sigma-subset"):
         raise ValueError("this H3 runner has no --sigma-subset, which Fast (3-step) needs -- "
                          "update the minimax-h3-mlx runner")
+    if flex and not h3_flex.runner_supports_flex_ng(runner):
+        raise ValueError("this H3 runner has no --pika-flex -- update the minimax-h3-mlx runner")
     dit = _resolve_h3_dit_ng(config)
     if not dit:
         expected = (H3_DIT_Q8_DIR if config.model == "h3q8"
@@ -730,11 +751,11 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         if not h3_lora.runner_has_flag_ng(runner, "--extend-from"):
             raise ValueError("this H3 runner has no --extend-from -- update the minimax-h3-mlx runner")
     if loras:
-        limit = h3_lora_limit_ng(runner, speed_adapter=bool(turbo or v13 or tristep))
+        limit = h3_lora_limit_ng(runner, speed_adapter=bool(turbo or v13 or tristep or flex))
         if len(loras) > limit:
             raise ValueError(
                 f"this H3 runner takes at most {limit} LoRA(s) alongside "
-                f"{'a speed adapter' if turbo or v13 or tristep else 'a render'} "
+                f"{'a speed adapter' if turbo or v13 or tristep or flex else 'a render'} "
                 f"(got {len(loras)}) -- update the H3 runner to stack more")
         for lora_path, _s in loras:
             if not Path(lora_path).is_file():
@@ -822,6 +843,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             cmd += ["--video-shift", H3_V13_VIDEO_SHIFT]
     if tristep:
         cmd += _h3_tristep_argv_ng(tristep_lora)
+    if flex:
+        cmd += h3_flex.flex_argv_ng(flex_lora)
     for lora_path, strength in loras:
         # A speed adapter's own file is already in the runner's order (turbo
         # is baked above, v1.3 ships that way); a user LoRA is not, so it goes
@@ -839,7 +862,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     if on_log:
         turbo_note = (" [turbo 4-step]" if turbo
                       else " [lightx2v v1.3]" if v13
-                      else " [fast 3-step]" if tristep else "")
+                      else " [fast 3-step]" if tristep
+                      else " [flex 6-step]" if flex else "")
         if lazy_argv:
             turbo_note += " [lazy adaln]"
         if adaln_cache_argv:
@@ -935,7 +959,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                         continue
                     if on_log:
                         on_log(f"[h3] {line}")
-                    if tristep and not adapter_seen["v"]:
+                    if (tristep or flex) and not adapter_seen["v"]:
                         # The first adapter summary is the speed adapter's. 0 modules means the
                         # render would run undistilled at 4 steps, so stop it now, not in 6 minutes.
                         m = _H3_LORA_APPLIED_RE.search(line)

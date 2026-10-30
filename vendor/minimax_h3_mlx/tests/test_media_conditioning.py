@@ -328,6 +328,7 @@ def run_window(cond, frames=22, height=64, width=64):
         height=height, width=width, steps=3, sigma_subset=None, lora=None, lora_adaln=None,
         step_cache=0.0, step_cache_probe=False, step_cache_max_skip=2, draft_decode="full",
         draft_cache_dir=None, save_stage_a=None, skip_blocks=None,
+        sigma_knots=None, sampler="euler", video_shift=None, audio_shift=None,
     )
     rec = Recorder()
     video, audio, rate, steps = gs.render_window(

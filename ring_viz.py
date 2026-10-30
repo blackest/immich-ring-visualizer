@@ -32,6 +32,7 @@ from routes.rachelNG import rachelNG_bp  # NG: new blueprint, no changes to exis
 from routes.charactersNG import charactersNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.videogenNG import videogenNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.hdmultiNG import hdmultiNG_bp  # NG: new blueprint, no changes to existing ones
+from routes.kleinNG import kleinNG_bp  # NG: new blueprint, FLUX 3 Klein pictures
 from routes.comfyNG import comfyNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.h3NG import h3NG_bp  # NG: new blueprint, no changes to existing ones
 from routes.enhancedh3NG import enhancedh3NG_bp  # NG: new blueprint, no changes to existing ones
@@ -57,6 +58,7 @@ app.register_blueprint(chatNG_bp)  # NG: /api/ng/chat/* (Ollama chat proxy), add
 app.register_blueprint(rachelNG_bp)  # NG: /api/ng/rachel/* (Hermes agent chat proxy), additive only
 app.register_blueprint(charactersNG_bp)  # NG: /api/ng/characters (picker grid), additive only
 app.register_blueprint(videogenNG_bp)  # NG: /api/ng/videogen/* (LTX image-to-video job queue), additive only
+app.register_blueprint(kleinNG_bp)  # NG: /api/ng/klein/* (Klein pictures from text or up to three references), additive only
 app.register_blueprint(hdmultiNG_bp)  # NG: /api/ng/hdmulti/* (HiDream edit/multi-ref one-off jobs), additive only
 app.register_blueprint(comfyNG_bp)  # NG: /api/ng/comfy/* (arbitrary ComfyUI workflow from a PNG's metadata), additive only
 app.register_blueprint(h3NG_bp)  # NG: /api/ng/h3/* (MiniMax-H3 prompt/image-to-video job queue), additive only

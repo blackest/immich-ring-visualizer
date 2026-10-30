@@ -472,3 +472,45 @@ Ring Viz: PolyForm Small Business 1.0.0 (from 2026-08-23). H3 runner: Apache-2.0
 (keep its LICENSE/NOTICE on any files taken from it). `h3ir`: Apache-2.0.
 Phosphene: MIT. ComfyUI: GPL-3.0, so use it as a behavioural reference only.
 Not legal advice.
+
+## Update 2026-10-30, later still: a Klein pane
+
+A new bottom-bar task, **Klein**, makes pictures with FLUX 3 Klein from text or from up to three labelled
+references (subject, location, extra), the way Phosphene's Images page does. It is its own small set of files, a
+peer of the HiDream engine, and nothing in it comes from Phosphene's code:
+
+- `klein_engineNG.py` finds Phosphene's FLUX 3 worker python and the Klein weights in the Hugging Face cache
+  (Phosphene's own cache first) and runs `klein_workerNG.py` as a subprocess; it never installs anything.
+- `klein_jobsNG.py` is the queue: one job at a time, waits while an H3 render holds the GPU, takes the HiDream lock,
+  and keeps each job's folder (`exportsNG/_klein/<id>/`: references, pictures, `job.json`) so the gallery survives a restart.
+- `routes/kleinNG.py` and `static/kleinNG.js` are the HTTP side and the panel. A slot is filled by an upload, a paste, or
+  an earlier Klein picture (copied server side). The panel suggests the wording that names each reference.
+- Gallery buttons send a picture on: into a reference slot, or to the H3 view as its first frame (`H3NG.useAsFirstFrame`).
+
+Measured here (M2 Max, distilled Q8, 16 steps): text to image 768x432 in 40 s; one reference at 1024x576 in 150 s;
+two references at 768x432 in 183 s each. A text-only request with a picture of the woman in a kitchen came back as the same woman in
+profile at the window under a lamp, which is the "pose and setting from the prompt, face from the picture" split the
+H3 first-frame test wanted.
+
+Not done yet: Klein pictures into Make RefMod, a per-window start picture in the reroll panel, Klein pictures as Enhanced H3
+pictures, and the H3 queue waiting for a running Klein job (only Klein waits for H3 now).
+
+## Update 2026-10-30, evening: Pika H3 Flex ("Flex") in the H3 view
+
+Phosphene 4.19.15 added Pika H3 Flex: a rank-128 adapter and a six-forward "re-noise" sampler. We took the runner's
+commit (`bef6d03`, `--pika-flex`, `--sigma-knots`, `--sampler`, `--video-shift`, `--audio-shift`) into
+`vendor/minimax_h3_mlx` with `git apply` (it applied cleanly; `VENDORED.md` lists it; 13 vendored tests pass after one
+test namespace gained the new arguments). That also brings `--video-shift`, which the engine already sent for Faster
+Best only when the runner had it, so Faster Best now runs with its trained shift 6.
+
+The adapter was built once with Phosphene's `scripts/fetch_h3_flex.py` into `models/pika-h3-flex/` (2.77 GB download,
+1.96 GB result, hash equal to Phosphene's pin; Pika's LICENSE and NOTICE sit beside it). `h3_flexNG.py` finds it and builds
+the argv (`--pika-flex --lora PATH:1.0`); `flex` is threaded like Fast (engine, job queue, settings.json, reroll, route,
+H3 view checkbox "Flex"). It runs on the Q8 DiT, stacks with user LoRAs, and is refused with turbo, Faster Best, Fast,
+RefMods and reference pictures (Pika's reference adapter needs another base). Tests: `tests/test_h3_flexNG.py` (12).
+
+First measurement (M2 Max, h3q8, 640x384, 5 s, seed 303, the Klein-woman first frame and the same compiler prompt as the
+Fast clip of the Klein test): **Flex 9.9 min against about 6 min for Fast**. Both held the face, jacket and kitchen from the
+first frame. Flex was steadier early (per-second motion 0.07, 0.06, 0.15, 1.17, 3.53 against Fast's 0.12, 0.10, 0.23, 0.72,
+2.29) and moved more late; one clip each, so no verdict on quality. Files: `~/Movies/h3-fork-tests/flex/`
+(`sheet_fast_over_flex.jpg`, `flex_B_prompt_w1.mp4`).

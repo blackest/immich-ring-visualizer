@@ -83,6 +83,10 @@ MUSIC_JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_music_job_logsNG")
 # since a job's ref images aren't tied to any saved character either.
 HDMULTI_DIR = os.path.join(EXPORT_DIR, "_hdmulti")
 
+# Klein view (routes/kleinNG.py) -- FLUX 3 Klein pictures from text or from up to three reference
+# pictures; one folder per job (its references, its pictures, job.json) so the gallery survives a restart.
+KLEIN_DIR = os.path.join(EXPORT_DIR, "_klein")
+
 # ComfyUI view (routes/comfyNG.py) -- a small curated library of saved
 # workflows, each just a successful result PNG (ComfyUI already embeds
 # the exact workflow that made it in the PNG's own metadata, so the file

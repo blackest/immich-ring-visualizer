@@ -253,7 +253,9 @@ def h3_generate_ng():
     + bf16 only; mutually exclusive with turbo), tristep (optional bool --
     "Fast", the TaoMate 3-step adapter: forces steps to
     h3_engineNG.H3_TRISTEP_STEPS, works on the quantized DiTs, and is the one
-    speed adapter allowed with a RefMod; not with turbo or v13), loras (optional JSON
+    speed adapter allowed with a RefMod; not with turbo or v13), flex (optional bool --
+    Pika H3 Flex, six forwards on its own sampler; text or first frame only, no RefMod or
+    reference pictures, not with another speed option), loras (optional JSON
     array of {"name": str, "strength": float} -- library names from
     GET /api/ng/h3/loras; strength defaults to 1.0; resolved to paths
     here, never taken from the client), refmods (optional JSON array of
@@ -298,6 +300,7 @@ def h3_generate_ng():
     turbo = str(request.form.get("turbo") or "").strip().lower() in ("1", "true", "on")
     v13 = str(request.form.get("v13") or "").strip().lower() in ("1", "true", "on")
     tristep = str(request.form.get("tristep") or "").strip().lower() in ("1", "true", "on")
+    flex = str(request.form.get("flex") or "").strip().lower() in ("1", "true", "on")
     timeout_s = h3_engineNG.resolve_h3_quality_timeout_ng(quality, duration_s)
 
     try:
@@ -322,7 +325,7 @@ def h3_generate_ng():
         job = h3_jobs.start_h3_job_ng(
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
             model=model, width=width, height=height, steps=steps, turbo=turbo, v13=v13,
-            loras=loras, refmods=refmods, timeout_s=timeout_s, tristep=tristep,
+            loras=loras, refmods=refmods, timeout_s=timeout_s, tristep=tristep, flex=flex,
             chain_prompts=chain_prompts,
             extend_bytes=extend_file.read() if extend_file else None,
             last_bytes=last_file.read() if last_file else None,

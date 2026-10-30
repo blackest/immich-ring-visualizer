@@ -12,6 +12,8 @@ changed or added are listed below, as the licence asks.
 **Base:** commit `3f6c75c` ("fix: bound media sources, stream decoded frames, honour --extend-frames"),
 the commit Phosphene v4.19.x pins (`scripts/pinokio/h3_checkout.sh`, ref `phosphene/v4.19.0`).
 
+**Taken from upstream after the base:** `bef6d03` ("feat: Pika H3 Flex sampler (--pika-flex)", Phosphene v4.19.15): `scheduler.py` re-noise sampler, `--sigma-knots --sampler --video-shift --audio-shift --pika-flex` in `generate_staged.py`, `tests/test_pika_flex.py`. Applied with `git apply` (clean) on 2026-10-30; README and `run_tests.sh` changes of that commit are not vendored.
+
 **Added on top of the base** (six commits from the fork's `reference-flag` branch, 2026-10-27 to 28):
 
 | commit | what |
@@ -23,7 +25,7 @@ the commit Phosphene v4.19.x pins (`scripts/pinokio/h3_checkout.sh`, ref `phosph
 | `3e507c0` | `refmod_encode.py`, `--reference`: encode pictures straight from the file |
 | `1166cff` | `--reference` takes clips; `<Video N>` presentation with 2 fps timestamped blocks |
 
-Changed files: `minimax_h3_mlx/{adaln,draft_cache,load,text_encoder}.py`, `scripts/generate_staged.py`.
+Changed files: `minimax_h3_mlx/{adaln,draft_cache,load,text_encoder,scheduler}.py`, `scripts/generate_staged.py`.
 New files: `minimax_h3_mlx/{ref2va_packing,refmod_encode,refmod_io}.py`, `scripts/make_refmod.py`
 (make a RefMod from pictures; the app's "Make RefMod" runs it), `scripts/refmod_roundtrip.py`
 (checks our encoder against a library file; see the plan for its inconclusive result).

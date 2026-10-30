@@ -87,6 +87,8 @@
     els.v13 = document.getElementById("ng-h3-v13");
     els.tristepRow = document.getElementById("ng-h3-tristep-row");
     els.tristep = document.getElementById("ng-h3-tristep");
+    els.flexRow = document.getElementById("ng-h3-flex-row");
+    els.flex = document.getElementById("ng-h3-flex");
     els.lorasBlock = document.getElementById("ng-h3-loras-block");
     els.lorasRows = document.getElementById("ng-h3-loras-rows");
     els.lorasFix = document.getElementById("ng-h3-loras-fix");
@@ -119,6 +121,7 @@
     if (els.tristep && els.tristep.checked) fixed = { n: "3", why: "Fast runs 3 steps on its own schedule" };
     else if (els.turbo && els.turbo.checked) fixed = { n: "4", why: "Turbo fixes the step count at 4" };
     else if (els.v13 && els.v13.checked) fixed = { n: "7", why: "Faster Best fixes the step count at 7" };
+    else if (els.flex && els.flex.checked) fixed = { n: "6", why: "Flex runs 6 forwards on its own schedule" };
     els.steps.disabled = !!fixed;
     if (fixed) els.steps.value = "";
     els.steps.placeholder = fixed ? fixed.n : stepsDefaults.placeholder;
@@ -387,6 +390,18 @@
               : "this H3 runner has no --sigma-subset -- update the minimax-h3-mlx runner");
           els.tristepRow.classList.toggle("ng-vg-ref-col-disabled", !tristepOk);
         }
+        // Flex needs Pika's adapter file (built by Phosphene's fetch script) AND a runner with --pika-flex.
+        var flexOk = !!(h && h.flex_ok && h.flex_supported);
+        if (els.flex) {
+          els.flex.disabled = !flexOk;
+          if (!flexOk) els.flex.checked = false;
+        }
+        if (els.flexRow) {
+          els.flexRow.title = flexOk ? "" : (h && h.flex_ok === false
+            ? "Pika H3 Flex adapter not built -- run Phosphene's fetch_h3_flex.py or pick H3 Flex there once"
+            : "this H3 runner has no --pika-flex -- update the vendored runner");
+          els.flexRow.classList.toggle("ng-vg-ref-col-disabled", !flexOk);
+        }
         syncStepsField();
         // The status answer must not unlock what the Ref2VA model locks off.
         if (refmodUi.on()) {
@@ -420,6 +435,7 @@
     var turbo = !!(els.turbo && !els.turbo.disabled && els.turbo.checked);
     var v13 = !!(els.v13 && !els.v13.disabled && els.v13.checked);
     var tristep = !!(els.tristep && !els.tristep.disabled && els.tristep.checked);
+    var flex = !!(els.flex && !els.flex.disabled && els.flex.checked);
 
     var localId = "h" + ++localSeq;
     var item = {
@@ -435,6 +451,7 @@
       turbo: turbo,
       v13: v13,
       tristep: tristep,
+      flex: flex,
       error: null,
       videoUrl: null,
       logTail: [],
@@ -460,6 +477,7 @@
     if (turbo) form.append("turbo", "true");
     if (v13) form.append("v13", "true");
     if (tristep) form.append("tristep", "true");
+    if (flex) form.append("flex", "true");
     var loras = loraUi.selected();
     if (loras.length) form.append("loras", JSON.stringify(loras));
     var refmods = refmodUi.selected();
@@ -731,12 +749,14 @@
       els.turbo.addEventListener("change", function () {
         if (els.turbo.checked && els.v13) els.v13.checked = false;
         if (els.turbo.checked && els.tristep) els.tristep.checked = false;
+        if (els.turbo.checked && els.flex) els.flex.checked = false;
         syncSpeedLocks();
       });
       if (els.v13) {
         els.v13.addEventListener("change", function () {
           if (els.v13.checked) els.turbo.checked = false;
           if (els.v13.checked && els.tristep) els.tristep.checked = false;
+          if (els.v13.checked && els.flex) els.flex.checked = false;
           syncSpeedLocks();
         });
       }
@@ -747,6 +767,18 @@
           if (els.tristep.checked) {
             els.turbo.checked = false;
             if (els.v13) els.v13.checked = false;
+            if (els.flex) els.flex.checked = false;
+          }
+          syncSpeedLocks();
+        });
+      }
+      // Flex is a speed option of its own: ticking it clears the others, like the rest.
+      if (els.flex) {
+        els.flex.addEventListener("change", function () {
+          if (els.flex.checked) {
+            els.turbo.checked = false;
+            if (els.v13) els.v13.checked = false;
+            if (els.tristep) els.tristep.checked = false;
           }
           syncSpeedLocks();
         });
@@ -758,7 +790,7 @@
         if (els.lorasRows.children.length < loraUi.limit()) loraUi.addRow();
       });
     }
-    [els.turbo, els.v13, els.tristep].forEach(function (box) {
+    [els.turbo, els.v13, els.tristep, els.flex].forEach(function (box) {
       if (box) box.addEventListener("change", loraUi.sync);
       if (box) box.addEventListener("change", syncStepsField);
     });
@@ -813,6 +845,10 @@
       els.tristep.checked = !!entry.tristep;
       els.tristep.dispatchEvent(new Event("change"));
     }
+    if (els.flex && !els.flex.disabled && !!els.flex.checked !== !!entry.flex) {
+      els.flex.checked = !!entry.flex;
+      els.flex.dispatchEvent(new Event("change"));
+    }
     if (els.lorasRows) {
       els.lorasRows.innerHTML = "";
       (entry.loras || []).forEach(function (l) {
@@ -848,6 +884,11 @@
     if (!on) return;
 
     init();
+    if (pendingFirstFrame) {  // a picture sent from another view (Klein's gallery)
+      setReference(pendingFirstFrame);
+      pendingFirstFrame = null;
+      if (els.modeT2v && els.modeT2v.checked) { els.modeT2v.checked = false; onModeChange(); }
+    }
     ensureStatusChecked();
     loraUi.ensureLoaded();
     refmodUi.ensureLoaded();
@@ -855,5 +896,9 @@
     renderQueue();
   }
 
-  window.H3NG = { sync: sync, loadRecipe: loadRecipe };
+  // Other views hand a picture over with this, then open the H3 task; sync() above picks it up.
+  var pendingFirstFrame = null;
+  function useAsFirstFrame(blob) { pendingFirstFrame = blob; }
+
+  window.H3NG = { sync: sync, loadRecipe: loadRecipe, useAsFirstFrame: useAsFirstFrame };
 })();
