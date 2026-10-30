@@ -398,6 +398,59 @@ face repeated, then a join); a replace-a-window-and-re-extend step in the app; s
 labels from later windows; a second speaker / off-screen word via Extend (text prompt, no compiler); a hint for
 swap roles; numeric `--reference-size`; reference audio in the runner.
 
+## Update 2026-10-30: LoRA and RefMod tests, reroll one window, three prep tools, Ask Gemma
+
+**What the tests showed.** The 60 s boxer extension (Gemma's untouched 12-shot brief, no anchor) changed the man at
+the first hard cut and drifted wardrobe and room: only window 1 described him. (Correction to the earlier note:
+`--extend-from` turns `--chain-context-frames` on at 17 by default; plain chains leave it at 0.) With the Rickman
+character LoRA at 1.0 (a converted kohya "reflora", no trigger word) the face held through a fresh 30 s chain and a
+30 s extension and the kitchen stayed one place; wardrobe and hair colour still drifted, and a navy-cardigan line in
+the intent carried into 4 of 6 windows. The extreme close-up of the eyes rendered them glowing yellow or amber in
+two runs: the prompt said the eyes were "reflecting the yellow light of the lamp". Market clip (curly hair line in
+windows 1-2 only): hair held wherever the head was seen; window 4 changed to a navy shirt because its prompt never
+named one. A RefMod made in the app from four boxer frames steered a render's face, jacket and room with a prompt
+that described none of them (render nearly static, though). Files in `~/Movies/h3-fork-tests/` (`boxer_lora/`,
+`market_hair/`, `refmod_make/`, `upscale_app/`).
+
+**Reroll one window (`7b6e19f`).** `h3_stitchNG.py` joins the saved `_wN.mp4` clips with a hard cut, dissolve, fade
+through black or "sound leads picture" (J-cut); an all-cut join reproduces the runner's own film (picture 44 dB,
+sound correlation > 0.99). Bug found on the way: each window's AAC carries ~17 ms of padding, which drifted every
+seam until the sound was trimmed to the frame length. `h3_rerollNG.py` renders one window again with the source
+job's settings (new seed, optional edited prompt, optional start on the previous window's last frame), keeps every
+result as `film_vN.mp4` beside the original (`windows.json` in the job folder) and does not re-render later windows:
+the seam is a deliberate cut, so there is no need for continuity. Jobs now save `settings.json`, so it works after a
+restart. Panel under the Enhanced H3 video; routes in `routes/h3_rerollNG.py`. Live: window 4 of the market clip
+rerolled with a shirt/hair line in 6 min, 481 frames as before. Not tried: listening to a J-cut on real speech.
+
+**Three prep tools (`f2a5c81`).** *Make usable*: a kohya LoRA is renamed onto the runner's names with alpha/rank
+folded into lora_B (`h3_lora_convertNG.py`; all 400 tensors identical to Phosphene's own conversion on the Rickman
+file); the original goes to `_originals/`. *Upscale 2x*: `upscale_x2NG.py` runs as a task job in the H3 queue
+(`h3_upscaleNG.py`), so it never shares the GPU with a render; 9.3 min for a 5 s window at 640x384 to 1280x768 with
+sound kept; the Metal watchdog killed it once ("Impacting Interactivity", 1/3 through, even at one op per buffer)
+so it retries up to 3 times on that error. The time estimate for longer films is linear in frames and unmeasured.
+*RefMod from pictures*: `h3_refmod_makeNG.py` runs the fork's `scripts/make_refmod.py` (untracked in the fork) as a
+task job; form in the RefMod block. Open: the fork's roundtrip check on a library file gives |new - stored| / spread
+= 0.70 for both the mean and a sample, which is inconclusive (the spatial-only decode leaves grid artifacts), so
+we have not shown our encoder matches how the library files were made, only that the result steers a render.
+
+**Ask Gemma (this commit).** Gemma sees one contact sheet (previous window's last frame, two anchor frames from window
+1, six frames of the window) plus the prompts, and returns the anchor look, the window's look, the differences with
+kinds and likely prompt causes, and a rewritten prompt that restates the look. Tested by hand on windows with known
+faults: asked only "what is wrong" it called a wardrobe change "fine"; forced to describe both looks first it found
+it, and it traced the glowing eyes to the prompt's "yellow light". Its own verdict was unreliable (it listed drift on
+a clean control window), so the button shows the differences as hints, fills the prompt box and leaves Reroll to the
+person. Refuses while a render is on the GPU. Not tested on real identity drift.
+
+**Gotchas.** The Werkzeug reloader restarts on any new or changed `.py`, including a brand-new file: writing one
+mid-upscale dropped the job record and the orphaned subprocess died on its broken output pipe.
+`h3NG.js` was 1,209 lines; the LoRA and RefMod rows now live in `h3LorasNG.js` and `h3RefmodsNG.js` (859 left).
+Aim: each file readable on its own in a small context. Still large: `h3_engineNG.py` (980), `templates/indexNG.html`
+(~3,960, every view's markup).
+
+**Ideas, not built.** A RefMod per chain window; Ask Gemma on a window that really drifted in identity; a
+"replace and re-extend" for continuity-sensitive seams; split `h3_engineNG.py` (argv building from health and
+config); measure the upscale on a 20 s film.
+
 ## Licences
 
 Ring Viz: PolyForm Small Business 1.0.0 (from 2026-08-23). H3 runner: Apache-2.0
