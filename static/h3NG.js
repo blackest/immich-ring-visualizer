@@ -44,6 +44,8 @@
   var durationBounds = { min: 3.0, max: 15.0 };
 
   var els = {};
+  var loraUi = window.H3LorasNG({ els: els, api: API });      // static/h3LorasNG.js
+  var refmodUi = window.H3RefmodsNG({ els: els, api: API });  // static/h3RefmodsNG.js
 
   function refreshEls() {
     els.pane = document.getElementById("ng-h3-pane");
@@ -340,358 +342,6 @@
       });
   }
 
-  // ---- User style/character LoRAs (GET /api/ng/h3/loras) ----
-  // The library is whatever sits in the H3 loras folder; rows are built
-  // here rather than in the HTML so the count can follow what the installed
-  // runner can stack (max_stack, or max_stack_with_speed while turbo / v1.3
-  // is ticked).
-  var loraLib = { loras: [], max: 0, maxSpeed: 0, loaded: false };
-
-  function loraLimit() {
-    var speed = !!((els.turbo && els.turbo.checked) || (els.v13 && els.v13.checked)
-      || (els.tristep && els.tristep.checked));
-    return speed ? loraLib.maxSpeed : loraLib.max;
-  }
-
-  function loraEntry(name) {
-    for (var i = 0; i < loraLib.loras.length; i++) {
-      if (loraLib.loras[i].name === name) return loraLib.loras[i];
-    }
-    return null;
-  }
-
-  function updateLoraHint(row) {
-    var hint = row.querySelector(".ng-h3-lora-hint");
-    var entry = loraEntry(row.querySelector("select").value);
-    var words = entry && entry.trigger_words && entry.trigger_words.length
-      ? "Trigger: " + entry.trigger_words.join(" / ") : "";
-    hint.textContent = words;
-    hint.style.display = words ? "" : "none";
-  }
-
-  function syncLoraControls() {
-    if (!els.lorasBlock) return;
-    var limit = loraLimit();
-    els.lorasBlock.hidden = !(loraLib.loras.length && (limit > 0 || els.lorasRows.children.length));
-    var rows = els.lorasRows.children;
-    // Over the limit (e.g. turbo got ticked on a single-slot runner): drop
-    // the surplus rows rather than let a doomed request be sent.
-    while (rows.length > limit) els.lorasRows.removeChild(rows[rows.length - 1]);
-    if (els.loraAdd) els.loraAdd.disabled = rows.length >= limit;
-  }
-
-  function addLoraRow(name, strength) {
-    if (!els.lorasRows) return;
-    var row = document.createElement("div");
-    row.className = "ng-h3-lora-row";
-    row.style.cssText = "margin-bottom: 6px";
-    var line = document.createElement("div");
-    line.style.cssText = "display: flex; gap: 6px; align-items: center";
-    var select = document.createElement("select");
-    select.className = "ng-gen-input";
-    select.style.cssText = "flex: 1; margin-bottom: 0";
-    loraLib.loras.forEach(function (entry) {
-      var opt = document.createElement("option");
-      opt.value = entry.name;
-      opt.textContent = (entry.ok ? "" : "(unusable) ") + (entry.title || entry.name);
-      opt.disabled = !entry.ok;
-      opt.title = entry.reason || "";
-      select.appendChild(opt);
-    });
-    var strengthInput = document.createElement("input");
-    strengthInput.type = "number";
-    strengthInput.className = "ng-gen-input";
-    strengthInput.step = "0.05";
-    strengthInput.min = "0";
-    strengthInput.max = "2";
-    strengthInput.style.cssText = "width: 76px; margin-bottom: 0";
-    var remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "ng-gen-btn";
-    remove.style.cssText = "width: auto";
-    remove.textContent = "\u00d7";
-    remove.title = "Remove this LoRA";
-    var hint = document.createElement("div");
-    hint.className = "ng-gen-label ng-h3-lora-hint";
-    hint.style.cssText = "margin-top: 2px; text-transform: none; letter-spacing: 0; display: none";
-    line.appendChild(select);
-    line.appendChild(strengthInput);
-    line.appendChild(remove);
-    row.appendChild(line);
-    row.appendChild(hint);
-    els.lorasRows.appendChild(row);
-
-    var first = loraLib.loras.filter(function (e) { return e.ok; })[0];
-    if (name && loraEntry(name) && loraEntry(name).ok) select.value = name;
-    else if (first) select.value = first.name;
-    var chosen = loraEntry(select.value);
-    strengthInput.value = strength != null ? strength
-      : (chosen && chosen.recommended_strength) || 1;
-    select.addEventListener("change", function () {
-      var e = loraEntry(select.value);
-      if (e && e.recommended_strength) strengthInput.value = e.recommended_strength;
-      updateLoraHint(row);
-    });
-    remove.addEventListener("click", function () {
-      els.lorasRows.removeChild(row);
-      syncLoraControls();
-    });
-    updateLoraHint(row);
-    syncLoraControls();
-  }
-
-  // [{name, strength}] for the rows currently on screen.
-  function selectedLoras() {
-    if (!els.lorasRows) return [];
-    var out = [];
-    Array.prototype.forEach.call(els.lorasRows.children, function (row) {
-      var name = row.querySelector("select").value;
-      var strength = parseFloat(row.querySelector("input").value);
-      if (name) out.push({ name: name, strength: isNaN(strength) ? 1.0 : strength });
-    });
-    return out;
-  }
-
-  // LoRAs the runner cannot read as they are but that can be converted (kohya-format): one row
-  // each with a button. The original is kept in the loras folder's _originals.
-  function drawLoraFixes() {
-    if (!els.lorasFix) return;
-    var fixable = loraLib.loras.filter(function (e) { return !e.ok && e.convertible; });
-    els.lorasFix.hidden = !fixable.length;
-    els.lorasFix.textContent = "";
-    if (!fixable.length) return;
-    var head = document.createElement("div");
-    head.className = "ng-gen-label";
-    head.textContent = "LoRAs that need converting";
-    els.lorasFix.appendChild(head);
-    fixable.forEach(function (entry) {
-      var line = document.createElement("div");
-      line.style.cssText = "display: flex; gap: 6px; align-items: center; margin-bottom: 4px";
-      var name = document.createElement("span");
-      name.style.cssText = "flex: 1; overflow: hidden; text-overflow: ellipsis";
-      name.textContent = (entry.title || entry.name) + " (kohya, " + entry.size_mb + " MB)";
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "ng-gen-btn";
-      btn.style.cssText = "width: auto";
-      btn.textContent = "Make usable";
-      btn.title = "Rewrites it for the H3 runner. The original is kept in _originals.";
-      var note = document.createElement("div");
-      note.className = "ng-gen-label";
-      note.style.cssText = "text-transform: none; letter-spacing: 0";
-      btn.addEventListener("click", function () {
-        btn.disabled = true;
-        note.textContent = "Converting...";
-        fetch(API + "/loras/" + encodeURIComponent(entry.name) + "/convert", { method: "POST" })
-          .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-          .then(function (r) {
-            if (!r.ok) { note.textContent = r.body.error || "Could not convert it."; btn.disabled = false; return; }
-            loraLib.loaded = false;
-            ensureLorasLoaded();
-          })
-          .catch(function (e) { note.textContent = e.message; btn.disabled = false; });
-      });
-      line.appendChild(name);
-      line.appendChild(btn);
-      els.lorasFix.appendChild(line);
-      els.lorasFix.appendChild(note);
-    });
-  }
-
-  function ensureLorasLoaded() {
-    if (loraLib.loaded) return;
-    loraLib.loaded = true;
-    fetch(API + "/loras")
-      .then(function (r) { return r.json(); })
-      .then(function (payload) {
-        loraLib.loras = (payload && payload.loras) || [];
-        loraLib.max = (payload && payload.max_stack) || 0;
-        loraLib.maxSpeed = (payload && payload.max_stack_with_speed) || 0;
-        // Rebuild the rows so a just-converted LoRA appears in their dropdowns.
-        var kept = selectedLoras();
-        if (els.lorasRows) els.lorasRows.textContent = "";
-        kept.forEach(function (k) { addLoraRow(k.name, k.strength); });
-        syncLoraControls();
-        drawLoraFixes();
-      })
-      .catch(function () {
-        loraLib.loaded = false; // let a later sync retry
-      });
-  }
-
-  // ---- RefMod references (GET /api/ng/h3/refmods) ----
-  // Saved reference latents that the Ref2VA model reads as extra rows. Shown only
-  // on the "H3 Ref2VA Q8" model; each row costs denoise time in proportion to its
-  // `rows`, and a render is one 5 s window with no keyframe or speed adapter, so
-  // the speed checkboxes are locked off while this model is picked.
-  var refLib = { refmods: [], ready: false, ref2vaOk: false, supported: false,
-                 maxVideos: 3, loaded: false };
-
-  function refmodEntry(name) {
-    for (var i = 0; i < refLib.refmods.length; i++) {
-      if (refLib.refmods[i].name === name) return refLib.refmods[i];
-    }
-    return null;
-  }
-
-  function refmodsOn() { return !!(els.model && els.model.value === "h3ref"); }
-
-  function refmodsNoteText() {
-    if (refLib.ready) {
-      return refLib.refmods.length
-        ? "One 5 s window. Each reference adds denoise time (about 3x for a 2,800-row file)."
-        : "No RefMod files yet -- put .safetensors RefMods in the H3 refmods folder.";
-    }
-    var missing = [];
-    if (!refLib.ref2vaOk) missing.push("the Ref2VA Q8 weights");
-    if (!refLib.supported) missing.push("a runner build that takes --refmod");
-    return "Not available yet: this install is missing " + missing.join(" and ") + ".";
-  }
-
-  function updateRefmodHint(row) {
-    var hint = row.querySelector(".ng-h3-refmod-hint");
-    var entry = refmodEntry(row.querySelector("select").value);
-    var bits = [];
-    if (entry && entry.rows) bits.push(entry.rows.toLocaleString() + " reference rows");
-    if (entry && entry.has_lora) bits.push("also carries a LoRA (not applied)");
-    hint.textContent = bits.join(" \u00b7 ");
-    hint.style.display = bits.length ? "" : "none";
-  }
-
-  function syncRefmodControls() {
-    if (!els.refmodsBlock) return;
-    var on = refmodsOn();
-    els.refmodsBlock.hidden = !on;
-    if (els.refmodsNote) els.refmodsNote.textContent = on ? refmodsNoteText() : "";
-    var rows = els.refmodsRows.children;
-    if (!on || !refLib.ready) {
-      while (rows.length) els.refmodsRows.removeChild(rows[0]);
-    }
-    if (els.refmodAdd) {
-      els.refmodAdd.disabled = !refLib.ready || !refLib.refmods.some(function (e) { return e.ok; })
-        || rows.length >= refLib.maxVideos;
-    }
-    // Turbo / v1.3 were not made for the Ref2VA weights: lock them off here.
-    // Fast (the TaoMate 3-step adapter) is the exception -- tested with a RefMod
-    // on the Ref2VA Q8 -- so it is left alone.
-    [els.turbo, els.v13].forEach(function (box) {
-      if (!box) return;
-      if (on) { box.checked = false; box.disabled = true; }
-    });
-  }
-
-  // Strength a new RefMod row starts at, and what an unreadable box falls back to. 1.0 copied the
-  // reference too hard (the clip opened on the reference photo, its wall colour bled into the
-  // scene); 0.7 is the usual recommendation.
-  var REFMOD_DEFAULT_STRENGTH = 0.7;
-
-  function addRefmodRow(name, strength) {
-    if (!els.refmodsRows) return;
-    var row = document.createElement("div");
-    row.className = "ng-h3-refmod-row";
-    row.style.cssText = "margin-bottom: 6px";
-    var line = document.createElement("div");
-    line.style.cssText = "display: flex; gap: 6px; align-items: center";
-    var select = document.createElement("select");
-    select.className = "ng-gen-input";
-    select.style.cssText = "flex: 1; margin-bottom: 0";
-    // The shared library can hold ~1,500 files: a filter box narrows the list
-    // (name or description), keeping the current pick if it still matches.
-    var filter = document.createElement("input");
-    filter.type = "search";
-    filter.className = "ng-gen-input";
-    filter.placeholder = "filter " + refLib.refmods.length + " RefMods…";
-    filter.style.cssText = "width: 11em; margin-bottom: 0";
-    function populate() {
-      var keep = select.value;
-      var q = filter.value.trim().toLowerCase();
-      select.textContent = "";
-      refLib.refmods.forEach(function (entry) {
-        if (q && (entry.name + " " + (entry.description || "")).toLowerCase().indexOf(q) < 0) return;
-        var opt = document.createElement("option");
-        opt.value = entry.name;
-        opt.textContent = (entry.ok ? "" : "(unusable) ") + entry.name;
-        opt.disabled = !entry.ok;
-        opt.title = entry.reason || "";
-        select.appendChild(opt);
-      });
-      var opts = Array.prototype.slice.call(select.options);
-      var pick = opts.filter(function (o) { return o.value === keep; })[0]
-        || opts.filter(function (o) { return !o.disabled; })[0];
-      if (pick) select.value = pick.value;
-      if (row.parentNode) updateRefmodHint(row);
-    }
-    populate();
-    var strengthInput = document.createElement("input");
-    strengthInput.type = "number";
-    strengthInput.className = "ng-gen-input";
-    strengthInput.step = "0.05";
-    strengthInput.min = "0";
-    strengthInput.max = "1";
-    strengthInput.style.cssText = "width: 76px; margin-bottom: 0";
-    var remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "ng-gen-btn";
-    remove.style.cssText = "width: auto";
-    remove.textContent = "\u00d7";
-    remove.title = "Remove this RefMod";
-    var hint = document.createElement("div");
-    hint.className = "ng-gen-label ng-h3-refmod-hint";
-    hint.style.cssText = "margin-top: 2px; text-transform: none; letter-spacing: 0; display: none";
-    line.appendChild(filter);
-    line.appendChild(select);
-    line.appendChild(strengthInput);
-    line.appendChild(remove);
-    row.appendChild(line);
-    row.appendChild(hint);
-    els.refmodsRows.appendChild(row);
-
-    var first = refLib.refmods.filter(function (e) { return e.ok; })[0];
-    if (name && refmodEntry(name) && refmodEntry(name).ok) select.value = name;
-    else if (first) select.value = first.name;
-    strengthInput.value = strength != null ? strength : REFMOD_DEFAULT_STRENGTH;
-    select.addEventListener("change", function () { updateRefmodHint(row); });
-    filter.addEventListener("input", populate);
-    remove.addEventListener("click", function () {
-      els.refmodsRows.removeChild(row);
-      syncRefmodControls();
-    });
-    updateRefmodHint(row);
-    syncRefmodControls();
-  }
-
-  // [{name, strength}] for the rows on screen -- only meaningful on h3ref.
-  function selectedRefmods() {
-    if (!els.refmodsRows || !refmodsOn()) return [];
-    var out = [];
-    Array.prototype.forEach.call(els.refmodsRows.children, function (row) {
-      var name = row.querySelector("select").value;
-      // The row's FIRST <input> is the filter box, so ask for the number box by type: reading
-      // the first one gave NaN every time and sent strength 1.0 whatever was typed.
-      var strength = parseFloat(row.querySelector('input[type="number"]').value);
-      if (name) out.push({ name: name, strength: isNaN(strength) ? REFMOD_DEFAULT_STRENGTH : strength });
-    });
-    return out;
-  }
-
-  function ensureRefmodsLoaded() {
-    if (refLib.loaded) return;
-    refLib.loaded = true;
-    fetch(API + "/refmods")
-      .then(function (r) { return r.json(); })
-      .then(function (payload) {
-        refLib.refmods = (payload && payload.refmods) || [];
-        refLib.ready = !!(payload && payload.ready);
-        refLib.ref2vaOk = !!(payload && payload.ref2va_ok);
-        refLib.supported = !!(payload && payload.refmod_supported);
-        refLib.maxVideos = (payload && payload.max_videos) || 3;
-        syncRefmodControls();
-      })
-      .catch(function () {
-        refLib.loaded = false; // let a later sync retry
-      });
-  }
-
   function ensureStatusChecked() {
     if (statusChecked) return;
     statusChecked = true;
@@ -739,7 +389,7 @@
         }
         syncStepsField();
         // The status answer must not unlock what the Ref2VA model locks off.
-        if (refmodsOn()) {
+        if (refmodUi.on()) {
           [els.turbo, els.v13].forEach(function (box) {
             if (box) { box.checked = false; box.disabled = true; }
           });
@@ -810,9 +460,9 @@
     if (turbo) form.append("turbo", "true");
     if (v13) form.append("v13", "true");
     if (tristep) form.append("tristep", "true");
-    var loras = selectedLoras();
+    var loras = loraUi.selected();
     if (loras.length) form.append("loras", JSON.stringify(loras));
-    var refmods = selectedRefmods();
+    var refmods = refmodUi.selected();
     if (refmods.length) form.append("refmods", JSON.stringify(refmods));
     if (seed !== null && !isNaN(seed)) form.append("seed", String(seed));
 
@@ -1014,7 +664,7 @@
     if (!els.pane) return;
     inited = true;
     if (window.H3RefmodMakeNG) window.H3RefmodMakeNG.init(els.refmodMake, {
-      reload: function () { refLib.loaded = false; ensureRefmodsLoaded(); }
+      reload: refmodUi.reload
     });
 
     if (els.installBtn) els.installBtn.addEventListener("click", startInstall);
@@ -1038,8 +688,8 @@
       els.model.addEventListener("change", function () {
         statusChecked = false; // re-check reachability for the newly picked model
         ensureStatusChecked();
-        ensureRefmodsLoaded();
-        syncRefmodControls();
+        refmodUi.ensureLoaded();
+        refmodUi.sync();
       });
     }
     if (els.turbo && els.model) {
@@ -1105,16 +755,16 @@
 
     if (els.loraAdd) {
       els.loraAdd.addEventListener("click", function () {
-        if (els.lorasRows.children.length < loraLimit()) addLoraRow();
+        if (els.lorasRows.children.length < loraUi.limit()) loraUi.addRow();
       });
     }
     [els.turbo, els.v13, els.tristep].forEach(function (box) {
-      if (box) box.addEventListener("change", syncLoraControls);
+      if (box) box.addEventListener("change", loraUi.sync);
       if (box) box.addEventListener("change", syncStepsField);
     });
     if (els.refmodAdd) {
       els.refmodAdd.addEventListener("click", function () {
-        if (els.refmodsRows.children.length < refLib.maxVideos) addRefmodRow();
+        if (refmodUi.hasRoom()) refmodUi.addRow();
       });
     }
 
@@ -1166,11 +816,11 @@
     if (els.lorasRows) {
       els.lorasRows.innerHTML = "";
       (entry.loras || []).forEach(function (l) {
-        if (els.lorasRows.children.length < loraLimit() && loraEntry(l.name)) {
-          addLoraRow(l.name, l.strength);
+        if (els.lorasRows.children.length < loraUi.limit() && loraUi.entry(l.name)) {
+          loraUi.addRow(l.name, l.strength);
         }
       });
-      syncLoraControls();
+      loraUi.sync();
     }
     if (els.modeT2v) {
       els.modeT2v.checked = !refUrl;
@@ -1199,9 +849,9 @@
 
     init();
     ensureStatusChecked();
-    ensureLorasLoaded();
-    ensureRefmodsLoaded();
-    syncRefmodControls();
+    loraUi.ensureLoaded();
+    refmodUi.ensureLoaded();
+    refmodUi.sync();
     renderQueue();
   }
 
