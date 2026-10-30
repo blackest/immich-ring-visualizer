@@ -3,6 +3,7 @@
 GET  /api/ng/h3/jobs/<id>/windows            the windows, current joins and film versions
 POST /api/ng/h3/jobs/<id>/reroll             {window, seed?, prompt?, from_previous?, joins?} -> a job to poll
 POST /api/ng/h3/jobs/<id>/restitch           {joins} -> join the same clips with other joins, no render
+POST /api/ng/h3/jobs/<id>/windows/<n>/critique {note?} -> Gemma's read of that window and a rewritten prompt
 GET  /api/ng/h3/jobs/<id>/windows/<n>/video  the clip a window currently uses
 GET  /api/ng/h3/jobs/<id>/versions/<n>/video one film version (0 = the original render)
 
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
 
+import h3_critiqueNG as critique
 import h3_rerollNG as reroll
 
 h3RerollNG_bp = Blueprint("h3RerollNG", __name__)
@@ -88,3 +90,16 @@ def h3_version_video_ng(job_id, n):
     except Exception as e:  # noqa: BLE001
         return _fail(e)
     return send_file(path, mimetype="video/mp4") if path.is_file() else (jsonify({"error": "film missing"}), 404)
+
+
+@h3RerollNG_bp.route("/api/ng/h3/jobs/<job_id>/windows/<int:n>/critique", methods=["POST"])
+def h3_critique_ng(job_id, n):
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify(critique.critique_window_ng(job_id, n, str(body.get("note") or "")))
+    except critique.GpuBusy as e:
+        return jsonify({"error": str(e)}), 409
+    except critique.GemmaUnavailable as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:  # noqa: BLE001 -- _fail maps each kind to its status
+        return _fail(e)

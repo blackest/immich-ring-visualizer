@@ -348,6 +348,12 @@ def start_task_job_ng(task: str, label: str, run: Callable, meta: Optional[dict]
     return job
 
 
+def busy_ng() -> Optional[H3JobNG]:
+    """A job that is on the GPU right now (rendering or running a task), else None."""
+    with _JOBS_LOCK:
+        return next((j for j in _JOBS.values() if j.dispatched_at is not None and j.finished_at is None), None)
+
+
 def get_job_ng(job_id: str) -> Optional[H3JobNG]:
     with _JOBS_LOCK:
         return _JOBS.get(job_id)

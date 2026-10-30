@@ -193,6 +193,14 @@ NG_ADDRESS_SETTINGS = [
         "description": "A second `h3ir serve` on a Qwen model (`h3ir_serveNG.sh qwen`). The Enhanced H3 view sends a brief here when a video is attached; Gemma's compiler crashes on real clips.",
     },
     {
+        "key": "gemma_review_base_url",
+        "env": "RINGVIZ_GEMMA_REVIEW_URL",
+        "default": "http://127.0.0.1:8080",
+        "label": "Gemma vision server URL",
+        "description": "The Gemma 4 server (`h3ir_serveNG.sh gemma` starts it) that the Enhanced H3 \"Ask Gemma\" button sends a contact sheet of a window to. Same machine; it needs a vision-capable model.",
+        "probe": True,
+    },
+    {
         "key": "ltx_output_preset",
         "env": "RINGVIZ_LTX_OUTPUT_PRESET",
         "default": "web",
@@ -464,6 +472,10 @@ def get_comfyui_base_url():
 
 def get_h3ir_base_url():
     return _ng_setting("h3ir_base_url").rstrip("/")
+
+
+def get_gemma_review_base_url():
+    return _ng_setting("gemma_review_base_url").rstrip("/")
 
 
 def get_h3ir_video_base_url():

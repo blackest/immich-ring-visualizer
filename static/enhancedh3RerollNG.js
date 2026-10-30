@@ -55,6 +55,56 @@
     return row;
   }
 
+  // "Ask Gemma": a note on what the person sees (optional), then Gemma's read of the window. Its
+  // rewrite goes into the prompt box, the original can be put back, and nothing renders until Reroll.
+  function gemmaRow(w, ta) {
+    var wrap = el("div");
+    var line = el("div", "ng-eh3-grid");
+    var note = el("input", "ng-gen-input");
+    note.type = "text"; note.placeholder = "What do you see? (optional, e.g. the shirt should stay pale)";
+    var ask = el("button", "ng-gen-btn", "Ask Gemma");
+    ask.type = "button"; ask.style.width = "auto";
+    ask.title = "Gemma looks at this window and the start of the video, says what differs, and rewrites the prompt. About a minute.";
+    var out = el("div", "ng-gen-status");
+    out.style.cssText = "text-transform: none; letter-spacing: 0";
+    ask.onclick = function () {
+      ask.disabled = true;
+      out.textContent = "Gemma is looking at window " + w.index + "...";
+      api(current + "/windows/" + w.index + "/critique", "POST", { note: note.value }).then(function (r) {
+        ask.disabled = false;
+        out.textContent = "";
+        if (!r.ok) { out.textContent = r.body.error || "Gemma could not answer."; return; }
+        showCritique(out, r.body, ta);
+      }).catch(function (e) { ask.disabled = false; out.textContent = e.message; });
+    };
+    line.appendChild(note); line.appendChild(ask);
+    wrap.appendChild(line); wrap.appendChild(out);
+    return wrap;
+  }
+
+  function showCritique(out, c, ta) {
+    out.textContent = "";
+    var add = function (cls, text) { var e = el("div", cls, text); out.appendChild(e); return e; };
+    if (c.anchor_look) add("", "Start of the video: " + c.anchor_look);
+    if (c.window_look) add("", "This window: " + c.window_look);
+    add("", "Motion score " + c.motion + " (below 3 is nearly still, 5 to 8 gentle).");
+    if (!c.differences.length) add("", "Gemma found nothing to change.");
+    c.differences.forEach(function (d) {
+      add("", "\u2022 [" + d.kind + "] " + d.what + (d.seen_in ? " (" + d.seen_in + ")" : "") +
+        (d.likely_cause ? " \u2014 probably: " + d.likely_cause : ""));
+    });
+    if (c.warning) add("", c.warning + ".");
+    if (c.rewrite && c.rewrite !== ta.value.trim()) {
+      var original = ta.value;
+      ta.value = c.rewrite;
+      add("", "Gemma's rewrite is in the box above. Read it, change what you like, then Reroll.");
+      var back = el("button", "ng-gen-btn", "Put my original prompt back");
+      back.type = "button"; back.style.width = "auto";
+      back.onclick = function () { ta.value = original; back.disabled = true; };
+      out.appendChild(back);
+    }
+  }
+
   function windowRow(w, info) {
     var box = el("div", "ng-eh3-window");
     box.appendChild(el("div", "ng-gen-label", "Window " + w.index + (w.rerolled ? " (rerolled)" : "") +
@@ -91,6 +141,7 @@
     };
     controls.appendChild(play); controls.appendChild(go);
     box.appendChild(ta); box.appendChild(controls);
+    box.appendChild(gemmaRow(w, ta));
     return box;
   }
 
