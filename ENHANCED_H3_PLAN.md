@@ -514,3 +514,29 @@ Fast clip of the Klein test): **Flex 9.9 min against about 6 min for Fast**. Bot
 first frame. Flex was steadier early (per-second motion 0.07, 0.06, 0.15, 1.17, 3.53 against Fast's 0.12, 0.10, 0.23, 0.72,
 2.29) and moved more late; one clip each, so no verdict on quality. Files: `~/Movies/h3-fork-tests/flex/`
 (`sheet_fast_over_flex.jpg`, `flex_B_prompt_w1.mp4`).
+
+## Update 2026-10-31: Flex High (1024x576) against Fast
+
+Same inputs as the 640x384 test (M2 Max, h3q8, 5 s, seed 303, the Klein-woman first frame, the same compiler prompt), queued
+through the app at quality `high`. **Flex 27.7 min, Fast 15.3 min** (1.8x slower; at 640x384 it was 9.9 against about 6 min,
+1.65x). Phosphene's "2.2x faster" is against Best, not Fast, so on this Mac Flex is the slower of the two speed options.
+Both held the face, jacket and kitchen from the first frame. Mean per-second picture change: Fast 1.9, 2.8, 5.5, 12.5; Flex
+1.9, 1.5, 9.7, 18.8 -- Flex is steadier early and moves more late, as at 640x384. One clip each, so no quality verdict;
+audio not compared. Files: `~/Movies/h3-fork-tests/flex/high/` (`sheet_fast_over_flex_high.jpg`, `fast_high_w1.mp4`,
+`flex_high_w1.mp4`).
+
+Also found 2026-10-31 (not yet fixed): a 20 s chain with a two-shot brief repeated each shot in two windows (1,1,2,2), spoke the
+same line twice and lost the character look in windows 3-4, because `_split_windows` copies a shot into any window no shot
+starts in. **Fixed the same day (uncommitted):** `h3_continueNG.py` makes one text-only Gemma call that returns a cast line
+(Phosphene's "name every person" tip, put at the start of every later window) and, for each window no shot covers, a new
+beat, a varied sound line and, if the brief had speech and the box is ticked, a new line in the same voice. Two checkboxes in
+the Enhanced H3 form; Gemma down means the old copy plus a note. 13 tests (`tests/test_h3_continueNG.py`); tried live on
+the four prompts of job `bd0675d4248f`. Not yet rendered: whether the new windows actually hold the character.
+
+**Ref2VA Q8 rebuild script (2026-10-31).** The Q8 pack at `~/models/h3-ref2va/q8` (47.5 GB) exists only on this machine, and the
+modified `build_quant.py` that made it lived in a scratchpad and was lost. `scripts/build_ref2va_q8.py` replaces it: it loads
+the official `Ref2VA/transformer` once and quantizes it in place (upstream copies every weight first and peaks near 93 GB of
+103), using the runner's own `load_dit`, `quantize_dit` and `save_sharded`, so the layout is the runner's (8-bit, group 64,
+AdaLN bf16, 208 layers, 10 shards). `--verify PACK` checks a finished pack without MLX; our existing pack passes. The build
+itself is not re-run (it needs the ~66 GB re-download, 1-2 h). The result is a MiniMax H3 Model Derivative: build your own,
+do not re-host without the licence, a modified notice and "Powered by MiniMax H3".
