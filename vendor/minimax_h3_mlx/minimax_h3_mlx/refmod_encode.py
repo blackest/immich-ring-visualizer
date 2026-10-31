@@ -83,7 +83,7 @@ def encode_images(video_vae, images, width: int, height: int, *, sample: bool = 
 
 @dataclass
 class Reference:
-    """One ``--reference``: a picture, or a clip as 24 fps frames already trimmed to 17n+5."""
+    """One ``--ref2va-reference``: a picture, or a clip as 24 fps frames already trimmed to 17n+5."""
 
     kind: str  # "image" | "video"
     image: object = None  # PIL image, kind == "image"
@@ -118,7 +118,7 @@ def trim_reference_frames(count: int) -> int:
 
 
 def load_references(paths, width: int, height: int, num_frames: int, size: str = "match") -> list[Reference]:
-    """``--reference`` files -> prepared references, in order. A clip is cut to the window's length."""
+    """``--ref2va-reference`` files -> prepared references, in order. A clip is cut to the window's length."""
     from PIL import Image, ImageOps
 
     refs = []

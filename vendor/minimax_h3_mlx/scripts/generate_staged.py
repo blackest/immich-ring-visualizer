@@ -355,11 +355,11 @@ def media_mode_errors(args, parser) -> str:
     if args.chain_context_frames < 0 or args.chain_context_frames % CONTEXT_FRAME_STEP:
         parser.error(f"--chain-context-frames must be a multiple of {CONTEXT_FRAME_STEP} (0 = off)")
     keyframes = list(args.keyframe or [])
-    if args.refmod or args.reference:
+    if args.refmod or args.ref2va_reference:
         from minimax_h3_mlx.refmod_io import parse_spec
 
         clash = [flag for flag, value in (
-            ("--refmod with --reference", args.refmod and args.reference),
+            ("--refmod with --ref2va-reference", args.refmod and args.ref2va_reference),
             ("--first-frame", args.first_frame), ("--last-frame", args.last_frame),
             ("--keyframe", keyframes), ("--extend-from", args.extend_from),
             ("--video-to-audio", args.video_to_audio), ("--audio-drive", args.audio_drive),
@@ -367,10 +367,10 @@ def media_mode_errors(args, parser) -> str:
             ("--chain-context-frames", args.chain_context_frames),
         ) if value]
         if clash:
-            parser.error(f"--refmod/--reference do not compose with {', '.join(clash)} (single window, no other media)")
-        for path in args.reference or []:
+            parser.error(f"--refmod/--ref2va-reference do not compose with {', '.join(clash)} (single window, no other media)")
+        for path in args.ref2va_reference or []:
             if not Path(path).is_file():
-                parser.error(f"--reference file does not exist: {path}")
+                parser.error(f"--ref2va-reference file does not exist: {path}")
         for spec in args.refmod or []:
             try:
                 path, _ = parse_spec(spec)
@@ -415,7 +415,7 @@ def media_mode_errors(args, parser) -> str:
                      "for an end target, not --first-frame/--keyframe")
     if args.extend_from is not None and args.audio_drive is not None:
         parser.error("--extend-from and --audio-drive do not compose (yet); extend, then lip-sync")
-    extra = media or args.last_frame is not None or keyframes or args.chain_context_frames or args.refmod or args.reference
+    extra = media or args.last_frame is not None or keyframes or args.chain_context_frames or args.refmod or args.ref2va_reference
     if extra:
         for flag, value in (("--draft-fps", args.draft_fps), ("--playback-fps", args.playback_fps),
                             ("--draft-seconds", args.draft_seconds),
@@ -438,7 +438,7 @@ def media_mode_errors(args, parser) -> str:
             parser.error(f"--keyframe image does not exist: {path}")
     if args.refmod:
         return "refmod"
-    if args.reference:
+    if args.ref2va_reference:
         return "reference"
     if args.video_to_audio is not None:
         return "video_to_audio"
@@ -823,8 +823,8 @@ def render_window(
     if cond is None:
         cond = WindowConditioning(keyframes=[(keyframe, "first")] if keyframe is not None else [])
     keyframes = [image for image, _ in cond.keyframes] or None
-    reference_paths = getattr(args, "reference", None)
-    references = load_references(reference_paths, args.width, args.height, frames, args.reference_size) if reference_paths else None
+    reference_paths = getattr(args, "ref2va_reference", None)
+    references = load_references(reference_paths, args.width, args.height, frames, args.ref2va_reference_size) if reference_paths else None
     keyframe_anchors = tuple(anchor for _, anchor in cond.keyframes)
     if keyframe is None and keyframes:
         # The draft cache keys on "the" first frame; it is only ever used with a plain first-frame
@@ -1670,7 +1670,7 @@ def main() -> int:
         "Needs a Ref2VA --dit; composes with no other media flag and no chaining.",
     )
     parser.add_argument(
-        "--reference",
+        "--ref2va-reference",
         action="append",
         default=None,
         metavar="PICTURE|CLIP",
@@ -1679,7 +1679,7 @@ def main() -> int:
         "flag and no chaining.",
     )
     parser.add_argument(
-        "--reference-size",
+        "--ref2va-reference-size",
         choices=("match", "max"),
         default="match",
         help="Reference picture size: match = scaled down to the render's pixel area, max = upstream's "

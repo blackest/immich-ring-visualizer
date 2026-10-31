@@ -582,3 +582,12 @@ per forward). So it works and is not faster than Fast; one clip, no quality verd
 **Next.** Stage the packs for the Hub (licence, NOTICE, a card that says "smaller, not faster", credits to MiniMax, PipeNetwork,
 DeepBeepMeep, Phosphene, Pika); dry run, then the owner uploads. Ideas: a 4-bit text encoder (would lower the 25.7 GiB floor), measuring
 a cold-cache load, a matched-seed Q4 check across more seeds.
+
+**Flag rename, 2026-10-31.** Mr Bizarro's `phosphene/v5.0` branch already has a `--reference IMAGE` (a face or character sheet on the
+FL2VA model, every window), a different feature under our flag's name; our commits on top of v5.0 conflict in `generate_staged.py`
+(the packing/reader commit applies cleanly). Ours is now `--ref2va-reference` and `--ref2va-reference-size` (attributes
+`args.ref2va_reference`, `args.ref2va_reference_size`) in the vendored runner, `h3_referencesNG.py` and the tests, so a later sync
+from upstream cannot collide with it; earlier entries in this file still say `--reference`. Checked end to end: the app's builder
+plus the vendored runner rendered a one-picture Ref2VA reference clip (pruned Q8 pack, Fast, 640x384, 7.9 min) with the woman's face
+and jacket held. The upstream PR #2 branch, rebased onto `phosphene/v4.19.15` as RefMod-only (`--refmod`, the packing layout and
+reader, a test fix; no `--reference`), passed the runner's tests and rendered byte-identically to the older runner.

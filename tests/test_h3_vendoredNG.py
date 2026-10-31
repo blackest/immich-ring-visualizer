@@ -15,7 +15,7 @@ import h3_engineNG as h3
 import h3_loraNG
 import h3_refmod_makeNG as make
 
-NEEDED_FLAGS = ("--reference", "--reference-size", "--refmod", "--lazy-adaln", "--adaln-cache-dir",
+NEEDED_FLAGS = ("--ref2va-reference", "--ref2va-reference-size", "--refmod", "--lazy-adaln", "--adaln-cache-dir",
                 "--keyframe", "--sigma-subset", "--extend-from", "--chain-context-frames")
 
 

@@ -1,4 +1,4 @@
-"""Unit tests for H3 `--reference` (h3_referencesNG.py): what is refused, the runner arguments, the
+"""Unit tests for H3 `--ref2va-reference` (h3_referencesNG.py): what is refused, the runner arguments, the
 job queue storing the uploaded pictures and clips, the /generate fields, and the health flag.
 Nothing renders and no real model files are read.
 
@@ -20,7 +20,7 @@ import h3_referencesNG as refs
 import routes.h3NG as h3_routes
 from tests.test_h3_tristepNG import _Base, RUNNER
 
-REF_RUNNER = RUNNER + "--reference PICTURE|CLIP\n--reference-size match|max\n"
+REF_RUNNER = RUNNER + "--ref2va-reference PICTURE|CLIP\n--ref2va-reference-size match|max\n"
 
 
 class _RefBase(_Base):
@@ -64,7 +64,7 @@ class ValidationTests(_RefBase):
 
     def test_a_runner_without_the_flag_is_refused(self):
         self.runner.write_text(RUNNER)
-        with self.assertRaisesRegex(ValueError, "no --reference support"):
+        with self.assertRaisesRegex(ValueError, "no --ref2va-reference support"):
             self._validate()
 
     def test_limits_and_unknown_files(self):
@@ -91,21 +91,21 @@ class ValidationTests(_RefBase):
 class ArgvTests(_RefBase):
     def test_one_flag_per_file_in_order_and_size_only_when_not_match(self):
         self.assertEqual(refs.reference_argv_ng(["a.png", "b.mp4"]),
-                         ["--reference", "a.png", "--reference", "b.mp4"])
+                         ["--ref2va-reference", "a.png", "--ref2va-reference", "b.mp4"])
         self.assertEqual(refs.reference_argv_ng(["a.png"], "max"),
-                         ["--reference", "a.png", "--reference-size", "max"])
+                         ["--ref2va-reference", "a.png", "--ref2va-reference-size", "max"])
         self.assertEqual(refs.reference_argv_ng([], "max"), [])
 
     def test_engine_command_carries_them(self):
         cmd = self._cmd(references=[str(self.pic), str(self.clip)], tristep=True)
-        flags = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--reference"]
+        flags = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--ref2va-reference"]
         self.assertEqual(flags, [str(self.pic), str(self.clip)])
-        self.assertNotIn("--reference-size", cmd)
+        self.assertNotIn("--ref2va-reference-size", cmd)
         self.assertEqual(self._value(self._cmd(references=[str(self.pic)], reference_size="max"),
-                                     "--reference-size"), "max")
+                                     "--ref2va-reference-size"), "max")
 
     def test_engine_without_references_adds_nothing(self):
-        self.assertNotIn("--reference", self._cmd())
+        self.assertNotIn("--ref2va-reference", self._cmd())
 
     def test_engine_refuses_the_wrong_model(self):
         with self.assertRaisesRegex(ValueError, "Ref2VA"):

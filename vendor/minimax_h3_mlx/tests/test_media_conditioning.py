@@ -194,7 +194,7 @@ def _args(**kw):
     base = dict(chain_context_frames=0, keyframe=None, extend_from=None, video_to_audio=None,
                 audio_drive=None, audio_mux=None, last_frame=None, first_frame=None,
                 draft_fps=None, playback_fps=None, draft_seconds=None, draft_cache_dir=None,
-                save_stage_a=None, frames=124, extend_frames=None, refmod=None, reference=None,
+                save_stage_a=None, frames=124, extend_frames=None, refmod=None, ref2va_reference=None,
                 chain_windows=1, chain_total_frames=None)
     base.update(kw)
     return argparse.Namespace(**base)

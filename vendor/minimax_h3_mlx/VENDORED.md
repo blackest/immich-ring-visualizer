@@ -3,7 +3,7 @@
 The H3 video runner (`scripts/generate_staged.py` and the `minimax_h3_mlx` package) that
 `h3_engineNG.py` runs. It lives here so that Phosphene's updater, which moves its own copy of the
 engine to an exact commit every time you press Update, cannot take away the flags this app needs
-(`--reference`, `--refmod`, `--lazy-adaln`, `--adaln-cache-dir`).
+(`--ref2va-reference`, `--refmod`, `--lazy-adaln`, `--adaln-cache-dir`).
 
 **Licence:** Apache-2.0 (`LICENSE`, unchanged). Original work by the minimax-h3-mlx authors
 (https://github.com/mrbizarro/minimax-h3-mlx; the app's fork is blackest/minimax-h3-mlx). Files we
@@ -40,3 +40,9 @@ from Phosphene's models folder as before. Tests: `vendor/minimax_h3_mlx/run_test
 **Moving to a newer engine:** when Phosphene moves its pin, diff the two commits
 (`git diff 3f6c75c..<new> -- minimax_h3_mlx scripts/generate_staged.py` in the fork), bring the changes
 here, re-run `run_tests.sh`, then render once. Nothing here changes when Phosphene updates.
+
+**Renamed 2026-10-31:** our `--reference` and `--reference-size` are now `--ref2va-reference` and `--ref2va-reference-size`
+(and `args.reference` / `args.reference_size` are `args.ref2va_reference` / `args.ref2va_reference_size`). The upstream
+`phosphene/v5.0` branch has its own `--reference IMAGE` (a face or character sheet on the FL2VA model, given to every window),
+which is a different feature under the same name; renaming ours means a later sync from upstream cannot collide with it.
+Our flag is for the Ref2VA DiT: pictures and clips, one window.

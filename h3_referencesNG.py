@@ -1,4 +1,4 @@
-"""immichRingNG -- `--reference` for the H3 runner: pictures and clips handed to a Ref2VA render
+"""immichRingNG -- `--ref2va-reference` for the H3 runner: pictures and clips handed to a Ref2VA render
 as references (swap a character into a clip, carry a face through a new scene).
 
 Unlike a RefMod (h3_ref2vaNG.py: a saved latent from the library) a reference is a plain picture
@@ -14,8 +14,8 @@ from typing import Optional
 
 import h3_loraNG as h3_lora
 
-REFERENCE_FLAG = "--reference"
-REFERENCE_SIZE_FLAG = "--reference-size"
+REFERENCE_FLAG = "--ref2va-reference"
+REFERENCE_SIZE_FLAG = "--ref2va-reference-size"
 PICTURE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 CLIP_EXTS = (".mp4", ".mov", ".m4v", ".webm")
 SIZES = ("match", "max")
@@ -58,7 +58,7 @@ def validate_references_ng(references, size: str = "match", *, model: str, image
         raise ValueError("references need the Ref2VA model (model='h3ref'); "
                          f"{model!r} was never trained to read reference rows")
     if not runner_supports_reference_ng(runner):
-        raise ValueError("this H3 runner has no --reference support -- it needs the minimax-h3-mlx "
+        raise ValueError("this H3 runner has no --ref2va-reference support -- it needs the minimax-h3-mlx "
                          "build with the reference flag (branch reference-flag)")
     if image_path is not None or last_frame_path is not None or keyframes:
         raise ValueError("references do not combine with a first, last or keyframe image "
@@ -89,7 +89,7 @@ def validate_references_ng(references, size: str = "match", *, model: str, image
 
 
 def reference_argv_ng(references, size: str = "match") -> list:
-    """The runner arguments: one `--reference PATH` per file, in order, then the size."""
+    """The runner arguments: one `--ref2va-reference PATH` per file, in order, then the size."""
     argv = []
     for path in references or []:
         argv += [REFERENCE_FLAG, str(path)]

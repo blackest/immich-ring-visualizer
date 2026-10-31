@@ -1,4 +1,4 @@
-"""--reference sizing, clip sampling, the 2-frame text block and flag rules. No weights needed.
+"""--ref2va-reference sizing, clip sampling, the 2-frame text block and flag rules. No weights needed.
 
     ./.venv/bin/python tests/test_reference_encode.py
 """
@@ -43,7 +43,7 @@ def refused(**kw) -> bool:
     base = dict(chain_context_frames=0, keyframe=None, extend_from=None, video_to_audio=None,
                 audio_drive=None, audio_mux=None, last_frame=None, first_frame=None,
                 draft_fps=None, playback_fps=None, draft_seconds=None, draft_cache_dir=None,
-                save_stage_a=None, frames=124, extend_frames=None, refmod=None, reference=None,
+                save_stage_a=None, frames=124, extend_frames=None, refmod=None, ref2va_reference=None,
                 chain_windows=1, chain_total_frames=None)
     base.update(kw)
 
@@ -113,12 +113,12 @@ def main() -> None:
         check("a block takes slice 0 from the first frame and slice 1 from the second",
               np.array_equal(got[:, :, 0], single[:, :, 0]) and np.array_equal(got[:, :, 1], other[:, :, 1]))
 
-        check("--reference alone is a reference render", refused(reference=[big]) == "reference")
-        check("a missing picture is refused", refused(reference=[str(tmp / "nope.png")]) is True)
+        check("--ref2va-reference alone is a reference render", refused(ref2va_reference=[big]) == "reference")
+        check("a missing picture is refused", refused(ref2va_reference=[str(tmp / "nope.png")]) is True)
         for flag, value in (("first_frame", Path(big)), ("last_frame", Path(big)), ("keyframe", [big + "@1"]),
                             ("chain_windows", 2), ("chain_context_frames", 17), ("refmod", [big])):
-            check(f"--reference refuses {flag}", refused(reference=[big], **{flag: value}) is True)
-        check("--reference refuses a draft cache", refused(reference=[big], draft_cache_dir=tmp) is True)
+            check(f"--ref2va-reference refuses {flag}", refused(ref2va_reference=[big], **{flag: value}) is True)
+        check("--ref2va-reference refuses a draft cache", refused(ref2va_reference=[big], draft_cache_dir=tmp) is True)
 
 
 if __name__ == "__main__":

@@ -79,7 +79,7 @@ The script ends with `LOAD OK -- pack valid`, after making `load_dit` build the 
 The H3 view finds the Ref2VA pack in this order: the `LTX_H3_REF2VA_DIT` environment variable, `<H3 models folder>/ref2va-q8`,
 then `~/models/h3-ref2va/q8`. Point one of those at the folder you built (a symlink is enough), then pick **H3 Ref2VA Q8**.
 
-With the runner directly: `scripts/generate_staged.py --dit <pack>` plus `--refmod` or `--reference`. Reference conditioning needs
+With the runner directly: `scripts/generate_staged.py --dit <pack>` plus `--refmod` or `--ref2va-reference`. Reference conditioning needs
 a runner that has it: the draft PR [mrbizarro/minimax-h3-mlx#2](https://github.com/mrbizarro/minimax-h3-mlx/pull/2), or the
 copy in `vendor/minimax_h3_mlx` here.
 
