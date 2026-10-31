@@ -24,7 +24,7 @@
   function refreshEls() {
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
-      "silent", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
+      "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
       "quality", "fast", "render", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
@@ -84,7 +84,7 @@
   }
 
   function saveNow() {
-    var state = { fields: {}, silent: els.silent.checked, fast: els.fast.checked,
+    var state = { fields: {}, silent: els.silent.checked, cont: els.cont.checked, improv: els.improv.checked, fast: els.fast.checked,
       brief: lastBrief, needsFirstFrame: briefNeedsFirstFrame, job: renderJob,
       lastDone: lastDone, extendFrom: extendFrom };
     FIELDS.forEach(function (k) { state.fields[k] = els[k].value; });
@@ -106,6 +106,8 @@
       if (v !== undefined && v !== null) els[k].value = v;
     });
     els.silent.checked = !!saved.silent;
+    if (saved.cont !== undefined) els.cont.checked = !!saved.cont;
+    if (saved.improv !== undefined) els.improv.checked = !!saved.improv;
     if (saved.fast !== undefined) els.fast.checked = !!saved.fast;
   }
 
@@ -266,6 +268,8 @@
       if (els[k].value) form.append(k, els[k].value);
     });
     if (els.silent.checked) form.append("silent", "true");
+    if (els.cont.checked) form.append("continue_windows", "true");
+    if (els.improv.checked) form.append("improvise", "true");
     var d = dialogue();
     if (d) {
       form.append("dialogue", JSON.stringify(d));
@@ -337,7 +341,7 @@
       box.className = "ng-eh3-window";
       var label = document.createElement("label");
       label.className = "ng-gen-label";
-      label.textContent = "Window " + (i + 1) + (w.continues ? " (carries on the previous shot)" : " (shot " + w.shots.join(", ") + ")");
+      label.textContent = "Window " + (i + 1) + (w.generated ? " (written by Gemma to carry on)" : w.continues ? " (carries on the previous shot)" : " (shot " + w.shots.join(", ") + ")");
       var ta = document.createElement("textarea");
       ta.className = "ng-gen-input";
       ta.value = w.prompt;

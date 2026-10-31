@@ -20,6 +20,7 @@ import requests
 from flask import Blueprint, jsonify, request
 
 import configNG
+import h3_continueNG as h3_continue
 import h3_engineNG
 
 enhancedh3NG_bp = Blueprint("enhancedh3NG", __name__)
@@ -316,6 +317,11 @@ def enhanced_h3_brief_ng():
         _brief_base[out["id"]] = base
     if fallback:
         out["note"] = fallback
+    if str(form.get("continue_windows") or "").lower() in ("1", "true", "on") and out.get("windows"):
+        out["windows"], why = h3_continue.continue_windows_ng(
+            out["windows"], intent, str(form.get("improvise") or "").lower() in ("1", "true", "on"))
+        if why:
+            out["note"] = (out.get("note") or "") + " " + why
     return jsonify(out), 201
 
 
