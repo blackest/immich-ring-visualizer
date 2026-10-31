@@ -540,3 +540,45 @@ the official `Ref2VA/transformer` once and quantizes it in place (upstream copie
 AdaLN bf16, 208 layers, 10 shards). `--verify PACK` checks a finished pack without MLX; our existing pack passes. The build
 itself is not re-run (it needs the ~66 GB re-download, 1-2 h). The result is a MiniMax H3 Model Derivative: build your own,
 do not re-host without the licence, a modified notice and "Powered by MiniMax H3".
+
+## Update 2026-10-31, later: pruned and Q4 Ref2VA packs, Pika's Ref2VA adapter
+
+**Why.** The Q8 Ref2VA pack (47.5 GB) held 24 GiB of AdaLN weights that a render never reads (the cache or `--lazy-adaln`
+skips them), so RAM was already ~20-22 GiB at render time; the cost was disk, download, and the 66 GB load of the one-time build.
+A 96 GB Mac was barely up to that build, so building from source is not something to ask of others.
+
+**The pruned format is derivable.** Every AdaLN projection reads `silu(time_embedder(t))`, a nearly one-dimensional curve in
+2688 dims (rank 16 holds all but 7e-14 of its energy). `scripts/prune_ref2va_adaln.py` streams the official shards into the
+single-file pruned layout (`adaln_t_table` 1001x64, each AdaLN weight re-projected to 64 columns, `time_embedder` dropped) with a few GB
+of RAM; the projected AdaLN outputs match the originals to 1.7e-6 relative, at the grid nodes and between them. The runner's own
+`scripts/quantize_stream.py` makes a Q8 pack from that, and our `scripts/quantize_pruned_stream.py` adds separate core and AdaLN
+widths (upstream applies one width to both). `scripts/build_ref2va_q8.py` (earlier) reproduces our Q8 byte for byte from the
+official weights (all 10 shards identical).
+
+**Measured (seed 5, 640x384, Fast, RefMod zz_test_boxer_frames, h3ref).** Renders are deterministic (two full-pack runs are byte-identical).
+
+| pack | size | DiT load peak | denoise peak | denoise | picture vs full pack |
+|---|---|---|---|---|---|
+| full Q8 (AdaLN bf16) | 47.5 GB | 19.9 GiB | 22.2 GiB | 242 s | n/a |
+| pruned Q8, AdaLN 8-bit | 20 GB | 19.9 | 22.2 | 236 s | 19.8 dB |
+| pruned Q8, AdaLN float32 | 21 GB | 19.9 | 22.2 | 235 s | 23.3 dB |
+| pruned Q4 core, AdaLN float32 | 12 GB | 10.6 | 12.9 | 238 s | 16.7 dB |
+
+Not identical to the full pack, and not meant to be: the AdaLN tables are stored in bf16, and comparing the saved tables gives
+1.3e-3 relative for the float-AdaLN pack (below one bf16 step, 3.9e-3) against 7.3e-3 for the 8-bit-AdaLN pack. So float AdaLN is
+the one to use (+1.3 GB); the 8-bit AdaLN was the larger error. A 3-step sampler turns bf16-level changes into a different take
+(same man, room and lamp; props move). Q4 core is a visibly different take (a doubled pendant lamp in this seed); the runner's card
+measures 4-bit velocity error at 5x 8-bit's (0.165 against 0.033). Speed is unchanged: the runner's benchmarks show 4-bit and 8-bit
+matmuls both at ~0.88x bf16, so the gain is memory and size, not time. The text encoder (Qwen3-VL-32B) peaks at 25.7 GiB and sets the
+floor for plain renders; reference encode peaked at 39 GiB in the 2-picture h3ref run. Not tested on 36 or 48 GB Macs.
+
+**Pika's Ref2VA adapter on our Ref2VA trunk.** Pika ships `ref2va/adapter.safetensors` (same size, rank 128, target modules and
+sampler as FL2VA, built for `transformer_ref`, i.e. the Ref2VA DiT). `scripts/build_pika_ref2va_adapter.py` fetches it at
+Phosphene's pinned revision, checks Pika's published SHA-256 and reuses Phosphene's `fetch_h3_flex.py` re-layout. `h3_flexNG.py` now
+picks the Ref2VA adapter for model `h3ref` (never the FL2VA one) and allows RefMods/references with Flex on that model only. First
+render (same seed, Flex, RefMod): accepted by the runner, likeness held, **10.0 min against Fast's 5.5** (6 x 81 s against 3 x 81 s
+per forward). So it works and is not faster than Fast; one clip, no quality verdict.
+
+**Next.** Stage the packs for the Hub (licence, NOTICE, a card that says "smaller, not faster", credits to MiniMax, PipeNetwork,
+DeepBeepMeep, Phosphene, Pika); dry run, then the owner uploads. Ideas: a 4-bit text encoder (would lower the 25.7 GiB floor), measuring
+a cold-cache load, a matched-seed Q4 check across more seeds.
