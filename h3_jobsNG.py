@@ -241,8 +241,10 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     if flex:
         h3_flex.check_flex_ng(turbo=turbo, v13=v13, tristep=tristep, refmods=refmods, references=references,
                               model=model)
-        if h3_flex.resolve_flex_ng(h3.H3_MODELS_ROOT) is None:
-            raise FileNotFoundError("the Pika H3 Flex adapter is not in the H3 models folder (pika-h3-flex/)")
+        if h3_flex.resolve_flex_for_model_ng(h3.H3_MODELS_ROOT, model) is None:
+            raise FileNotFoundError("the Pika H3 Flex Ref2VA adapter is not built (scripts/build_pika_ref2va_adapter.py)"
+                                    if model == "h3ref" else
+                                    "the Pika H3 Flex adapter is not in the H3 models folder (pika-h3-flex/)")
     h3._validate_h3_duration_ng(duration_s)
     if (last_bytes is not None or keyframes) and refmods:
         raise ValueError("a RefMod render takes no first, last or keyframe images")

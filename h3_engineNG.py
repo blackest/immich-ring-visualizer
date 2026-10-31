@@ -541,6 +541,7 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         "tristep_supported": bool(runner) and h3_lora.runner_has_flag_ng(runner, "--sigma-subset"),
         # Flex = Pika's 6-forward adapter: needs the built file AND a runner with --pika-flex.
         "flex_ok": h3_flex.resolve_flex_ng(H3_MODELS_ROOT) is not None,
+        "flex_ref2va_ok": h3_flex.resolve_flex_ref2va_ng(H3_MODELS_ROOT) is not None,
         "flex_supported": bool(runner) and h3_flex.runner_supports_flex_ng(runner),
         # Informational: this runner will use the lazy AdaLN load on its own.
         "lazy_adaln": bool(runner) and bool(_h3_lazy_adaln_argv_ng(runner, legacy_adaln=False)),
@@ -687,7 +688,12 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
 
     flex_lora = None
     if flex:
-        flex_lora = h3_flex.resolve_flex_ng(H3_MODELS_ROOT)
+        flex_lora = h3_flex.resolve_flex_for_model_ng(H3_MODELS_ROOT, config.model)
+        if not flex_lora and config.model == "h3ref":
+            raise FileNotFoundError(
+                "the Pika H3 Flex Ref2VA adapter is not built -- run scripts/build_pika_ref2va_adapter.py "
+                f"(it is looked for in {H3_MODELS_ROOT / h3_flex.FLEX_DIRNAME}, ~/models/h3-ref2va/pika-flex-ref2va/ "
+                f"or ${h3_flex.FLEX_REF2VA_ENV})")
         if not flex_lora:
             raise FileNotFoundError(
                 f"the Pika H3 Flex adapter is not at {H3_MODELS_ROOT / h3_flex.FLEX_DIRNAME / h3_flex.FLEX_FILE} -- "

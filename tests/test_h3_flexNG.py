@@ -29,7 +29,10 @@ class _FlexBase(_Base):
         self.runner.write_text(FLEX_RUNNER)
         self.flex_file = self.tmp / "pika.safetensors"
         self.flex_file.write_bytes(b"x")
-        for target, name, val in ((flexmod, "resolve_flex_ng", lambda root: str(self.flex_file)),):
+        self.flex_ref2va_file = self.tmp / "pika_ref2va.safetensors"
+        self.flex_ref2va_file.write_bytes(b"x")
+        for target, name, val in ((flexmod, "resolve_flex_ng", lambda root: str(self.flex_file)),
+                                  (flexmod, "resolve_flex_ref2va_ng", lambda root: str(self.flex_ref2va_file))):
             p = mock.patch.object(target, name, val)
             p.start()
             self.addCleanup(p.stop)
@@ -65,7 +68,16 @@ class CommandTests(_FlexBase):
         for kw in ({"tristep": True}, {"turbo": True}, {"v13": True}, {"refmods": [self._item()]}):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
                 self._cmd(model="h3q8", flex=True, **kw)
-        with self.assertRaises(ValueError):
+
+    def test_the_ref2va_model_takes_the_ref2va_adapter_never_the_fl2va_one(self):
+        cmd = self._cmd(model="h3ref", flex=True)
+        self.assertIn("--pika-flex", cmd)
+        self.assertEqual(self._value(cmd, "--lora"), f"{self.flex_ref2va_file}:1.0")
+        self.assertNotIn(str(self.flex_file), cmd)
+
+    def test_the_ref2va_model_without_its_adapter_is_refused_even_if_the_fl2va_one_exists(self):
+        with mock.patch.object(flexmod, "resolve_flex_ref2va_ng", return_value=None), \
+                self.assertRaises(FileNotFoundError):
             self._cmd(model="h3ref", flex=True)
 
     def test_refused_without_the_adapter_or_a_runner_that_has_the_flag(self):
@@ -127,7 +139,7 @@ class JobTests(_FlexBase):
         self.assertIn('"flex": true', saved)
 
     def test_bad_combinations_fail_the_post_synchronously(self):
-        for kw in ({"tristep": True}, {"model": "h3ref"}, {"refmods": [{"name": "a", **self._item()}]}):
+        for kw in ({"tristep": True}, {"refmods": [{"name": "a", **self._item()}]}):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
                 self._start(**kw)
         with mock.patch.object(flexmod, "resolve_flex_ng", return_value=None), self.assertRaises(FileNotFoundError):
@@ -149,6 +161,23 @@ class RouteTests(_Base):
                 r = self.client.post("/api/ng/h3/generate", data={"prompt": "p", **data})
             self.assertEqual(r.status_code, 202)
             self.assertEqual(start.call_args.kwargs["flex"], expected)
+
+
+class Ref2vaAdapterResolve(unittest.TestCase):
+    def test_only_the_exact_size_counts_and_the_env_override_wins(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(flexmod.Path, "home", return_value=Path(d) / "home"):
+            root = Path(d) / "models"
+            (root / flexmod.FLEX_DIRNAME).mkdir(parents=True)
+            wrong = root / flexmod.FLEX_DIRNAME / flexmod.FLEX_REF2VA_FILE
+            wrong.write_bytes(b"x")
+            self.assertIsNone(flexmod.resolve_flex_ref2va_ng(root))
+            with wrong.open("r+b") as fh:
+                fh.truncate(flexmod.FLEX_REF2VA_BYTES)
+            self.assertEqual(flexmod.resolve_flex_ref2va_ng(root), str(wrong))
+            self.assertEqual(flexmod.resolve_flex_for_model_ng(root, "h3ref"), str(wrong))
+            self.assertIsNone(flexmod.resolve_flex_for_model_ng(root, "h3q8"))  # the FL2VA adapter is not there
 
 
 if __name__ == "__main__":

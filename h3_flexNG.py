@@ -16,11 +16,16 @@ Derivative (MiniMax H3 Community License, shown beside the file); Pika's code is
 from pathlib import Path
 from typing import Optional
 
+import os
+
 import h3_loraNG as h3_lora
 
 FLEX_DIRNAME = "pika-h3-flex"
 FLEX_FILE = "pika_h3_flex_fl2va_phosphene.safetensors"
 FLEX_BYTES = 1956166104
+FLEX_REF2VA_FILE = "pika_h3_flex_ref2va_phosphene.safetensors"
+FLEX_REF2VA_BYTES = 1956166152  # scripts/build_pika_ref2va_adapter.py's result (the FL2VA one plus 48 bytes of notice text)
+FLEX_REF2VA_ENV = "RINGVIZ_H3_FLEX_REF2VA"
 FLEX_STEPS = 7  # knots including the terminal 0: six forwards
 FLEX_FLAG = "--pika-flex"
 FLEX_CREDIT = ("Pika H3 Flex by Pika Labs (Mellis, Inc.), running on Apple Silicon (MLX) through "
@@ -36,6 +41,29 @@ def resolve_flex_ng(models_root) -> Optional[str]:
         return None
 
 
+def resolve_flex_ref2va_ng(models_root) -> Optional[str]:
+    """The Ref2VA adapter (scripts/build_pika_ref2va_adapter.py) at its exact size, or None: the env override, then
+    the H3 models folder's pika-h3-flex/, then ~/models/h3-ref2va/pika-flex-ref2va/."""
+    paths = []
+    if os.environ.get(FLEX_REF2VA_ENV):
+        paths.append(Path(os.environ[FLEX_REF2VA_ENV]).expanduser())
+    paths.append(Path(models_root) / FLEX_DIRNAME / FLEX_REF2VA_FILE)
+    paths.append(Path.home() / "models" / "h3-ref2va" / "pika-flex-ref2va" / FLEX_REF2VA_FILE)
+    for path in paths:
+        try:
+            if path.is_file() and path.stat().st_size == FLEX_REF2VA_BYTES:
+                return str(path)
+        except OSError:
+            continue
+    return None
+
+
+def resolve_flex_for_model_ng(models_root, model) -> Optional[str]:
+    """The adapter that fits `model`'s trunk: Ref2VA's for "h3ref", FL2VA's for the others. The two are not
+    interchangeable (Pika trained each on its own trunk)."""
+    return resolve_flex_ref2va_ng(models_root) if model == "h3ref" else resolve_flex_ng(models_root)
+
+
 def runner_supports_flex_ng(runner) -> bool:
     return h3_lora.runner_has_flag_ng(runner, FLEX_FLAG)
 
@@ -49,6 +77,6 @@ def check_flex_ng(*, turbo, v13, tristep, refmods, references, model) -> None:
     """Refuse what Flex cannot do, before anything is queued."""
     if turbo or v13 or tristep:
         raise ValueError("Flex is its own speed option -- not with turbo, Faster Best or Fast")
-    if refmods or references or model == "h3ref":
-        raise ValueError("Flex has no RefMod or reference-picture mode (Pika's reference adapter needs "
-                         "a different base) -- use Fast for those")
+    if (refmods or references) and model != "h3ref":
+        raise ValueError("Flex takes RefMods and reference pictures only on the Ref2VA model (H3 Ref2VA Q8) -- "
+                         "pick that model, or use Fast")
