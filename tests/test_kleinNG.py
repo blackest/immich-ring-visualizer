@@ -23,6 +23,36 @@ PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08
        b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02\xfe\xa7\x9a\xa0\xa0\x00\x00\x00\x00IEND\xaeB`\x82")
 
 
+class WorkerOptions(unittest.TestCase):
+    base = {"model": "/m", "variant": "distilled", "prompt": "p", "width": 1024, "height": 576, "refs": []}
+
+    def test_steps_override_and_default_low_ram(self):
+        a = worker.cli_args({**self.base, "steps": 8}, 1, Path("o.png"))
+        self.assertEqual(a[a.index("--steps") + 1], "8")
+        self.assertIn("--low-ram", a)
+
+    def test_match_ref_drops_the_size_only_with_references(self):
+        edit = worker.cli_args({**self.base, "refs": ["a.png"], "match_ref": True}, 1, Path("o.png"))
+        self.assertNotIn("--width", edit)
+        text = worker.cli_args({**self.base, "match_ref": True}, 1, Path("o.png"))
+        self.assertIn("--width", text)
+
+    def test_faster_mode_uses_tiles_not_low_ram(self):
+        a = worker.cli_args({**self.base, "low_ram": False, "vae_tile": 256}, 1, Path("o.png"))
+        self.assertNotIn("--low-ram", a)
+        self.assertEqual(a[a.index("--vae-tile-size") + 1], "256")
+
+    def test_guidance_applies_to_base_only(self):
+        a = worker.cli_args({**self.base, "variant": "base", "guidance": 5.0}, 1, Path("o.png"))
+        self.assertEqual(a[a.index("--guidance") + 1], "5.0")
+        self.assertNotIn("--guidance", worker.cli_args({**self.base, "guidance": 5.0}, 1, Path("o.png")))
+
+    def test_bad_settings_are_refused(self):
+        for bad in ({"steps": 0}, {"steps": 500}, {"nope": 1}, {"low_ram": False, "vae_tile": 100}):
+            with self.assertRaises(ValueError):
+                engine.validate_options_ng(bad, "distilled", [])
+
+
 class WorkerArgs(unittest.TestCase):
     base = {"model": "/m", "variant": "distilled", "prompt": "p", "width": 1024, "height": 576, "refs": []}
 
@@ -90,8 +120,9 @@ class Routes(unittest.TestCase):
         self.calls = []
 
         def fake(prompt, n, width, height, output_dir, seed, refs=(), model="", on_log=None, should_stop=None,
-                 on_result=None):
-            self.calls.append({"prompt": prompt, "n": n, "refs": [Path(r).name for r in refs], "seed": seed})
+                 on_result=None, options=None):
+            self.calls.append({"prompt": prompt, "n": n, "refs": [Path(r).name for r in refs], "seed": seed,
+                               "options": options})
             os.makedirs(output_dir, exist_ok=True)
             for i in range(n):
                 path = Path(output_dir) / f"klein_{seed + i}.png"
@@ -129,6 +160,18 @@ class Routes(unittest.TestCase):
         self.assertEqual(self.calls[-1]["refs"], [])
         img = self.client.get(f"/api/ng/klein/image/{body['id']}/{body['results'][0]['file']}")
         self.assertEqual(img.status_code, 200)
+
+    def test_advanced_settings_reach_the_engine_and_the_job(self):
+        r = self.post(prompt="a kitchen", n="1", width="768", height="432", steps="8", low_ram="0", vae_tile="256")
+        self.assertEqual(r.status_code, 200)
+        body = self.wait(r.get_json()["jobId"])
+        self.assertEqual(self.calls[-1]["options"], {"steps": 8, "low_ram": False, "vae_tile": 256})
+        self.assertEqual(body["options"], {"steps": 8, "low_ram": False, "vae_tile": 256})
+
+    def test_match_ref_is_ignored_without_references_and_bad_settings_are_a_400(self):
+        r = self.post(prompt="x", n="1", width="768", height="432", match_ref="1")
+        self.assertEqual(self.wait(r.get_json()["jobId"])["options"], {})
+        self.assertEqual(self.post(prompt="x", n="1", steps="500").status_code, 400)
 
     def test_slots_keep_their_order_and_skip_empty_ones(self):
         r = self.post(prompt="x", n="1", ref0=(io.BytesIO(PNG), "a.png"), ref2=(io.BytesIO(PNG), "c.jpg"))

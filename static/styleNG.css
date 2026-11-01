@@ -3627,6 +3627,8 @@ textarea.ng-gen-input.ng-textarea-expanded {
   margin: 12px 0 4px;
 }
 .ng-klein-field { display: flex; flex-direction: column; gap: 4px; }
+.ng-klein-lora { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.ng-klein-loras, .ng-klein-adv > .ng-gen-label { margin-top: 8px; }
 .ng-klein-job {
   border: 1px solid var(--ng-border);
   border-radius: 8px;
