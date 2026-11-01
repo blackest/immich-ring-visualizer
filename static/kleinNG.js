@@ -316,7 +316,7 @@
 
   function generate() {
     var form = new FormData();
-    form.append("prompt", els.prompt.value);
+    form.append("prompt", els.layout ? els.layout.apply(els.prompt.value) : els.prompt.value);
     var wh = els.size.value.split("x");
     form.append("width", wh[0]); form.append("height", wh[1]);
     form.append("n", els.count.value);
@@ -464,12 +464,16 @@
       els.prompt.focus();
     });
     root.appendChild(els.insert);
+    var layoutHost = el("div");
+    root.appendChild(layoutHost);
+    els.layout = window.KleinLayoutNG ? window.KleinLayoutNG.build(layoutHost, function () { return els.size.value.split("x").map(Number); }) : null;
 
     var opts = el("div", "ng-klein-opts");
     var field = function (label, node) { var w = el("label", "ng-klein-field"); w.appendChild(el("span", "ng-gen-status", label)); w.appendChild(node); opts.appendChild(w); };
     els.size = el("select", "ng-gen-input");
     SIZES.forEach(function (s) { var o = el("option", "", s[0].replace("x", " × ") + " · " + s[1]); o.value = s[0]; els.size.appendChild(o); });
     field("Size", els.size);
+    els.size.addEventListener("change", function () { if (els.layout) els.layout.refresh(); });
     els.count = el("select", "ng-gen-input");
     VARIATIONS.forEach(function (n) { var o = el("option", "", n + (n === 1 ? " picture" : " variations")); o.value = n; els.count.appendChild(o); });
     els.count.value = "4";
