@@ -30,6 +30,15 @@ _QUEUE: "queue.Queue" = queue.Queue()
 _WORKER = None
 
 
+def running_ng() -> bool:
+    """A Klein picture is on the GPU right now (H3 waits for this)."""
+    with _LOCK:
+        return any(j["status"] == "running" for j in _JOBS.values())
+
+
+h3_jobsNG.add_gpu_guard_ng(running_ng)
+
+
 def _save(job: dict) -> None:
     path = Path(KLEIN_DIR) / job["id"] / "job.json"
     tmp = path.with_suffix(".tmp")

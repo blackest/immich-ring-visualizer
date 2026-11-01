@@ -109,12 +109,29 @@ def _prune_old_jobs_locked() -> None:
         shutil.rmtree(oldest.job_dir, ignore_errors=True)
 
 
+# Other GPU users (the Klein picture queue) register a "am I running?" check here, so a video render
+# waits for them the way they wait for it. Registered by the other module, so there is no import loop.
+_GPU_GUARDS: list = []
+
+
+def add_gpu_guard_ng(is_busy: Callable[[], bool]) -> None:
+    if is_busy not in _GPU_GUARDS:
+        _GPU_GUARDS.append(is_busy)
+
+
+def _wait_for_other_gpu_work_ng(job) -> None:
+    """Hold a queued job back while another queue is on the GPU. A cancel ends the wait."""
+    while not job.cancelled and any(g() for g in _GPU_GUARDS):
+        time.sleep(2)
+
+
 def _worker_loop() -> None:
     while True:
         job_id = _QUEUE.get()
         job = _JOBS.get(job_id)
         if job is None:
             continue
+        _wait_for_other_gpu_work_ng(job)
         if job.cancelled:
             job.finished_at = time.time()
             job.error = "cancelled before it started rendering"
