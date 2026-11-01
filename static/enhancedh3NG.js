@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "speed", "render", "stop", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
+      "quality", "speed", "render", "stop", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -48,16 +48,39 @@
   }
 
   var flexOk = { plain: true, ref: true };
+  var refmodUi = null;           // static/h3RefmodsNG.js, driven by the checkbox below it
+  var refmodModel = { value: "" }; // that module asks "is the Ref2VA model picked?"; here the checkbox answers
+
+  function refmodOn() { return !!(els["refmod-on"] && els["refmod-on"].checked); }
+
+  // Flex cannot be used with a RefMod, and needs its adapter file: keep the dropdown honest.
+  function syncSpeedChoices() {
+    var opt = els.speed.querySelector('option[value="flex"]');
+    var available = flexOk.plain || flexOk.ref;
+    opt.disabled = !available || refmodOn();
+    opt.title = !available ? "The Pika H3 Flex adapter is not built here, or the runner is too old. See the H3 view."
+      : refmodOn() ? "Flex does not combine with a RefMod" : "";
+    if (opt.disabled && els.speed.value === "flex") els.speed.value = "fast";
+  }
+
+  function onRefmodToggle() {
+    var on = refmodOn();
+    refmodModel.value = on ? "h3ref" : "";
+    els["refmod-block"].hidden = !on;
+    syncSpeedChoices();
+    if (!on) { refmodUi.sync(); return; }
+    refmodUi.ensureLoaded().then(function () {
+      if (refmodOn() && !els["refmod-rows"].children.length && refmodUi.hasRoom()) refmodUi.addRow();
+      refmodUi.sync();
+    });
+  }
 
   // Flex needs Pika's adapter file and a runner that has it; with references it needs the Ref2VA one.
   function loadFlex() {
     fetch("/api/ng/h3/status").then(function (r) { return r.json(); }).then(function (h) {
       flexOk.plain = !!(h.flex_ok && h.flex_supported);
       flexOk.ref = !!(h.flex_ref2va_ok && h.flex_supported);
-      var opt = els.speed.querySelector('option[value="flex"]');
-      opt.disabled = !flexOk.plain && !flexOk.ref;
-      opt.title = opt.disabled ? "The Pika H3 Flex adapter is not built here, or the runner is too old. See the H3 view." : "";
-      if (opt.disabled && els.speed.value === "flex") els.speed.value = "fast";
+      syncSpeedChoices();
     }).catch(function () {});
   }
 
@@ -440,6 +463,18 @@
       setRender(refs.length ? "Flex with reference pictures needs the Ref2VA Flex adapter, which is not built here. Pick Fast." : "Flex is not available here. Pick Fast or Full.");
       return;
     }
+    var refmods = refmodOn() && refmodUi ? refmodUi.selected() : [];
+    if (refmodOn() && !refmods.length) { setRender("Pick a RefMod, or untick \"Use a RefMod\"."); return; }
+    if (refmods.length) {
+      var why = extendFrom ? "A RefMod cannot be used to extend a clip."
+        : prompts.length > 1 ? "A RefMod renders one 5 s window, but this brief has " + prompts.length + ". Make the clip shorter (5 s or less)."
+        : (first || last || items.image.some(function (it) { return it.at; })) ? "A RefMod cannot be mixed with a first, last or timed frame picture. Change those pictures' role or remove them."
+        : refs.length ? "A RefMod cannot be mixed with reference pictures from the tray. Remove them, or untick \"Use a RefMod\"."
+        : "";
+      if (why) { setRender(why); return; }
+      form.append("refmods", JSON.stringify(refmods));
+      form.append("model", "h3ref");
+    }
     if (refs.length) {
       if (first || last || items.image.some(function (it) { return it.at; })) {
         setRender("References cannot be mixed with a first, last or timed frame picture. Change the role of those pictures (the portrait to be swapped in should be a subject), or remove them.");
@@ -596,6 +631,14 @@
     restoreFields();
     restoreBrief();
     els.stop.addEventListener("click", stopRender);
+    if (window.H3RefmodsNG) {
+      refmodUi = window.H3RefmodsNG({ api: "/api/ng/h3", els: { model: refmodModel, refmodsBlock: els["refmod-block"],
+        refmodsNote: els["refmod-note"], refmodsRows: els["refmod-rows"], refmodAdd: els["refmod-add"] } });
+      els["refmod-on"].addEventListener("change", onRefmodToggle);
+      els["refmod-add"].addEventListener("click", function () { if (refmodUi.hasRoom()) refmodUi.addRow(); });
+    } else {
+      els["refmod-on"].disabled = true;
+    }
     els.main.addEventListener("input", saveSoon);
     els.main.addEventListener("change", saveSoon);
     if (saved && saved.job) {

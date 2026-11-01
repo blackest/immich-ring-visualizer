@@ -164,10 +164,12 @@
       return out;
     }
 
+    var loading = null;
+    // Returns a promise that settles once the library list is in (or failed), so a caller can add a row.
     function ensureRefmodsLoaded() {
-      if (refLib.loaded) return;
+      if (loading) return loading;
       refLib.loaded = true;
-      fetch(API + "/refmods")
+      loading = fetch(API + "/refmods")
         .then(function (r) { return r.json(); })
         .then(function (payload) {
           refLib.refmods = (payload && payload.refmods) || [];
@@ -179,13 +181,15 @@
         })
         .catch(function () {
           refLib.loaded = false; // let a later sync retry
+          loading = null;
         });
+      return loading;
     }
 
     return {
       on: refmodsOn, sync: syncRefmodControls, addRow: addRefmodRow, selected: selectedRefmods,
       ensureLoaded: ensureRefmodsLoaded,
-      reload: function () { refLib.loaded = false; ensureRefmodsLoaded(); },
+      reload: function () { refLib.loaded = false; loading = null; ensureRefmodsLoaded(); },
       hasRoom: function () { return els.refmodsRows.children.length < refLib.maxVideos; }
     };
   };
