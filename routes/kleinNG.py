@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request, send_file
 import klein_engineNG
 import klein_lorasNG
 import klein_outpaintNG
+import klein_promptNG
 import klein_jobsNG as jobs
 from configNG import KLEIN_DIR
 
@@ -138,6 +139,26 @@ def klein_outpaint_ng():
         shutil.rmtree(folder.parent, ignore_errors=True)
         return jsonify({"error": str(exc)}), 503
     return jsonify({"jobId": job["id"], "job": _public(job), "plan": plan | {"offset": list(plan["offset"])}})
+
+
+@kleinNG_bp.route("/api/ng/klein/improve", methods=["GET"])
+def improve_info_ng():
+    """The default system prompt, so the UI can show it for editing."""
+    return jsonify({"system": klein_promptNG.DEFAULT_SYSTEM})
+
+
+@kleinNG_bp.route("/api/ng/klein/improve", methods=["POST"])
+def improve_ng():
+    """JSON {prompt, model, system?} -> {prompt}: the caption rewritten. Not queued; one Ollama call."""
+    body = request.get_json(silent=True) or {}
+    try:
+        text = klein_promptNG.improve_prompt_ng(str(body.get("prompt") or ""), str(body.get("model") or ""),
+                                                str(body.get("system") or "") or None)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
+    return jsonify({"prompt": text})
 
 
 @kleinNG_bp.route("/api/ng/klein/status/<job_id>")

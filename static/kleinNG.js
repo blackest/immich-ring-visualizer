@@ -438,6 +438,54 @@
   }
 
   // ---- build ----------------------------------------------------------------------------------
+  // ---- improve prompt: a local Ollama model rewrites the prompt; the user accepts or discards ------
+  function buildImprove(root) {
+    var box = el("div", "ng-klein-improve");
+    var row = el("div", "ng-klein-pic-btns");
+    els.improveModel = el("select", "ng-gen-input"); els.improveModel.style.maxWidth = "16em";
+    els.improveBtn = button("Improve prompt", improvePrompt, "A local model writes a fuller description from your words. You review it before it is used");
+    row.appendChild(els.improveBtn); row.appendChild(els.improveModel);
+    box.appendChild(row);
+    var det = el("details", "ng-klein-adv");
+    det.appendChild(el("summary", "ng-gen-status", "How the rewrite is instructed"));
+    els.improveSystem = el("textarea", "ng-gen-pose-modal-textarea"); els.improveSystem.rows = 8;
+    det.appendChild(els.improveSystem);
+    box.appendChild(det);
+    els.improveStatus = el("div", "ng-gen-status"); box.appendChild(els.improveStatus);
+    els.improveOut = el("textarea", "ng-gen-pose-modal-textarea"); els.improveOut.rows = 5; els.improveOut.style.display = "none";
+    box.appendChild(els.improveOut);
+    els.improveAct = el("div", "ng-klein-pic-btns"); els.improveAct.style.display = "none";
+    els.improveAct.appendChild(button("Use this", function () {
+      els.prompt.value = els.improveOut.value; hideImprove(); els.prompt.focus();
+    }));
+    els.improveAct.appendChild(button("Discard", hideImprove));
+    box.appendChild(els.improveAct);
+    root.appendChild(box);
+    fetch(API + "improve").then(function (r) { return r.json(); }).then(function (b) { els.improveSystem.value = b.system || ""; }).catch(function () {});
+    fetch("/api/ng/chat/models").then(function (r) { return r.json(); }).then(function (b) {
+      var loaded = b.loaded || [];
+      (b.models || []).forEach(function (m) { var o = el("option", "", m.name); o.value = m.name; els.improveModel.appendChild(o); });
+      if (loaded.length) els.improveModel.value = loaded[0];
+      if (!els.improveModel.options.length) els.improveStatus.textContent = "No local model found. Is Ollama running?";
+    }).catch(function () { els.improveStatus.textContent = "Could not reach Ollama."; });
+  }
+
+  function hideImprove() { els.improveOut.style.display = "none"; els.improveAct.style.display = "none"; }
+
+  function improvePrompt() {
+    els.improveBtn.disabled = true; hideImprove();
+    els.improveStatus.textContent = "Rewriting...";
+    fetch(API + "improve", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: els.prompt.value, model: els.improveModel.value, system: els.improveSystem.value }) })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (r) {
+        els.improveBtn.disabled = false;
+        if (!r.ok) { els.improveStatus.textContent = r.body.error || "Could not rewrite."; return; }
+        els.improveStatus.textContent = "Edit it if you like, then use it.";
+        els.improveOut.value = r.body.prompt; els.improveOut.style.display = ""; els.improveAct.style.display = "";
+      }).catch(function (e) { els.improveBtn.disabled = false; els.improveStatus.textContent = e.message; });
+  }
+
   function build() {
     var host = document.getElementById("ng-klein-compose");
     var modes = el("div", "ng-klein-pic-btns");
@@ -464,6 +512,7 @@
       els.prompt.focus();
     });
     root.appendChild(els.insert);
+    buildImprove(root);
     var layoutHost = el("div");
     root.appendChild(layoutHost);
     els.layout = window.KleinLayoutNG ? window.KleinLayoutNG.build(layoutHost, function () { return els.size.value.split("x").map(Number); }) : null;
