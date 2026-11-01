@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "fast", "render", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
+      "quality", "speed", "render", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -47,7 +47,22 @@
     sel.value = keep || pick || "";
   }
 
+  var flexOk = { plain: true, ref: true };
+
+  // Flex needs Pika's adapter file and a runner that has it; with references it needs the Ref2VA one.
+  function loadFlex() {
+    fetch("/api/ng/h3/status").then(function (r) { return r.json(); }).then(function (h) {
+      flexOk.plain = !!(h.flex_ok && h.flex_supported);
+      flexOk.ref = !!(h.flex_ref2va_ok && h.flex_supported);
+      var opt = els.speed.querySelector('option[value="flex"]');
+      opt.disabled = !flexOk.plain && !flexOk.ref;
+      opt.title = opt.disabled ? "The Pika H3 Flex adapter is not built here, or the runner is too old. See the H3 view." : "";
+      if (opt.disabled && els.speed.value === "flex") els.speed.value = "fast";
+    }).catch(function () {});
+  }
+
   function loadOptions() {
+    loadFlex();
     fetch(API + "/status").then(function (r) { return r.json(); }).then(function (s) {
       els.status.textContent = !s.ok ? s.error || "Compiler not running."
         : s.llm ? "Compiler ready (" + s.profile + ")." : "Compiler is up but can't reach its language model.";
@@ -84,7 +99,7 @@
   }
 
   function saveNow() {
-    var state = { fields: {}, silent: els.silent.checked, cont: els.cont.checked, improv: els.improv.checked, fast: els.fast.checked,
+    var state = { fields: {}, silent: els.silent.checked, cont: els.cont.checked, improv: els.improv.checked, speed: els.speed.value,
       brief: lastBrief, needsFirstFrame: briefNeedsFirstFrame, job: renderJob,
       lastDone: lastDone, extendFrom: extendFrom };
     FIELDS.forEach(function (k) { state.fields[k] = els[k].value; });
@@ -108,7 +123,9 @@
     els.silent.checked = !!saved.silent;
     if (saved.cont !== undefined) els.cont.checked = !!saved.cont;
     if (saved.improv !== undefined) els.improv.checked = !!saved.improv;
-    if (saved.fast !== undefined) els.fast.checked = !!saved.fast;
+    // older saves had a Fast checkbox: ticked was Fast, unticked was the full 16 steps
+    var sp = saved.speed || (saved.fast === undefined ? null : saved.fast ? "fast" : "full");
+    if (sp) els.speed.value = sp;
   }
 
   function restoreBrief() {
@@ -402,7 +419,8 @@
     if (prompts.length > 1) form.append("chain_prompts", JSON.stringify(prompts));
     else form.append("prompt", prompts[0]);
     form.append("quality", els.quality.value);
-    if (els.fast.checked) form.append("tristep", "true");
+    if (els.speed.value === "fast") form.append("tristep", "true");
+    else if (els.speed.value === "flex") form.append("flex", "true");
     if (els.seed.value) form.append("seed", els.seed.value);
     var first = extendFrom ? null : items.image.filter(function (it) { return it.role === "frame_anchor_first"; })[0];
     if (!first && briefNeedsFirstFrame) {
@@ -418,6 +436,10 @@
     });
 
     var refs = extendFrom ? [] : referenceItems();
+    if (els.speed.value === "flex" && !(refs.length ? flexOk.ref : flexOk.plain)) {
+      setRender(refs.length ? "Flex with reference pictures needs the Ref2VA Flex adapter, which is not built here. Pick Fast." : "Flex is not available here. Pick Fast or Full.");
+      return;
+    }
     if (refs.length) {
       if (first || last || items.image.some(function (it) { return it.at; })) {
         setRender("References cannot be mixed with a first, last or timed frame picture. Change the role of those pictures (the portrait to be swapped in should be a subject), or remove them.");
