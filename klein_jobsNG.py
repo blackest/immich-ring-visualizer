@@ -10,6 +10,7 @@ the HTTP side.
 import json
 import os
 import queue
+import shutil
 import random
 import threading
 import time
@@ -22,7 +23,8 @@ import klein_outpaintNG as outpaint
 from character_sheetNG import _SHEET_LOCK_NG
 from configNG import KLEIN_DIR
 
-SLOT_NAMES = ("subject", "location", "extra")
+# Phosphene's three named slots first, then plain numbered ones; Klein takes up to ten references.
+SLOT_NAMES = ("subject", "location", "extra") + tuple(f"ref{n}" for n in range(4, engine.MAX_REFS + 1))
 _JOBS: dict = {}
 _ORDER: list = []
 _LOCK = threading.Lock()
@@ -143,16 +145,35 @@ def get_ng(job_id: str):
     return job
 
 
-def recent_ng(limit: int = 30) -> list:
-    """Newest first, from disk (so a restart keeps the gallery)."""
+def recent_ng(limit: int = 30, query: str = "", with_total: bool = False):
+    """Newest first, from disk (so a restart keeps the gallery). `query` keeps jobs whose prompt, model or
+    settings text contains it (case-insensitive); with_total also returns how many matched in all."""
     root = Path(KLEIN_DIR)
     found = []
     for path in root.glob("*/job.json") if root.is_dir() else []:
         job = get_ng(path.parent.name)
         if job is not None:
             found.append(job)
+    q = (query or "").strip().lower()
+    if q:
+        found = [j for j in found if q in json.dumps([j["prompt"], j["model"], j.get("options"), j["id"]]).lower()]
     found.sort(key=lambda j: j["created_at"], reverse=True)
-    return found[:limit]
+    return (found[:limit], len(found)) if with_total else found[:limit]
+
+
+def delete_ng(job_id: str) -> str:
+    """'deleted', 'missing' or 'active' (queued/running jobs are not deleted)."""
+    job = get_ng(job_id)
+    if job is None or "/" in job_id or ".." in job_id:
+        return "missing"
+    if job["status"] in ("queued", "running", "waiting"):
+        return "active"
+    with _LOCK:
+        _JOBS.pop(job_id, None)
+        if job_id in _ORDER:
+            _ORDER.remove(job_id)
+    shutil.rmtree(Path(KLEIN_DIR) / job_id, ignore_errors=True)
+    return "deleted"
 
 
 def cancel_ng(job_id: str) -> bool:

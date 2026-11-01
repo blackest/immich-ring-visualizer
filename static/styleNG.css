@@ -3635,6 +3635,10 @@ textarea.ng-gen-input.ng-textarea-expanded {
 .ng-klein-layout-draft { border-style: dashed; }
 .ng-klein-layout-list .ng-gen-btn { width: auto; margin: 0; flex: none; }
 .ng-klein-layout-list .ng-gen-input { width: auto; min-width: 0; }
+.ng-klein-settings { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 6px 0; font-size: 0.7857rem; }
+.ng-klein-promptbox { white-space: pre-wrap; font-size: 0.7857rem; max-height: 9em; overflow: auto; margin: 2px 0 6px; }
+.ng-klein-refthumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.ng-klein-refthumbs img { height: 56px; width: auto; border-radius: 3px; }
 .ng-klein-job {
   border: 1px solid var(--ng-border);
   border-radius: 8px;

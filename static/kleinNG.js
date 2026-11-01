@@ -16,6 +16,8 @@
     { key: "location", label: "Location", hint: "where" },
     { key: "extra", label: "Extra", hint: "a prop, a style, a pose" },
   ];
+  for (var n = 4; n <= 10; n++) SLOTS.push({ key: "ref" + n, label: "Reference " + n, hint: "anything else to include", more: true });
+  var shown = 3; // how many slots are on screen: the named three, plus any added or filled
   var SIZES = [["1024x576", "16:9 wide"], ["1024x1024", "square"], ["1024x768", "4:3"], ["768x1024", "portrait 3:4"],
     ["576x1024", "tall 9:16"], ["768x432", "16:9 small (fast)"]];
   var VARIATIONS = [1, 2, 4, 6, 8, 10];
@@ -25,6 +27,7 @@
   var slots = SLOTS.map(function () { return { file: null, from: null, url: null }; });
   var pollTimer = null;
   var loraList = [];
+  var histLimit = 30, histQuery = "", searchTimer = null;
   var out = { file: null, from: null, url: null, img: null };
 
   function el(tag, cls, text) {
@@ -58,7 +61,9 @@
 
   function drawSlots() {
     els.slots.textContent = "";
+    slots.forEach(function (x, k) { if (x.url && k + 1 > shown) shown = k + 1; });
     SLOTS.forEach(function (def, i) {
+      if (i >= shown) return;
       var s = slots[i];
       var box = el("div", "ng-klein-slot");
       box.appendChild(el("div", "ng-gen-label", def.label + " "));
@@ -90,6 +95,10 @@
       if (s.url) box.appendChild(button("Clear", function () { setSlot(i, null); }));
       els.slots.appendChild(box);
     });
+    if (shown < SLOTS.length) {
+      els.slots.appendChild(button("+ Add another reference (" + shown + " of " + SLOTS.length + " shown)", function () { shown++; drawSlots(); },
+        "Klein takes up to ten reference pictures"));
+    }
   }
 
   // The pictures named in order, skipping empty slots: the numbers the prompt wording uses.
@@ -104,6 +113,9 @@
     if (f.indexOf("subject") >= 0) part.push("the person from " + n("subject"));
     if (f.indexOf("location") >= 0) part.push((part.length ? "in" : "the place from") + " the location from " + n("location"));
     if (f.indexOf("extra") >= 0) part.push((part.length ? "with" : "using") + " the " + "style, prop or pose from " + n("extra"));
+    SLOTS.forEach(function (d) {
+      if (d.more && f.indexOf(d.key) >= 0) part.push((part.length ? "with" : "using") + " the picture from " + n(d.key));
+    });
     return part.join(", ") + ", ";
   }
 
@@ -357,18 +369,56 @@
     });
   }
 
+  // What made this picture: every setting the job recorded, so a good one can be remade or varied.
+  function settingsPanel(job, r) {
+    var o = job.options || {}, det = el("details", "ng-klein-adv");
+    det.appendChild(el("summary", "ng-gen-status", "Settings"));
+    var rows = [
+      ["Seed", r.seed], ["Size", r.width + " × " + r.height], ["Model", job.model],
+      ["Steps", o.steps || "default"], ["Guidance", job.model.indexOf("base-") === 0 ? (o.guidance || "3.5 (default)") : "not used"],
+      ["Memory", o.low_ram === false ? "faster, tile " + (o.vae_tile || "default") : "low"],
+      ["Sized like the first reference", o.match_ref ? "yes" : "no"],
+      ["LoRAs", (o.loras || []).map(function (l) { return l.name + " at " + l.scale; }).join(", ") || "none"],
+      ["Made in", r.seconds + " s"],
+    ];
+    if (job.outpaint) rows.push(["Outpaint", "pads " + ["left", "top", "right", "bottom"].map(function (k) { return k + " " + (job.outpaint[k] || 0); }).join(", ")]);
+    var table = el("div", "ng-klein-settings");
+    rows.forEach(function (x) { table.appendChild(el("span", "ng-gen-status", x[0])); table.appendChild(el("span", "", String(x[1]))); });
+    det.appendChild(table);
+    det.appendChild(el("div", "ng-gen-status", "Prompt"));
+    det.appendChild(el("div", "ng-klein-promptbox", job.prompt));
+    if ((job.ref_files || []).length) {
+      det.appendChild(el("div", "ng-gen-status", "References used"));
+      var refs = el("div", "ng-klein-refthumbs");
+      job.ref_files.forEach(function (f, i) {
+        var img = el("img"); img.src = API + "ref/" + job.id + "/" + f; img.title = job.refs[i]; img.alt = job.refs[i];
+        refs.appendChild(img);
+      });
+      det.appendChild(refs);
+    }
+    var bar = el("div", "ng-klein-pic-btns");
+    if (!job.outpaint) bar.appendChild(button("Remake with these settings", function () { reuse(job, r.seed); },
+      "Copy the prompt, seed, model, LoRAs and references into the form"));
+    bar.appendChild(button("Copy prompt", function () { navigator.clipboard && navigator.clipboard.writeText(job.prompt); }));
+    det.appendChild(bar);
+    return det;
+  }
+
   function pictureCell(job, r) {
     var cell = el("div", "ng-klein-pic");
     var a = el("a"); a.href = imgUrl(job.id, r.file); a.target = "_blank";
     var img = el("img"); img.src = imgUrl(job.id, r.file); img.loading = "lazy"; img.alt = job.prompt;
     a.appendChild(img); cell.appendChild(a);
     cell.appendChild(el("div", "ng-gen-status", "seed " + r.seed + " · " + r.width + "x" + r.height + " · " + r.seconds + "s"));
+    cell.appendChild(settingsPanel(job, r));
     var row = el("div", "ng-klein-pic-btns");
-    SLOTS.forEach(function (def, i) {
+    SLOTS.slice(0, 3).concat([{ label: "Another", more: true }]).forEach(function (def, k) {
       row.appendChild(button("→ " + def.label, function () {
+        var i = def.more ? slots.findIndex(function (x, idx) { return idx >= 3 && !x.url; }) : k;
+        if (i < 0) { setStatus("All ten reference slots are full."); return; }
         setSlot(i, { from: job.id + "/" + r.file, url: imgUrl(job.id, r.file) });
         els.main.scrollTo({ top: 0, behavior: "smooth" });
-      }, "Use this picture as the " + def.label.toLowerCase() + " reference"));
+      }, def.more ? "Put this picture in the next free reference slot (up to ten)" : "Use this picture as the " + def.label.toLowerCase() + " reference"));
     });
     row.appendChild(button("→ Outpaint", function () {
       setOutSource({ from: job.id + "/" + r.file, url: imgUrl(job.id, r.file) });
@@ -381,20 +431,34 @@
     return cell;
   }
 
-  function reuse(job) {
+  function reuse(job, seed) {
     var o = job.options || {};
     els.prompt.value = job.prompt;
     if ([].some.call(els.size.options, function (x) { return x.value === job.width + "x" + job.height; })) els.size.value = job.width + "x" + job.height;
     if ([].some.call(els.model.options, function (x) { return x.value === job.model; })) els.model.value = job.model;
-    els.seed.value = job.seed;
+    els.seed.value = seed != null ? seed : job.seed;
     els.steps.value = o.steps || "";
     els.guidance.value = o.guidance || "";
-    els.matchRef.checked = !!o.match_ref && filledSlots().length > 0;
     els.memory.value = o.low_ram === false ? "fast" : "low";
     els.tile.value = o.vae_tile || "";
+    // references go back in the slots they came from (straight from the old job's folder on the server)
+    slots.forEach(function (x, i) { if (x.url) setSlot(i, null); });
+    var missing = 0;
+    (job.refs || []).forEach(function (name, k) {
+      var i = SLOTS.findIndex(function (d) { return d.key === name; }), f = (job.ref_files || [])[k];
+      if (i < 0 || !f) { missing++; return; }
+      setSlot(i, { from: job.id + "/refs/" + f, url: API + "ref/" + job.id + "/" + f });
+    });
+    els.matchRef.checked = !!o.match_ref && filledSlots().length > 0;
+    loraList.forEach(function (l) {
+      if (!l.row) return;
+      var used = (o.loras || []).filter(function (x) { return x.name === l.name; })[0];
+      l.row.box.checked = !!used;
+      if (used) l.row.scale.value = used.scale;
+    });
     updateAdvanced();
     els.main.scrollTo({ top: 0, behavior: "smooth" });
-    setStatus("Settings copied. Drop in references again if the job used any.");
+    setStatus("Settings copied" + (job.refs && job.refs.length ? ", references put back" : "") + (missing ? " (" + missing + " could not be)" : "") + ".");
   }
 
   function jobCard(job) {
@@ -415,17 +479,27 @@
     var bar = el("div", "ng-klein-pic-btns");
     bar.appendChild(button("Use this prompt", function () { els.prompt.value = job.prompt; els.main.scrollTo({ top: 0, behavior: "smooth" }); }));
     if (!job.outpaint) bar.appendChild(button("Reuse settings", function () { reuse(job); },
-      "Copy this job's prompt, size, seed, model and advanced settings into the form (references are not copied)"));
+      "Copy this job's prompt, size, seed, model, LoRAs and references into the form"));
     if (job.status === "running" || job.status === "queued" || job.status === "waiting") {
       bar.appendChild(button("Stop", function () { fetch(API + "cancel/" + job.id, { method: "POST" }).then(loadJobs); }));
+    }
+    if (["running", "queued", "waiting"].indexOf(job.status) < 0) {
+      var del = button("Delete", function () {
+        if (!del.dataset.sure) { del.dataset.sure = "1"; del.textContent = "Really delete? Click again"; setTimeout(function () { del.dataset.sure = ""; del.textContent = "Delete"; }, 4000); return; }
+        fetch(API + "delete/" + job.id, { method: "POST" }).then(loadJobs);
+      }, "Remove this job and its pictures from the disk");
+      bar.appendChild(del);
     }
     card.appendChild(bar);
     return card;
   }
 
   function loadJobs() {
-    fetch(API + "jobs").then(function (r) { return r.json(); }).then(function (b) {
+    fetch(API + "jobs?limit=" + histLimit + "&q=" + encodeURIComponent(histQuery)).then(function (r) { return r.json(); }).then(function (b) {
       els.gallery.textContent = "";
+      var shownN = (b.jobs || []).length;
+      els.histInfo.textContent = b.total ? "Showing " + shownN + " of " + b.total + (histQuery ? " matching" : " jobs") : (histQuery ? "Nothing matches." : "No pictures yet.");
+      els.histMore.style.display = b.total > shownN ? "" : "none";
       var running = false;
       (b.jobs || []).forEach(function (job) {
         els.gallery.appendChild(jobCard(job));
@@ -568,8 +642,19 @@
     els.log = el("div", "ng-vg-mainlog"); els.log.style.display = "none";
     host.appendChild(els.log);
     host.appendChild(el("div", "ng-gen-label", "Pictures"));
+    var hist = el("div", "ng-klein-pic-btns");
+    els.histSearch = el("input", "ng-gen-input"); els.histSearch.type = "search"; els.histSearch.placeholder = "Search prompts, models and settings";
+    els.histSearch.addEventListener("input", function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () { histQuery = els.histSearch.value; histLimit = 30; loadJobs(); }, 300);
+    });
+    els.histInfo = el("span", "ng-gen-status");
+    hist.appendChild(els.histSearch); hist.appendChild(els.histInfo);
+    host.appendChild(hist);
     els.gallery = el("div", "ng-klein-gallery");
     host.appendChild(els.gallery);
+    els.histMore = button("Show more", function () { histLimit += 30; loadJobs(); });
+    host.appendChild(els.histMore);
     drawSlots();
     updateHint();
     updateAdvanced();

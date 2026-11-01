@@ -26,7 +26,7 @@ kleinNG_bp = Blueprint("kleinNG", __name__)
 def _public(job: dict) -> dict:
     return {k: job.get(k) for k in ("id", "prompt", "n", "width", "height", "seed", "model", "status", "error",
                                     "results", "log", "created_at", "started_at", "finished_at", "options", "outpaint")} | {
-        "refs": [r["slot"] for r in job["refs"]]}
+        "refs": [r["slot"] for r in job["refs"]], "ref_files": [Path(r["path"]).name for r in job["refs"]]}
 
 
 def _options(form) -> dict:
@@ -48,11 +48,20 @@ def _options(form) -> dict:
 
 
 def _picture_path(ref: str):
-    """KLEIN_DIR/<job>/out/<file> for a "<job>/<file>" reference, or None when it is not one."""
-    job_id, _, name = ref.partition("/")
-    if not job_id or not name or "/" in name or ".." in ref or "\\" in ref:
+    """The file for a "<job>/<file>" (a picture the job made) or "<job>/refs/<file>" (a reference the
+    job was given), or None when it is not one."""
+    parts = ref.split("/")
+    if len(parts) == 2:
+        job_id, name = parts
+        folder = "out"
+    elif len(parts) == 3 and parts[1] == "refs":
+        job_id, _, name = parts
+        folder = "refs"
+    else:
         return None
-    path = Path(KLEIN_DIR) / job_id / "out" / name
+    if not job_id or not name or ".." in ref or "\\" in ref or name.startswith("."):
+        return None
+    path = Path(KLEIN_DIR) / job_id / folder / name
     return path if path.is_file() else None
 
 
@@ -77,7 +86,7 @@ def klein_generate_ng():
                 src = _picture_path(earlier)
                 if src is None:
                     raise ValueError(f"{slot}: no such earlier picture {earlier!r}")
-                dest = folder / f"{slot}.png"
+                dest = folder / f"{slot}{src.suffix.lower() or '.png'}"
                 shutil.copyfile(src, dest)
             else:
                 continue
@@ -169,12 +178,37 @@ def klein_status_ng(job_id):
 
 @kleinNG_bp.route("/api/ng/klein/jobs")
 def klein_jobs_ng():
-    return jsonify({"jobs": [_public(j) for j in jobs.recent_ng(int(request.args.get("limit", 30)))]})
+    try:
+        limit = max(1, min(int(request.args.get("limit", 30)), 500))
+    except ValueError:
+        return jsonify({"error": "limit must be a number"}), 400
+    found, total = jobs.recent_ng(limit, request.args.get("q", ""), with_total=True)
+    return jsonify({"jobs": [_public(j) for j in found], "total": total})
 
 
 @kleinNG_bp.route("/api/ng/klein/cancel/<job_id>", methods=["POST"])
 def klein_cancel_ng(job_id):
     return jsonify({"cancelled": jobs.cancel_ng(job_id)})
+
+
+@kleinNG_bp.route("/api/ng/klein/ref/<job_id>/<name>")
+def klein_ref_ng(job_id, name):
+    """A reference picture a job was given, so 'Reuse' can put it back in its slot."""
+    path = _picture_path(f"{job_id}/refs/{name}")
+    if path is None:
+        return jsonify({"error": "no such reference"}), 404
+    return send_file(path)
+
+
+@kleinNG_bp.route("/api/ng/klein/delete/<job_id>", methods=["POST"])
+def klein_delete_ng(job_id):
+    """Remove a finished job and its pictures. A job still queued or running is refused."""
+    outcome = jobs.delete_ng(job_id)
+    if outcome == "missing":
+        return jsonify({"error": "no such job"}), 404
+    if outcome == "active":
+        return jsonify({"error": "stop the job first"}), 409
+    return jsonify({"deleted": job_id})
 
 
 @kleinNG_bp.route("/api/ng/klein/image/<job_id>/<name>")
