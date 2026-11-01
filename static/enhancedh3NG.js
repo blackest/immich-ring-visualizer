@@ -654,16 +654,33 @@
     renderTray();
   }
 
+  // The H3 view can pop this workspace out into a window (static/h3EnhancedPopoutNG.js): while it is
+  // out, the task switcher must not hide it.
+  var popped = false;
+
+  // The brief's per-window prompts as they are now (edits included), and its length in seconds.
+  function windowsNow() {
+    if (!lastBrief || !lastBrief.windows) return null;
+    var prompts = [].map.call(els.windows.querySelectorAll("textarea"), function (ta) { return ta.value.trim(); }).filter(Boolean);
+    if (!prompts.length) return null;
+    return { prompts: prompts, seconds: (lastBrief.target && lastBrief.target.effective_seconds) || prompts.length * 5 };
+  }
+
   function sync(active) {
     refreshEls();
     var on = !!(active && active.task === "enhancedh3");
     if (els.pane) els.pane.style.display = on ? "" : "none";
-    if (els.main) els.main.style.display = on ? "" : "none";
+    if (els.main && !popped) els.main.style.display = on ? "" : "none";
     if (!on) return;
     var controls = document.getElementById("ng-controls-pane");
     if (controls) controls.style.display = "none";
     init();
   }
 
-  window.EnhancedH3NG = { sync: sync };
+  window.EnhancedH3NG = {
+    sync: sync,
+    ensureInit: function () { refreshEls(); init(); },
+    setPopped: function (v) { popped = !!v; },
+    windows: windowsNow
+  };
 })();

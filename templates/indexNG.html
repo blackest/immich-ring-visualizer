@@ -2736,6 +2736,11 @@
                       rows="4"
                       placeholder="Describe the shot, e.g. &ldquo;a red fox leaps over a mossy log&rdquo;"
                     ></textarea>
+                    <div style="margin: 4px 0">
+                      <button type="button" id="ng-h3-enhance-open" class="ng-gen-btn" style="width: auto"
+                        title="Write the prompt (and one prompt per 5 s window) with the Enhanced prompt writer in a pop-out window">Write with Enhanced prompt&hellip;</button>
+                    </div>
+                    <div id="ng-h3-windows" hidden></div>
                     <div
                       style="display: flex; gap: 10px; align-items: flex-end"
                     >
@@ -3034,7 +3039,7 @@
                 </div>
               </div>
 
-              <div class="ng-gen-canvas">
+              <div class="ng-gen-canvas" id="ng-enhancedh3-playbox">
                 <video id="ng-enhancedh3-video" controls style="display: none; width: 100%"></video>
                 <div class="ng-gen-action-bar">
                   <button type="button" id="ng-enhancedh3-extend" class="ng-gen-btn" style="display: none">Extend this video</button>
@@ -3048,6 +3053,7 @@
                 <div id="ng-enhancedh3-summary" class="ng-gen-label" style="text-transform: none; letter-spacing: 0"></div>
                 <div id="ng-enhancedh3-diag"></div>
                 <div id="ng-enhancedh3-windows"></div>
+                <div id="ng-enhancedh3-renderbox">
                 <div class="ng-eh3-grid">
                   <label>Quality<select id="ng-enhancedh3-quality" class="ng-gen-input">
                     <option value="draft">Draft (640&times;384)</option>
@@ -3072,6 +3078,7 @@
                   <div id="ng-enhancedh3-renderstatus" class="ng-gen-status"></div>
                 </div>
                 <progress id="ng-enhancedh3-progress" max="100" value="0" style="display: none; width: 100%"></progress>
+                </div>
                 <div class="ng-eh3-refine">
                   <input type="text" id="ng-enhancedh3-change" class="ng-gen-input" placeholder="Change it: make it darker, add rain..." />
                   <button type="button" id="ng-enhancedh3-refine" class="ng-gen-btn" style="width: auto">Change</button>
@@ -3979,6 +3986,7 @@
     <script src="{{ url_for('static', filename='h3RefmodMakeNG.js') }}"></script>
     <script src="{{ url_for('static', filename='enhancedh3RerollNG.js') }}"></script>
     <script src="{{ url_for('static', filename='enhancedh3NG.js') }}"></script>
+    <script src="{{ url_for('static', filename='h3EnhancedPopoutNG.js') }}"></script>
     <!-- Vendored (not CDN, same convention as every other static file
          here), MIT-licensed -- renders a cover job's transcribed ABC
          score to an inline SVG staff. See static/musicNG.js. -->

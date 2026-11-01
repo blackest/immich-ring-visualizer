@@ -417,6 +417,9 @@
 
   function generateVideo() {
     var prompt = (els.prompt.value || "").trim();
+    // Prompt windows written with the Enhanced prompt pop-out (static/h3EnhancedPopoutNG.js): one per 5 s.
+    var chain = window.H3EnhancedPopoutNG ? window.H3EnhancedPopoutNG.windows() : [];
+    if (chain.length > 1) prompt = chain[0];
     var t2v = isT2vMode();
     if (!t2v && !currentRefBlob) {
       setStatus("Pick a keyframe image first, or check text → video.");
@@ -468,7 +471,8 @@
         form.append("file", currentRefBlob, "keyframe" + ext);
       }
     }
-    form.append("prompt", prompt);
+    if (chain.length > 1) form.append("chain_prompts", JSON.stringify(chain));
+    else form.append("prompt", prompt);
     form.append("duration_s", String(durationS));
     form.append("model", model);
     form.append("quality", quality);
