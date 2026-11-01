@@ -3,7 +3,9 @@
 klein_engineNG.py starts this as a subprocess with the worker's venv python (mflux and MLX live
 there, never in the app) and writes one JSON request on stdin:
     {"model": <snapshot dir>, "variant": "distilled"|"base", "prompt", "seeds": [..], "width",
-     "height", "output_dir", "refs": [paths]}
+     "height", "output_dir", "refs": [paths],
+     optional: "steps", "guidance" (base only), "match_ref" (edit at the first reference's size),
+     "low_ram" (default true), "vae_tile" (pixels), "loras": [[path, scale], ..]}
 For each seed it renders one PNG through mflux's own command (text to image, or edit when there are
 reference pictures) and prints `KLEIN_RESULT {json}` so the app can pick the files up.
 """
@@ -21,14 +23,21 @@ BASE_GUIDANCE = "3.5"
 
 def cli_args(req: dict, seed: int, output: Path) -> list:
     base = req["variant"] == "base"
+    steps = req.get("steps") or (BASE_STEPS if base else DISTILLED_STEPS)
     args = ["mflux-generate-flux3", "--model", str(req["model"]),
             "--base-model", "flux3-image-klein" + ("-base" if base else ""),
-            "--prompt", req["prompt"], "--seed", str(seed),
-            "--width", str(req["width"]), "--height", str(req["height"]),
-            "--steps", str(BASE_STEPS if base else DISTILLED_STEPS),
-            "--output", str(output), "--metadata", "--low-ram"]
+            "--prompt", req["prompt"], "--seed", str(seed), "--steps", str(steps),
+            "--output", str(output), "--metadata"]
+    if not (req["refs"] and req.get("match_ref")):  # an edit's own default is its first reference's size
+        args += ["--width", str(req["width"]), "--height", str(req["height"])]
+    if req.get("low_ram", True):
+        args.append("--low-ram")
+    elif req.get("vae_tile"):
+        args += ["--vae-tile-size", str(req["vae_tile"])]
     if base:
-        args += ["--guidance", BASE_GUIDANCE]
+        args += ["--guidance", str(req.get("guidance") or BASE_GUIDANCE)]
+    for path, scale in req.get("loras", []):
+        args += ["--lora", str(path), str(scale)]
     if req["refs"]:
         args += ["--image-paths", *req["refs"]]
     return args

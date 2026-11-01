@@ -75,8 +75,57 @@ def klein_health_ng() -> dict:
             "models": models, "default": DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)}
 
 
-def validate_ng(width: int, height: int, refs, n: int) -> None:
-    if width < 256 or height < 256 or width % 16 or height % 16 or width * height > MAX_PIXELS:
+OPTION_KEYS = ("steps", "guidance", "match_ref", "low_ram", "vae_tile", "loras")
+MAX_LORAS = 4
+
+
+def validate_options_ng(options, variant: str, refs) -> dict:
+    """The optional settings, checked and reduced to the ones that apply; {} when none were given."""
+    options = dict(options or {})
+    unknown = set(options) - set(OPTION_KEYS)
+    if unknown:
+        raise ValueError("unknown Klein setting: " + ", ".join(sorted(unknown)))
+    out = {}
+    if options.get("steps") is not None:
+        if not isinstance(options["steps"], int) or not 1 <= options["steps"] <= 100:
+            raise ValueError("steps is a whole number from 1 to 100")
+        out["steps"] = options["steps"]
+    if options.get("guidance") is not None and variant == "base":
+        if not 0 <= float(options["guidance"]) <= 20:
+            raise ValueError("guidance is from 0 to 20")
+        out["guidance"] = float(options["guidance"])
+    if options.get("match_ref") and refs:
+        out["match_ref"] = True
+    if options.get("low_ram") is False:
+        out["low_ram"] = False
+        tile = options.get("vae_tile")
+        if tile is not None:
+            if not isinstance(tile, int) or tile < 128 or tile % 16:
+                raise ValueError("the decode tile size is a multiple of 16, at least 128")
+            out["vae_tile"] = tile
+    if options.get("loras"):
+        import klein_lorasNG
+        wanted = options["loras"]
+        if not isinstance(wanted, list) or len(wanted) > MAX_LORAS:
+            raise ValueError(f"at most {MAX_LORAS} LoRAs at a time")
+        out["loras"] = []
+        for item in wanted:
+            entry = klein_lorasNG.find_lora_ng(item.get("name") if isinstance(item, dict) else None)
+            if entry is None:
+                raise ValueError("unknown FLUX 3 LoRA: " + str(item.get("name") if isinstance(item, dict) else item))
+            scale = float(item.get("scale", entry["recommended_strength"]))
+            if not 0 <= scale <= 3:
+                raise ValueError("a LoRA strength is from 0 to 3")
+            if entry["distilled_only"] and variant == "base":
+                raise ValueError(f"{entry['title']} only works with the distilled model, not base")
+            out["loras"].append({"name": entry["name"], "scale": scale})
+    return out
+
+
+def validate_ng(width: int, height: int, refs, n: int, match_ref: bool = False) -> None:
+    if match_ref and refs:
+        pass  # the first reference sets the size
+    elif width < 256 or height < 256 or width % 16 or height % 16 or width * height > MAX_PIXELS:
         raise ValueError("Klein sizes are multiples of 16, at least 256, and at most 1024 x 1024 pixels")
     if len(refs) > MAX_REFS:
         raise ValueError(f"Klein takes at most {MAX_REFS} reference pictures")
@@ -92,12 +141,14 @@ def _clean_env() -> dict:
 
 
 def generate_klein_ng(prompt: str, n: int, width: int, height: int, output_dir, seed: int, refs=(),
-                      model: str = DEFAULT_MODEL, on_log=None, should_stop=None, on_result=None) -> list:
+                      model: str = DEFAULT_MODEL, on_log=None, should_stop=None, on_result=None,
+                      options=None) -> list:
     """Render `n` pictures (seeds seed, seed+1, ...). Returns [{png_path, seed, width, height,
     elapsed_seconds}], calling `on_result(result)` as each lands. Raises KleinCancelled when
     `should_stop()` turns true (the worker is killed)."""
     refs = [str(r) for r in refs]
-    validate_ng(width, height, refs, n)
+    options = validate_options_ng(options, model.split("-")[0], refs)
+    validate_ng(width, height, refs, n, options.get("match_ref", False))
     py = worker_python()
     if not py.is_file():
         raise RuntimeError(f"the FLUX 3 worker is not installed ({py} not found): install FLUX 3 from Phosphene")
@@ -107,7 +158,10 @@ def generate_klein_ng(prompt: str, n: int, width: int, height: int, output_dir, 
     os.makedirs(output_dir, exist_ok=True)
     request = {"model": str(snap), "variant": model.split("-")[0], "prompt": prompt,
                "seeds": [seed + i for i in range(n)], "width": width, "height": height,
-               "output_dir": str(output_dir), "refs": refs}
+               "output_dir": str(output_dir), "refs": refs, **options}
+    if options.get("loras"):  # names were checked above; only now do they become paths
+        import klein_lorasNG
+        request["loras"] = [[klein_lorasNG.find_lora_ng(l["name"])["path"], l["scale"]] for l in options["loras"]]
     proc = subprocess.Popen([str(py), str(WORKER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, errors="replace", env=_clean_env(),
                             start_new_session=True)

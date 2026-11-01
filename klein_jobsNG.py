@@ -10,6 +10,7 @@ the HTTP side.
 import json
 import os
 import queue
+import shutil
 import random
 import threading
 import time
@@ -18,10 +19,12 @@ from pathlib import Path
 
 import h3_jobsNG
 import klein_engineNG as engine
+import klein_outpaintNG as outpaint
 from character_sheetNG import _SHEET_LOCK_NG
 from configNG import KLEIN_DIR
 
-SLOT_NAMES = ("subject", "location", "extra")
+# Phosphene's three named slots first, then plain numbered ones; Klein takes up to ten references.
+SLOT_NAMES = ("subject", "location", "extra") + tuple(f"ref{n}" for n in range(4, engine.MAX_REFS + 1))
 _JOBS: dict = {}
 _ORDER: list = []
 _LOCK = threading.Lock()
@@ -29,11 +32,29 @@ _QUEUE: "queue.Queue" = queue.Queue()
 _WORKER = None
 
 
+def running_ng() -> bool:
+    """A Klein picture is on the GPU right now (H3 waits for this)."""
+    with _LOCK:
+        return any(j["status"] == "running" for j in _JOBS.values())
+
+
+h3_jobsNG.add_gpu_guard_ng(running_ng)
+
+
 def _save(job: dict) -> None:
     path = Path(KLEIN_DIR) / job["id"] / "job.json"
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(job, indent=1), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _landed(job: dict, job_dir: Path, r: dict) -> None:
+    """A picture is finished: for an outpaint job put the original back over it, then list it."""
+    plan = job.get("outpaint")
+    if plan and plan.get("keep_original"):
+        outpaint.paste_original_ng(r["png_path"], job_dir / "source.png", plan["offset"])
+    job["results"].append({"file": Path(r["png_path"]).name, "seed": r["seed"], "width": r["width"],
+                           "height": r["height"], "seconds": r["elapsed_seconds"]})
 
 
 def _run(job: dict) -> None:
@@ -49,12 +70,10 @@ def _run(job: dict) -> None:
             job["started_at"] = time.time()
             engine.generate_klein_ng(
                 job["prompt"], job["n"], job["width"], job["height"], job_dir / "out", job["seed"],
-                refs=[r["path"] for r in job["refs"]], model=job["model"],
+                refs=[r["path"] for r in job["refs"]], model=job["model"], options=job.get("options"),
                 on_log=lambda line: job.__setitem__("log", (job["log"] + [line])[-30:]),
                 should_stop=lambda: job["cancel"],
-                on_result=lambda r: job["results"].append(
-                    {"file": Path(r["png_path"]).name, "seed": r["seed"], "width": r["width"],
-                     "height": r["height"], "seconds": r["elapsed_seconds"]}))
+                on_result=lambda r: _landed(job, job_dir, r))
         job["status"] = "done"
     except engine.KleinCancelled:
         job["status"] = "cancelled"
@@ -74,11 +93,11 @@ def _worker() -> None:
             _run(job)
 
 
-def _enqueue(prompt, n, width, height, seed, model, refs, job_id=None) -> dict:
+def _enqueue(prompt, n, width, height, seed, model, refs, job_id=None, options=None, outpaint_plan=None) -> dict:
     global _WORKER
     job = {"id": job_id or uuid.uuid4().hex[:12], "prompt": prompt.strip(), "n": n, "width": width,
            "height": height, "seed": int(seed) if seed not in (None, "") else random.randrange(2 ** 31),
-           "model": model, "refs": refs, "status": "queued", "error": None, "results": [], "log": [],
+           "model": model, "refs": refs, "options": options or {}, "outpaint": outpaint_plan, "status": "queued", "error": None, "results": [], "log": [],
            "created_at": time.time(), "cancel": False}
     (Path(KLEIN_DIR) / job["id"]).mkdir(parents=True, exist_ok=True)
     with _LOCK:
@@ -100,15 +119,16 @@ def new_job_dir_ng() -> tuple:
     return job_id, folder
 
 
-def start_ng(job_id: str, prompt, n, width, height, seed, model, refs) -> dict:
+def start_ng(job_id: str, prompt, n, width, height, seed, model, refs, options=None, outpaint_plan=None) -> dict:
     """submit_ng for a job whose folder new_job_dir_ng already made."""
-    engine.validate_ng(width, height, refs, n)
+    options = engine.validate_options_ng(options, model.split("-")[0], refs)
+    engine.validate_ng(width, height, refs, n, options.get("match_ref", False))
     if not prompt.strip():
         raise ValueError("write a prompt: describe the whole picture you want")
     health = engine.klein_health_ng()
     if not health["ready"] or model not in health["models"]:
         raise RuntimeError("Klein is not ready: install FLUX 3 and download " + model + " in Phosphene")
-    return _enqueue(prompt, n, width, height, seed, model, refs, job_id=job_id)
+    return _enqueue(prompt, n, width, height, seed, model, refs, job_id=job_id, options=options, outpaint_plan=outpaint_plan)
 
 
 def get_ng(job_id: str):
@@ -125,16 +145,35 @@ def get_ng(job_id: str):
     return job
 
 
-def recent_ng(limit: int = 30) -> list:
-    """Newest first, from disk (so a restart keeps the gallery)."""
+def recent_ng(limit: int = 30, query: str = "", with_total: bool = False):
+    """Newest first, from disk (so a restart keeps the gallery). `query` keeps jobs whose prompt, model or
+    settings text contains it (case-insensitive); with_total also returns how many matched in all."""
     root = Path(KLEIN_DIR)
     found = []
     for path in root.glob("*/job.json") if root.is_dir() else []:
         job = get_ng(path.parent.name)
         if job is not None:
             found.append(job)
+    q = (query or "").strip().lower()
+    if q:
+        found = [j for j in found if q in json.dumps([j["prompt"], j["model"], j.get("options"), j["id"]]).lower()]
     found.sort(key=lambda j: j["created_at"], reverse=True)
-    return found[:limit]
+    return (found[:limit], len(found)) if with_total else found[:limit]
+
+
+def delete_ng(job_id: str) -> str:
+    """'deleted', 'missing' or 'active' (queued/running jobs are not deleted)."""
+    job = get_ng(job_id)
+    if job is None or "/" in job_id or ".." in job_id:
+        return "missing"
+    if job["status"] in ("queued", "running", "waiting"):
+        return "active"
+    with _LOCK:
+        _JOBS.pop(job_id, None)
+        if job_id in _ORDER:
+            _ORDER.remove(job_id)
+    shutil.rmtree(Path(KLEIN_DIR) / job_id, ignore_errors=True)
+    return "deleted"
 
 
 def cancel_ng(job_id: str) -> bool:
