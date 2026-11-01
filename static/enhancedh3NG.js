@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "speed", "render", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
+      "quality", "speed", "render", "stop", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -515,17 +515,29 @@
     return { frac: frac, text: text };
   }
 
+  // Stop the render in progress (a queued one is dropped, a rendering one has its process killed).
+  function stopRender() {
+    if (!renderJob) return;
+    els.stop.disabled = true;
+    setRender("Stopping...");
+    fetch("/api/ng/h3/jobs/" + renderJob, { method: "DELETE" }).catch(function () { els.stop.disabled = false; });
+  }
+
   function pollJob(jobId) {
     clearInterval(pollTimer);
+    els.stop.style.display = "";
+    els.stop.disabled = false;
     var tick = function () {
       fetch("/api/ng/h3/jobs/" + jobId).then(function (r) { return r.json(); }).then(function (job) {
         if (!job.status) {
           clearInterval(pollTimer);
+          els.stop.style.display = "none";
           renderJob = null; saveNow();
           setRender("That render is no longer on the server (it restarted?). Check the H3 view's job log.");
           els.render.disabled = false;
         } else if (job.status === "completed") {
           clearInterval(pollTimer);
+          els.stop.style.display = "none";
           renderJob = null; saveNow();
           els.progress.style.display = "none";
           if (job.task === "upscale") {
@@ -546,9 +558,10 @@
           els.render.disabled = false;
         } else if (job.status === "failed") {
           clearInterval(pollTimer);
+          els.stop.style.display = "none";
           renderJob = null; saveNow();
           els.progress.style.display = "none";
-          setRender("Failed: " + (job.error || "unknown error"));
+          setRender(/cancelled/i.test(job.error || "") ? "Stopped." : "Failed: " + (job.error || "unknown error"));
           els.render.disabled = false;
         } else {
           if (job.status === "rendering") {
@@ -582,6 +595,7 @@
     loadSaved();
     restoreFields();
     restoreBrief();
+    els.stop.addEventListener("click", stopRender);
     els.main.addEventListener("input", saveSoon);
     els.main.addEventListener("change", saveSoon);
     if (saved && saved.job) {
