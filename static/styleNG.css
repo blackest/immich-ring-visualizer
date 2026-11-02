@@ -3670,3 +3670,12 @@ textarea.ng-gen-input.ng-textarea-expanded {
 .ng-eh3-pop-body { flex: 1; overflow: auto; padding: 8px 12px; }
 /* In the pop-out the writer only writes: rendering, playback and RefMods stay in the H3 view */
 .ng-eh3-popped #ng-enhancedh3-renderbox, .ng-eh3-popped #ng-enhancedh3-playbox { display: none !important; }
+
+/* Reference pictures per window (static/h3BatchNG.js) */
+.ng-h3b { margin-top: .75rem; display: flex; flex-direction: column; gap: .5rem; }
+.ng-h3b-thumbs { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.ng-h3b-thumb { position: relative; display: inline-block; }
+.ng-h3b-thumb img, .ng-h3b-thumb video { height: 4rem; border-radius: .25rem; display: block; }
+.ng-h3b-x { position: absolute; top: -.35rem; right: -.35rem; width: 1.2rem; height: 1.2rem; padding: 0; line-height: 1;
+  border-radius: 50%; border: 0; cursor: pointer; background: rgba(0,0,0,.75); color: #fff; }
+.ng-h3b-panel { display: flex; flex-direction: column; gap: .35rem; margin-top: .25rem; }

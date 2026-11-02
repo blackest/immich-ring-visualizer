@@ -91,6 +91,7 @@
     clear.type = "button"; clear.style.width = "auto";
     clear.addEventListener("click", function () { chain = []; drawWindows(); });
     box.appendChild(clear);
+    if (window.H3BatchNG) window.H3BatchNG.mount(box, chain.length);
   }
 
   function setDuration(seconds) {

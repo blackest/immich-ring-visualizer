@@ -420,6 +420,18 @@
     // Prompt windows written with the Enhanced prompt pop-out (static/h3EnhancedPopoutNG.js): one per 5 s.
     var chain = window.H3EnhancedPopoutNG ? window.H3EnhancedPopoutNG.windows() : [];
     if (chain.length > 1) prompt = chain[0];
+    // A scene with reference pictures per window is one 5 s render per window, joined (static/h3BatchNG.js).
+    if (chain.length > 1 && window.H3BatchNG && window.H3BatchNG.hasBatch()) {
+      var st = parseInt(els.steps ? els.steps.value : "", 10);
+      window.H3BatchNG.run({
+        prompts: chain, quality: els.quality ? els.quality.value : "high",
+        steps: (!isNaN(st) && st >= 4 && st <= 40 && els.steps && !els.steps.disabled) ? st : null,
+        tristep: !!(els.tristep && !els.tristep.disabled && els.tristep.checked),
+        flex: !!(els.flex && !els.flex.disabled && els.flex.checked)
+      });
+      setStatus("Scene sent: see the panel under the prompt windows.");
+      return;
+    }
     var t2v = isT2vMode();
     if (!t2v && !currentRefBlob) {
       setStatus("Pick a keyframe image first, or check text → video.");
