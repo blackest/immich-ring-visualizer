@@ -77,7 +77,7 @@
     var tick = node("input"); tick.type = "checkbox"; tick.checked = carry;
     tick.addEventListener("change", function () { carry = tick.checked; });
     label.appendChild(tick);
-    label.appendChild(document.createTextNode(" Also give each later window the last frame of the one before it as a picture (numbered last)"));
+    label.appendChild(document.createTextNode(" Carry the character forward: give each later window the last frame of the one before it as one more picture (numbered last). It is a reference for who is in the shot, not a shot to start from, so name him in the prompt, e.g. \"the rider from <Picture 3>\"."));
     wrap.appendChild(label);
     if (!panel) panel = node("div", "ng-h3b-panel");
     wrap.appendChild(panel);
