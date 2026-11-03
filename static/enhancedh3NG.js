@@ -69,7 +69,7 @@
     if (!els.hybrid) return;
     var blocked = els.speed.value === "flex" || refmodOn();
     els.hybrid.disabled = blocked;
-    if (blocked) els.hybrid.checked = false;
+    if (blocked) els.hybrid.value = "";
   }
 
   function onRefmodToggle() {
@@ -491,11 +491,11 @@
       }
       refs.forEach(function (it) { form.append("reference_files", it.file, it.file.name); });
       form.append("model", "h3ref");
-      if (els.hybrid && els.hybrid.checked) form.append("adaln_blocks", "45-49");
+      if (els.hybrid && els.hybrid.value) form.append("adaln_blocks", els.hybrid.value);
     }
 
-    if (els.hybrid && els.hybrid.checked && !refs.length) {
-      setRender("The cleaner look applies to reference-picture renders. Add a reference picture, or untick it.");
+    if (els.hybrid && els.hybrid.value && !refs.length) {
+      setRender("The cleaner look applies to reference-picture renders. Add a reference picture, or set the look back to Standard.");
       return;
     }
 
