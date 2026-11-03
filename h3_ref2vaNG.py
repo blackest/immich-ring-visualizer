@@ -20,6 +20,7 @@ What this guards, and why it is stricter than the runner:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -114,3 +115,43 @@ def refmod_argv_ng(refmods) -> list:
     for item in refmods or []:
         argv += [REFMOD_FLAG, f"{item['path']}:{item['strength']:g}"]
     return argv
+
+
+# --- Hybrid ("clean look"): FL2VA weights, Ref2VA AdaLN on the last blocks -----------------------
+# Ref2VA's reference conditioning comes with a harsher, more contrasty look (Minimax has said the
+# two checkpoints went through different post-training). The two models differ almost only in the
+# per-block AdaLN projections, so the hybrid runs the FL2VA Q8 everywhere and takes Ref2VA's AdaLN
+# for a block range only (community testing: 45-49). The runner does it at the modulation-table
+# level (minimax_h3_mlx/adaln_overlay.py); this side only validates and builds the argv.
+ADALN_OVERLAY_FLAG = "--adaln-overlay"
+ADALN_BLOCKS_FLAG = "--adaln-blocks"
+DEFAULT_ADALN_BLOCKS = "45-49"
+_BLOCKS_RE = re.compile(r"^\d+(-\d*)?(,\d+(-\d*)?)*$")
+
+
+def runner_supports_adaln_overlay_ng(runner) -> bool:
+    return h3_lora.runner_has_flag_ng(runner, ADALN_OVERLAY_FLAG)
+
+
+def validate_adaln_blocks_ng(spec, *, model: str, flex: bool, turbo: bool, v13: bool, runner) -> str:
+    """`spec` ("" = no hybrid) -> the cleaned block range, or "". Raises ValueError with one plain sentence."""
+    spec = str(spec or "").replace(" ", "")
+    if not spec:
+        return ""
+    if model != "h3ref":
+        raise ValueError("the hybrid look takes Ref2VA's AdaLN, so it is a Ref2VA render (model='h3ref')")
+    if flex or turbo or v13:
+        raise ValueError("the hybrid look does not combine with Flex, Turbo or LightX2V v1.3; "
+                         "Fast (the 3-step adapter) and the plain 16-step run are fine")
+    if not _BLOCKS_RE.match(spec):
+        raise ValueError(f"adaln blocks {spec!r} is not a block range like 45-49")
+    if not runner_supports_adaln_overlay_ng(runner):
+        raise ValueError("this H3 runner has no --adaln-overlay -- it needs the vendored runner")
+    return spec
+
+
+def adaln_overlay_argv_ng(overlay_dir, blocks: str) -> list:
+    """`--adaln-overlay REF2VA_DIR --adaln-blocks RANGE`, or [] when there is no hybrid."""
+    if not blocks:
+        return []
+    return [ADALN_OVERLAY_FLAG, str(overlay_dir), ADALN_BLOCKS_FLAG, blocks]

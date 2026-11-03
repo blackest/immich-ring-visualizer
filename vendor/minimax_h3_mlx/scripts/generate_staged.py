@@ -1172,12 +1172,21 @@ def render_window(
             adaln_cache = DraftCache(adaln_cache_dir, getattr(args, "adaln_cache_limit", 20))
         adaln_key = None
         cached_adaln = None
+        # `--adaln-overlay`: some blocks' modulation comes from a different (Ref2VA) DiT. The tables are
+        # built per block from that checkpoint and spliced over the base's, so the key carries it.
+        overlay_spec = None
+        if getattr(args, "adaln_overlay", None) is not None:
+            from minimax_h3_mlx.adaln_overlay import parse_block_range
+
+            overlay_spec = (args.adaln_overlay,
+                            parse_block_range(args.adaln_blocks, dit.config.num_layers))
         if adaln_cache is not None:
             adaln_key = adaln_cache.adaln_key(
                 timestep_table=np.array(timestep_table),
                 dit=args.dit,
                 lora=lora_stack or None,
                 lora_adaln=args.lora_adaln,
+                overlay=overlay_spec,
             )
             cached_adaln = adaln_cache.load_adaln(adaln_key, dit)
         if cached_adaln is not None:
@@ -1190,6 +1199,17 @@ def render_window(
                                           drop_projections=getattr(args, "lazy_adaln", False))
             mx.eval(cache.tables)
             adaln_report = None
+            if overlay_spec is not None:
+                from minimax_h3_mlx.adaln_overlay import build_overlay_tables, splice_overlay
+
+                with record.phase(f"{label}adaln_overlay"):
+                    splice_overlay(cache, build_overlay_tables(
+                        overlay_spec[0], overlay_spec[1], timestep_table, dtype=mx.bfloat16))
+                    mx.eval(cache.tables)
+                record.data[f"{label}adaln_overlay"] = {
+                    "dit": str(overlay_spec[0]), "blocks": overlay_spec[1]}
+                print(f"  adaln overlay: blocks {overlay_spec[1][0]}-{overlay_spec[1][-1]} "
+                      f"({len(overlay_spec[1])}) from {Path(overlay_spec[0]).name}")
             if lora_stack and getattr(args, "lora_adaln", None):
                 from minimax_h3_mlx import lora as lora_mod
 
@@ -1843,6 +1863,22 @@ def main() -> int:
         "tables are bit-identical. Off by default.",
     )
     parser.add_argument(
+        "--adaln-overlay",
+        type=Path,
+        default=None,
+        metavar="REF2VA_DIT",
+        help="Hybrid model: run the base --dit but take the AdaLN modulation of the --adaln-blocks from "
+        "this official-layout (Ref2VA) DiT folder. Built per block from that checkpoint and spliced into "
+        "the modulation cache, so it costs nothing per forward. Not with --lora-adaln.",
+    )
+    parser.add_argument(
+        "--adaln-blocks",
+        default="45-",
+        metavar="RANGE",
+        help="Blocks that --adaln-overlay replaces, e.g. 45-49, 45- (to the last block) or 0,45-49. "
+        "Default 45-.",
+    )
+    parser.add_argument(
         "--lora-adaln",
         type=Path,
         default=None,
@@ -2083,6 +2119,11 @@ def main() -> int:
         parser.error("--draft-cache-limit must be at least 1")
     if args.adaln_cache_limit < 1:
         parser.error("--adaln-cache-limit must be at least 1")
+    if args.adaln_overlay is not None:
+        if args.lora_adaln is not None:
+            parser.error("--adaln-overlay cannot be combined with --lora-adaln")
+        if not (args.adaln_overlay / "config.json").is_file():
+            parser.error(f"--adaln-overlay {args.adaln_overlay} has no config.json (a Ref2VA DiT folder)")
     if args.adaln_cache_dir is not None and args.lora_adaln is None:
         # A hit only saves the weights' memory and disk read if they were never loaded.
         args.lazy_adaln = True

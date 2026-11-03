@@ -60,6 +60,7 @@ class H3JobNG:
     refmods: list = field(default_factory=list)  # [{"name", "path", "strength", "images", "videos"}] RefMods
     references: list = field(default_factory=list)  # reference_N.<ext> file names in the job dir, in order
     reference_size: str = "match"  # "max" = upstream's 2048 px picture size (several times slower)
+    adaln_blocks: str = ""  # hybrid "clean look" (model h3ref): FL2VA base + Ref2VA AdaLN on these blocks, e.g. "45-49"
     chain_prompts: list = field(default_factory=list)  # one prompt per chained window; empty = `prompt` for every window
     extends: bool = False  # continue extend_src.mp4 in the job dir; duration_s is the new time added
     timeout_s: Optional[float] = None  # None = H3Config's own default (3600s)
@@ -169,7 +170,7 @@ def _worker_loop() -> None:
                 loras=[(l["path"], l["strength"]) for l in job.loras],
                 refmods=job.refmods, chain_prompts=job.chain_prompts,
                 references=[str(job.job_dir / n) for n in job.references],
-                reference_size=job.reference_size,
+                reference_size=job.reference_size, adaln_blocks=job.adaln_blocks,
                 extend_from=str(extend_path) if job.extends else None,
                 last_frame_path=str(last_path) if last_path else None,
                 keyframes=keyframes,
@@ -219,6 +220,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      keyframes: Optional[list] = None,
                      references: Optional[list] = None,
                      reference_size: str = "match",
+                     adaln_blocks: str = "",
                      reroll: Optional[dict] = None,
                      on_done: Optional[Callable] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
@@ -345,11 +347,12 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                   keyframe_times=[w for _b, _e, w in keyframes or []], width=width, height=height, steps=steps, turbo=turbo, v13=v13,
                   tristep=tristep, flex=flex, loras=loras, refmods=refmods, timeout_s=timeout_s,
                   chain_prompts=chain_prompts or [], extends=extend_bytes is not None,
-                  references=reference_names, reference_size=reference_size,
+                  references=reference_names, reference_size=reference_size, adaln_blocks=adaln_blocks,
                   reroll=reroll, on_done=on_done)
     (job_dir / SETTINGS_NAME).write_text(json.dumps({
         "model": model, "width": width, "height": height, "steps": steps, "turbo": turbo, "v13": v13,
         "tristep": tristep, "flex": flex, "has_image": has_image, "timeout_s": timeout_s,
+        "adaln_blocks": adaln_blocks,
         "loras": [{"name": l["name"], "path": l["path"], "strength": l["strength"]} for l in loras],
     }, indent=2), encoding="utf-8")
     with _JOBS_LOCK:

@@ -81,7 +81,7 @@ class DraftCache:
         )
 
     @staticmethod
-    def adaln_key(*, timestep_table: np.ndarray, dit, lora, lora_adaln) -> str:
+    def adaln_key(*, timestep_table: np.ndarray, dit, lora, lora_adaln, overlay=None) -> str:
         table = np.ascontiguousarray(timestep_table, dtype=np.float32)
         # `lora` is one (path, scale) pair or a list of them. A single adapter
         # keeps the historical key shape so existing caches stay valid; a stack
@@ -97,6 +97,10 @@ class DraftCache:
             "lora_scale": stack[0][1] if len(stack) == 1 else None,
             "lora_adaln": path_fingerprint(lora_adaln),
         }
+        if overlay is not None:
+            # (overlay_dir, [blocks]) -- only present when set, so historical keys stay valid.
+            overlay_dir, overlay_blocks = overlay
+            fields["adaln_overlay"] = {"dit": path_fingerprint(overlay_dir), "blocks": list(overlay_blocks)}
         if len(stack) > 1:
             fields["lora_stack"] = sorted(
                 ({"lora": path_fingerprint(p), "scale": s} for p, s in stack),

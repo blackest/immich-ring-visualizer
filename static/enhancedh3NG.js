@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "speed", "render", "stop", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
+      "quality", "speed", "render", "stop", "hybrid", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -61,6 +61,15 @@
     opt.title = !available ? "The Pika H3 Flex adapter is not built here, or the runner is too old. See the H3 view."
       : refmodOn() ? "Flex does not combine with a RefMod" : "";
     if (opt.disabled && els.speed.value === "flex") els.speed.value = "fast";
+    syncHybrid();
+  }
+
+  // The hybrid look is a Ref2VA-with-pictures render: not with Flex, and not with a RefMod.
+  function syncHybrid() {
+    if (!els.hybrid) return;
+    var blocked = els.speed.value === "flex" || refmodOn();
+    els.hybrid.disabled = blocked;
+    if (blocked) els.hybrid.checked = false;
   }
 
   function onRefmodToggle() {
@@ -482,6 +491,12 @@
       }
       refs.forEach(function (it) { form.append("reference_files", it.file, it.file.name); });
       form.append("model", "h3ref");
+      if (els.hybrid && els.hybrid.checked) form.append("adaln_blocks", "45-49");
+    }
+
+    if (els.hybrid && els.hybrid.checked && !refs.length) {
+      setRender("The cleaner look applies to reference-picture renders. Add a reference picture, or untick it.");
+      return;
     }
 
     els.render.disabled = true;
@@ -635,6 +650,7 @@
       refmodUi = window.H3RefmodsNG({ api: "/api/ng/h3", els: { model: refmodModel, refmodsBlock: els["refmod-block"],
         refmodsNote: els["refmod-note"], refmodsRows: els["refmod-rows"], refmodAdd: els["refmod-add"] } });
       els["refmod-on"].addEventListener("change", onRefmodToggle);
+      els.speed.addEventListener("change", syncHybrid);
       els["refmod-add"].addEventListener("click", function () { if (refmodUi.hasRoom()) refmodUi.addRow(); });
     } else {
       els["refmod-on"].disabled = true;

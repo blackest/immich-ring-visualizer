@@ -272,7 +272,10 @@ def h3_generate_ng():
     passes through; not with a RefMod or extend_file), reference_files (optional pictures
     and clips for a Ref2VA render, in order: the first picture is <Picture 1>, the first clip
     <Video 1>; needs model "h3ref", a single 5 s window, and no keyframe, RefMod or extend),
-    reference_size ("match", the default, or "max": upstream's 2048 px, several times slower).
+    reference_size ("match", the default, or "max": upstream's 2048 px, several times slower),
+    adaln_blocks (optional block range such as "45-49" -- the hybrid "clean look": the FL2VA Q8 runs
+    everywhere and Ref2VA's AdaLN is used for those blocks only; needs model "h3ref", not with Flex,
+    Turbo or v1.3).
 
     Same "no scratch temp file" reasoning as videogenNG_generate_ng:
     h3_jobs.start_h3_job_ng() writes the keyframe bytes straight into
@@ -333,7 +336,8 @@ def h3_generate_ng():
             keyframes=[(f.read(), os.path.splitext(f.filename or "")[1], t)
                        for f, t in zip(kf_files, kf_times)],
             references=[(f.read(), os.path.splitext(f.filename or "")[1]) for f in ref_files],
-            reference_size=str(request.form.get("reference_size") or "match").strip().lower())
+            reference_size=str(request.form.get("reference_size") or "match").strip().lower(),
+            adaln_blocks=str(request.form.get("adaln_blocks") or "").strip())
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

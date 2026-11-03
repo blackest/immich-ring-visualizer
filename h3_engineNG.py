@@ -57,6 +57,7 @@ qkv row order by h3_loraNG.lora_for_runner_ng).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import os
@@ -569,7 +570,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           last_frame_path: Optional[str] = None,
                           keyframes: Optional[list] = None,
                           references: Optional[list] = None,
-                          reference_size: str = "match") -> dict:
+                          reference_size: str = "match",
+                          adaln_blocks: str = "") -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -779,6 +781,15 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         references, reference_size, model=config.model, image_path=image_path,
         last_frame_path=last_frame_path, keyframes=keyframes, extend_from=extend_from,
         refmods=refmods, turbo=turbo, v13=v13, chain_windows=chain_windows, runner=runner)
+    # Hybrid "clean look": the FL2VA Q8 is the base DiT, the Ref2VA Q8 supplies AdaLN for `adaln_blocks`.
+    adaln_blocks = h3_ref2va.validate_adaln_blocks_ng(
+        adaln_blocks, model=config.model, flex=flex, turbo=turbo, v13=v13, runner=runner)
+    overlay_dit = None
+    if adaln_blocks:
+        overlay_dit = dit
+        dit = _resolve_h3_dit_ng(dataclasses.replace(config, model="h3q8"))
+        if not dit:
+            raise FileNotFoundError(f"the hybrid look needs the FL2VA Q8 base, not found at {H3_DIT_Q8_DIR}")
     seed = seed if seed is not None else random.randint(0, 2**31 - 1)
 
     output_dir = Path(output_dir)
@@ -859,6 +870,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         runner_file, _qkv = h3_lora.lora_for_runner_ng(lora_path, runner, on_log)
         cmd += ["--lora", f"{runner_file}:{strength:g}"]
     cmd += h3_ref2va.refmod_argv_ng(refmods)
+    cmd += h3_ref2va.adaln_overlay_argv_ng(overlay_dit, adaln_blocks)
     cmd += h3_references.reference_argv_ng(references, reference_size)
     lazy_argv = _h3_lazy_adaln_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
     cmd += lazy_argv
@@ -1013,4 +1025,5 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "duration_s": frames / H3_FRAME_RATE,
         "refmods": [{"name": Path(r["path"]).stem, "strength": r["strength"]} for r in refmods],
         "references": [Path(r).name for r in references],
+        "adaln_blocks": adaln_blocks,
     }
