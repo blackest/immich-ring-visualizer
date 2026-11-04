@@ -100,6 +100,8 @@ class ParseBlockRange(unittest.TestCase):
         self.assertEqual(parse_block_range("45-", 50), [45, 46, 47, 48, 49])
         self.assertEqual(parse_block_range("3", 50), [3])
         self.assertEqual(parse_block_range("0, 2,48-49", 50), [0, 2, 48, 49])
+        self.assertEqual(parse_block_range("none", 50), [])
+        self.assertEqual(parse_block_range(" None ", 50), [])
 
     def test_rejects_bad_input(self):
         for spec in ("49-45", "50", "-3", "", "a-b"):

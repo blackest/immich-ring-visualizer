@@ -28,7 +28,12 @@ from .dit import AdaLayerNormModulation, TimestepEmbedder, timestep_embedding
 
 
 def parse_block_range(spec: str, num_blocks: int) -> list[int]:
-    """``"45-49"``, ``"45-"`` (to the last block), ``"3"`` or ``"0,2,45-49"`` -> sorted block indices."""
+    """``"45-49"``, ``"45-"`` (to the last block), ``"3"`` or ``"0,2,45-49"`` -> sorted block indices.
+
+    ``"none"`` -> ``[]``: the overlay swaps nothing (a control run: the base model with no borrowed AdaLN).
+    """
+    if str(spec).strip().lower() == "none":
+        return []
     blocks: set[int] = set()
     for part in str(spec).replace(" ", "").split(","):
         if not part:

@@ -143,7 +143,9 @@ def validate_adaln_blocks_ng(spec, *, model: str, flex: bool, turbo: bool, v13: 
     if flex or turbo or v13:
         raise ValueError("the hybrid look does not combine with Flex, Turbo or LightX2V v1.3; "
                          "Fast (the 3-step adapter) and the plain 16-step run are fine")
-    if not _BLOCKS_RE.match(spec):
+    if spec.lower() == "none":
+        spec = "none"
+    elif not _BLOCKS_RE.match(spec):
         raise ValueError(f"adaln blocks {spec!r} is not a block range like 45-49")
     if not runner_supports_adaln_overlay_ng(runner):
         raise ValueError("this H3 runner has no --adaln-overlay -- it needs the vendored runner")

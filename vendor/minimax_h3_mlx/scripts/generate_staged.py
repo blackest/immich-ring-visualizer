@@ -1199,7 +1199,7 @@ def render_window(
                                           drop_projections=getattr(args, "lazy_adaln", False))
             mx.eval(cache.tables)
             adaln_report = None
-            if overlay_spec is not None:
+            if overlay_spec is not None and overlay_spec[1]:
                 from minimax_h3_mlx.adaln_overlay import build_overlay_tables, splice_overlay
 
                 with record.phase(f"{label}adaln_overlay"):
@@ -1210,6 +1210,8 @@ def render_window(
                     "dit": str(overlay_spec[0]), "blocks": overlay_spec[1]}
                 print(f"  adaln overlay: blocks {overlay_spec[1][0]}-{overlay_spec[1][-1]} "
                       f"({len(overlay_spec[1])}) from {Path(overlay_spec[0]).name}")
+            elif overlay_spec is not None:
+                print("  adaln overlay: none (the base model's own AdaLN throughout)")
             if lora_stack and getattr(args, "lora_adaln", None):
                 from minimax_h3_mlx import lora as lora_mod
 

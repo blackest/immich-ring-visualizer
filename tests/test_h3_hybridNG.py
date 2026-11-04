@@ -47,7 +47,7 @@ class ValidateTests(Base):
             self.assertEqual(self._v(None, model=model, turbo=True), "")
 
     def test_accepts_ranges_and_strips_spaces(self):
-        for spec, want in (("45-49", "45-49"), ("45-", "45-"), (" 3 ", "3"), ("0, 2, 45-49", "0,2,45-49")):
+        for spec, want in (("45-49", "45-49"), ("45-", "45-"), (" 3 ", "3"), ("0, 2, 45-49", "0,2,45-49"), ("none", "none"), (" None ", "none")):
             self.assertEqual(self._v(spec), want)
 
     def test_refusals(self):
