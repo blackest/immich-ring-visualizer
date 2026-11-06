@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Callable, List
 
 import ltx_pack_fetchNG
-from engine_installNG import InstallStep, run_logged
+from engine_installNG import InstallStep, phosphene_owned, run_logged
 from ltx_engineNG import LTX_REPO_DIR, LTX_WEIGHTS_ROOT
 
 LTX_FORK_URL = "https://github.com/mrbizarro/ltx-2-mlx.git"
@@ -52,6 +52,9 @@ def _git_head(repo_dir: Path) -> str:
 
 def _step_clone(on_log: Callable[[str], None]) -> None:
     dest = LTX_REPO_DIR
+    if (dest / ".git").is_dir() and phosphene_owned(dest):
+        on_log(f"{dest} belongs to Phosphene -- leaving its engine pin alone.")
+        return
     if not (dest / ".git").is_dir():
         dest.parent.mkdir(parents=True, exist_ok=True)
         run_logged(["git", "clone", LTX_FORK_URL, str(dest)], on_log=on_log)
@@ -94,6 +97,9 @@ def _step_venv(on_log: Callable[[str], None]) -> None:
 def _step_deps(on_log: Callable[[str], None]) -> None:
     dest = LTX_REPO_DIR
     py = str(dest / "env" / "bin" / "python")
+    if phosphene_owned(dest) and Path(py).is_file():
+        on_log("Phosphene's venv already exists -- not touching its packages.")
+        return
     constraints = dest / "pip-build-constraints.txt"
 
     run_logged(["uv", "pip", "install", "--python", py, *_CORE_PINS], cwd=str(dest), on_log=on_log)

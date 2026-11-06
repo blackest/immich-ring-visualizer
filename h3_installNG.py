@@ -41,7 +41,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from engine_installNG import InstallStep, run_logged
+from engine_installNG import InstallStep, phosphene_owned, run_logged
 from h3_engineNG import H3_DIT_BF16, H3_DIT_Q8_DIR, H3_MODELS_ROOT, H3_REPO_DIR
 
 H3_URL = "https://github.com/mrbizarro/minimax-h3-mlx.git"
@@ -82,6 +82,13 @@ def _git_head(repo_dir: Path) -> str:
 
 def _step_clone(on_log: Callable[[str], None]) -> None:
     dest = H3_REPO_DIR
+    if (dest / ".git").is_dir() and phosphene_owned(dest):
+        # Phosphene's own checkout: its Update owns the pin. Leave it exactly where it is.
+        if not (dest / "scripts" / "quantize_stream.py").is_file():
+            raise RuntimeError(f"{dest} is Phosphene's H3 checkout but has no scripts/quantize_stream.py "
+                               f"-- run Phosphene's Update so its engine is current.")
+        on_log(f"{dest} belongs to Phosphene -- leaving its engine pin alone.")
+        return
     if not (dest / ".git").is_dir():
         dest.parent.mkdir(parents=True, exist_ok=True)
         run_logged(["git", "clone", H3_URL, str(dest)], on_log=on_log)
@@ -132,6 +139,9 @@ def _step_venv(on_log: Callable[[str], None]) -> None:
 def _step_deps(on_log: Callable[[str], None]) -> None:
     dest = H3_REPO_DIR
     py = str(_venv_python(dest))
+    if phosphene_owned(dest) and Path(py).is_file():
+        on_log("Phosphene's venv already exists -- not touching its packages.")
+        return
     # -c: the constraints file only forbids a resolve from leaving the
     # known-good set (and moves a drifted package back); it installs nothing.
     run_logged(["uv", "pip", "install", "--python", py, "-c", str(H3_CONSTRAINTS),

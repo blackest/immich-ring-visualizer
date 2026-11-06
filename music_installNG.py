@@ -28,7 +28,7 @@ import shutil
 from pathlib import Path
 from typing import Callable, List
 
-from engine_installNG import InstallStep, run_logged
+from engine_installNG import InstallStep, phosphene_owned, run_logged
 from music_engineNG import MUSIC_MODELS_ROOT, MUSIC_REPO_DIR
 
 MUSIC_CLONE_URL = "https://github.com/vanch007/mlx-Yue"
@@ -62,6 +62,9 @@ def _sha256(path: Path) -> str:
 
 def _step_clone(on_log: Callable[[str], None]) -> None:
     dest = MUSIC_REPO_DIR
+    if (dest / ".git").is_dir() and phosphene_owned(dest):
+        on_log(f"{dest} belongs to Phosphene -- leaving its engine pin alone.")
+        return
     if (dest / ".git").is_dir():
         on_log(f"{dest} already a checkout -- skipping clone.")
     else:
@@ -97,6 +100,9 @@ def _step_venv(on_log: Callable[[str], None]) -> None:
     if healthy:
         on_log("venv already Python 3.12 -- reusing it.")
         return
+    if phosphene_owned(dest) and py.is_file():
+        raise RuntimeError(f"{py} belongs to Phosphene and is not Python 3.12 -- not rebuilding it from here; "
+                           f"run Phosphene's Update instead.")
     if shutil.which("uv") is None:
         raise RuntimeError(
             "`uv` not found on PATH -- install it first (https://docs.astral.sh/uv/), "
@@ -106,6 +112,9 @@ def _step_venv(on_log: Callable[[str], None]) -> None:
 
 def _step_deps(on_log: Callable[[str], None]) -> None:
     dest = MUSIC_REPO_DIR
+    if phosphene_owned(dest) and _venv_python(dest).is_file():
+        on_log("Phosphene's venv already exists -- not syncing its packages.")
+        return
     env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(dest / ".venv"))
     run_logged(["uv", "sync", "--frozen", "--no-dev", "--extra", "transcription",
                 "--project", str(dest)], env=env, on_log=on_log)

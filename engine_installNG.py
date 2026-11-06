@@ -30,6 +30,18 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
 
+def phosphene_owned(dest) -> bool:
+    """True when `dest` is an engine checkout that sits inside a Phosphene install.
+
+    Phosphene keeps each engine (ltx-2-mlx, yue2-mlx, minimax-h3-mlx) next to its panel file and moves
+    the pin and the venv itself on every Update. Our install buttons may be pointed at those same
+    folders (the engine resolvers fall back to them), so an install must never re-pin, reset or
+    reinstall into one that already exists: it only fills in what is missing.
+    """
+    from pathlib import Path
+    return (Path(dest).parent / "mlx_ltx_panel.py").is_file()
+
+
 def run_logged(cmd: list, *, cwd: Optional[str] = None, env: Optional[dict] = None,
                 on_log: Optional[Callable[[str], None]] = None) -> None:
     """Runs `cmd`, piping stdout+stderr line-by-line into on_log (same
