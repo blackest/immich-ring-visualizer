@@ -304,6 +304,7 @@ def h3_generate_ng():
     v13 = str(request.form.get("v13") or "").strip().lower() in ("1", "true", "on")
     tristep = str(request.form.get("tristep") or "").strip().lower() in ("1", "true", "on")
     flex = str(request.form.get("flex") or "").strip().lower() in ("1", "true", "on")
+    flex_turbo = str(request.form.get("flex_turbo") or "").strip().lower() in ("1", "true", "on")
     timeout_s = h3_engineNG.resolve_h3_quality_timeout_ng(quality, duration_s)
 
     try:
@@ -329,7 +330,7 @@ def h3_generate_ng():
             img_bytes, ext or ".jpg", prompt, duration_s, seed,
             model=model, width=width, height=height, steps=steps, turbo=turbo, v13=v13,
             loras=loras, refmods=refmods, timeout_s=timeout_s, tristep=tristep, flex=flex,
-            chain_prompts=chain_prompts,
+            flex_turbo=flex_turbo, chain_prompts=chain_prompts,
             extend_bytes=extend_file.read() if extend_file else None,
             last_bytes=last_file.read() if last_file else None,
             last_ext=os.path.splitext(last_file.filename or "")[1] if last_file else ".jpg",

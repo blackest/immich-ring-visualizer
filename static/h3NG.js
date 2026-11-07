@@ -89,6 +89,8 @@
     els.tristep = document.getElementById("ng-h3-tristep");
     els.flexRow = document.getElementById("ng-h3-flex-row");
     els.flex = document.getElementById("ng-h3-flex");
+    els.flexTurboRow = document.getElementById("ng-h3-flex-turbo-row");
+    els.flexTurbo = document.getElementById("ng-h3-flex-turbo");
     els.lorasBlock = document.getElementById("ng-h3-loras-block");
     els.lorasRows = document.getElementById("ng-h3-loras-rows");
     els.lorasFix = document.getElementById("ng-h3-loras-fix");
@@ -122,6 +124,7 @@
     else if (els.turbo && els.turbo.checked) fixed = { n: "4", why: "Turbo fixes the step count at 4" };
     else if (els.v13 && els.v13.checked) fixed = { n: "7", why: "Faster Best fixes the step count at 7" };
     else if (els.flex && els.flex.checked) fixed = { n: "6", why: "Flex runs 6 forwards on its own schedule" };
+    else if (els.flexTurbo && els.flexTurbo.checked) fixed = { n: "4", why: "Flex Turbo runs 4 forwards on its own schedule" };
     els.steps.disabled = !!fixed;
     if (fixed) els.steps.value = "";
     els.steps.placeholder = fixed ? fixed.n : stepsDefaults.placeholder;
@@ -402,10 +405,22 @@
             : "this H3 runner has no --pika-flex -- update the vendored runner");
           els.flexRow.classList.toggle("ng-vg-ref-col-disabled", !flexOk);
         }
+        // Flex Turbo needs Pika's published LoRA file AND a runner with the knot / shift / layout flags.
+        var flexTurboOk = !!(h && h.flex_turbo_ok && h.flex_turbo_supported);
+        if (els.flexTurbo) {
+          els.flexTurbo.disabled = !flexTurboOk;
+          if (!flexTurboOk) els.flexTurbo.checked = false;
+        }
+        if (els.flexTurboRow) {
+          els.flexTurboRow.title = flexTurboOk ? "" : (h && h.flex_turbo_ok === false
+            ? "Pika H3 Flex Turbo LoRA not found in the H3 models folder (pika-h3-flex/)"
+            : "this H3 runner lacks the flags Flex Turbo needs -- update the vendored runner");
+          els.flexTurboRow.classList.toggle("ng-vg-ref-col-disabled", !flexTurboOk);
+        }
         syncStepsField();
         // The status answer must not unlock what the Ref2VA model locks off.
         if (refmodUi.on()) {
-          [els.turbo, els.v13].forEach(function (box) {
+          [els.turbo, els.v13, els.flexTurbo].forEach(function (box) {
             if (box) { box.checked = false; box.disabled = true; }
           });
         }
@@ -451,6 +466,7 @@
     var v13 = !!(els.v13 && !els.v13.disabled && els.v13.checked);
     var tristep = !!(els.tristep && !els.tristep.disabled && els.tristep.checked);
     var flex = !!(els.flex && !els.flex.disabled && els.flex.checked);
+    var flexTurbo = !!(els.flexTurbo && !els.flexTurbo.disabled && els.flexTurbo.checked);
 
     var localId = "h" + ++localSeq;
     var item = {
@@ -467,6 +483,7 @@
       v13: v13,
       tristep: tristep,
       flex: flex,
+      flexTurbo: flexTurbo,
       error: null,
       videoUrl: null,
       logTail: [],
@@ -494,6 +511,7 @@
     if (v13) form.append("v13", "true");
     if (tristep) form.append("tristep", "true");
     if (flex) form.append("flex", "true");
+    if (flexTurbo) form.append("flex_turbo", "true");
     var loras = loraUi.selected();
     if (loras.length) form.append("loras", JSON.stringify(loras));
     var refmods = refmodUi.selected();
@@ -766,6 +784,7 @@
         if (els.turbo.checked && els.v13) els.v13.checked = false;
         if (els.turbo.checked && els.tristep) els.tristep.checked = false;
         if (els.turbo.checked && els.flex) els.flex.checked = false;
+        if (els.turbo.checked && els.flexTurbo) els.flexTurbo.checked = false;
         syncSpeedLocks();
       });
       if (els.v13) {
@@ -773,6 +792,7 @@
           if (els.v13.checked) els.turbo.checked = false;
           if (els.v13.checked && els.tristep) els.tristep.checked = false;
           if (els.v13.checked && els.flex) els.flex.checked = false;
+          if (els.v13.checked && els.flexTurbo) els.flexTurbo.checked = false;
           syncSpeedLocks();
         });
       }
@@ -784,6 +804,7 @@
             els.turbo.checked = false;
             if (els.v13) els.v13.checked = false;
             if (els.flex) els.flex.checked = false;
+            if (els.flexTurbo) els.flexTurbo.checked = false;
           }
           syncSpeedLocks();
         });
@@ -795,6 +816,19 @@
             els.turbo.checked = false;
             if (els.v13) els.v13.checked = false;
             if (els.tristep) els.tristep.checked = false;
+            if (els.flexTurbo) els.flexTurbo.checked = false;
+          }
+          syncSpeedLocks();
+        });
+      }
+      // Flex Turbo is the fourth Flex-family speed option: ticking it clears the others too.
+      if (els.flexTurbo) {
+        els.flexTurbo.addEventListener("change", function () {
+          if (els.flexTurbo.checked) {
+            els.turbo.checked = false;
+            if (els.v13) els.v13.checked = false;
+            if (els.tristep) els.tristep.checked = false;
+            if (els.flex) els.flex.checked = false;
           }
           syncSpeedLocks();
         });
@@ -806,7 +840,7 @@
         if (els.lorasRows.children.length < loraUi.limit()) loraUi.addRow();
       });
     }
-    [els.turbo, els.v13, els.tristep, els.flex].forEach(function (box) {
+    [els.turbo, els.v13, els.tristep, els.flex, els.flexTurbo].forEach(function (box) {
       if (box) box.addEventListener("change", loraUi.sync);
       if (box) box.addEventListener("change", syncStepsField);
     });
@@ -864,6 +898,10 @@
     if (els.flex && !els.flex.disabled && !!els.flex.checked !== !!entry.flex) {
       els.flex.checked = !!entry.flex;
       els.flex.dispatchEvent(new Event("change"));
+    }
+    if (els.flexTurbo && !els.flexTurbo.disabled && !!els.flexTurbo.checked !== !!entry.flexTurbo) {
+      els.flexTurbo.checked = !!entry.flexTurbo;
+      els.flexTurbo.dispatchEvent(new Event("change"));
     }
     if (els.lorasRows) {
       els.lorasRows.innerHTML = "";

@@ -56,6 +56,7 @@ class H3JobNG:
     v13: bool = False  # lightx2v v1.3 faster-Best -- forces steps to H3_V13_STEPS
     tristep: bool = False  # TaoMate 3-step "Fast" -- forces steps to H3_TRISTEP_STEPS; allowed with RefMods
     flex: bool = False  # Pika H3 Flex -- six forwards, forces steps to its seven knots; no RefMods
+    flex_turbo: bool = False  # Pika H3 Flex Turbo -- four forwards, FL2VA only, forces steps to its five knots
     loras: list = field(default_factory=list)  # [{"name", "path", "strength"}] user LoRAs
     refmods: list = field(default_factory=list)  # [{"name", "path", "strength", "images", "videos"}] RefMods
     references: list = field(default_factory=list)  # reference_N.<ext> file names in the job dir, in order
@@ -167,6 +168,7 @@ def _worker_loop() -> None:
                 seed=job.seed, config=h3.H3Config(**cfg_kwargs),
                 width=job.width, height=job.height, steps=job.steps,
                 turbo=job.turbo, v13=job.v13, tristep=job.tristep, flex=job.flex,
+                flex_turbo=job.flex_turbo,
                 loras=[(l["path"], l["strength"]) for l in job.loras],
                 refmods=job.refmods, chain_prompts=job.chain_prompts,
                 references=[str(job.job_dir / n) for n in job.references],
@@ -213,6 +215,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      timeout_s: Optional[float] = None,
                      tristep: bool = False,
                      flex: bool = False,
+                     flex_turbo: bool = False,
                      chain_prompts: Optional[list] = None,
                      extend_bytes: Optional[bytes] = None,
                      last_bytes: Optional[bytes] = None,
@@ -264,6 +267,11 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
             raise FileNotFoundError("the Pika H3 Flex Ref2VA adapter is not built (scripts/build_pika_ref2va_adapter.py)"
                                     if model == "h3ref" else
                                     "the Pika H3 Flex adapter is not in the H3 models folder (pika-h3-flex/)")
+    if flex_turbo:
+        h3_flex.check_flex_turbo_ng(flex=flex, turbo=turbo, v13=v13, tristep=tristep, refmods=refmods,
+                                    references=references, model=model)
+        if h3_flex.resolve_flex_turbo_ng(h3.H3_MODELS_ROOT) is None:
+            raise FileNotFoundError("the Pika H3 Flex Turbo LoRA is not in the H3 models folder (pika-h3-flex/)")
     h3._validate_h3_duration_ng(duration_s)
     if (last_bytes is not None or keyframes) and refmods:
         raise ValueError("a RefMod render takes no first, last or keyframe images")
@@ -301,6 +309,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     steps = (h3.H3_TURBO_STEPS if turbo else h3.H3_V13_STEPS if v13
              else h3.H3_TRISTEP_STEPS if tristep
              else h3_flex.FLEX_STEPS if flex
+             else h3_flex.FLEX_TURBO_STEPS if flex_turbo
              else (h3.H3_STEPS if steps is None else int(steps)))
     h3._validate_h3_dims_ng(width, height)
     if v13 and (width, height) != (h3.H3_WIDTH, h3.H3_HEIGHT):
@@ -315,7 +324,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     loras = [{"name": l["name"], "path": p, "strength": st}
              for l, (p, st) in zip(loras, cleaned)]
     if loras:
-        limit = h3.h3_lora_limit_ng(h3.H3_RUNNER, speed_adapter=bool(turbo or v13 or tristep or flex))
+        limit = h3.h3_lora_limit_ng(h3.H3_RUNNER, speed_adapter=bool(turbo or v13 or tristep or flex or flex_turbo))
         if len(loras) > limit:
             raise ValueError(
                 f"this H3 runner takes at most {limit} LoRA(s) with this setup "
@@ -345,13 +354,13 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
                   has_last_frame=last_bytes is not None,
                   keyframe_times=[w for _b, _e, w in keyframes or []], width=width, height=height, steps=steps, turbo=turbo, v13=v13,
-                  tristep=tristep, flex=flex, loras=loras, refmods=refmods, timeout_s=timeout_s,
-                  chain_prompts=chain_prompts or [], extends=extend_bytes is not None,
+                  tristep=tristep, flex=flex, flex_turbo=flex_turbo, loras=loras, refmods=refmods,
+                  timeout_s=timeout_s, chain_prompts=chain_prompts or [], extends=extend_bytes is not None,
                   references=reference_names, reference_size=reference_size, adaln_blocks=adaln_blocks,
                   reroll=reroll, on_done=on_done)
     (job_dir / SETTINGS_NAME).write_text(json.dumps({
         "model": model, "width": width, "height": height, "steps": steps, "turbo": turbo, "v13": v13,
-        "tristep": tristep, "flex": flex, "has_image": has_image, "timeout_s": timeout_s,
+        "tristep": tristep, "flex": flex, "flex_turbo": flex_turbo, "has_image": has_image, "timeout_s": timeout_s,
         "adaln_blocks": adaln_blocks,
         "loras": [{"name": l["name"], "path": l["path"], "strength": l["strength"]} for l in loras],
     }, indent=2), encoding="utf-8")
@@ -436,6 +445,7 @@ def job_status_ng(job_id: str) -> dict:
         "v13": job.v13,
         "tristep": job.tristep,
         "flex": job.flex,
+        "flex_turbo": job.flex_turbo,
         "loras": [{"name": l["name"], "strength": l["strength"]} for l in job.loras],
         "refmods": [{"name": r["name"], "strength": r["strength"]} for r in job.refmods],
         "references": len(job.references),
