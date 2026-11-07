@@ -575,7 +575,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           keyframes: Optional[list] = None,
                           references: Optional[list] = None,
                           reference_size: str = "match",
-                          adaln_blocks: str = "") -> dict:
+                          adaln_blocks: str = "",
+                          fast_vae: bool = False) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -933,6 +934,14 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                    f"(~{frames / H3_FRAME_RATE:.1f}s) at {width}x{height}, "
                    f"{steps} steps{turbo_note}, seed={seed}")
 
+    # "Fast VAE" (opt-in, off by default): decode the video in float16 instead of the runner's
+    # float32 default. It uses only the vendored runner's own H3_VAE_DTYPE switch (video_vae.py
+    # resolved_decode_dtype), so a Phosphene update cannot change it; off = the old path exactly.
+    run_env = _clean_subprocess_env_ng()
+    if fast_vae:
+        run_env["H3_VAE_DTYPE"] = "float16"
+        if on_log:
+            on_log("[h3] Fast VAE: video decode in float16 (H3_VAE_DTYPE=float16)")
     with _H3_SUBPROCESS_LOCK:
         from model_offloadNG import offload_resident_models_ng
         offload_resident_models_ng(on_log=on_log)
@@ -941,7 +950,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            env=_clean_subprocess_env_ng(),
+            env=run_env,
             cwd=str(Path(runner).parent.parent),  # the runner's own folder
             start_new_session=True,
         )
@@ -1051,4 +1060,5 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "refmods": [{"name": Path(r["path"]).stem, "strength": r["strength"]} for r in refmods],
         "references": [Path(r).name for r in references],
         "adaln_blocks": adaln_blocks,
+        "fast_vae": bool(fast_vae),
     }

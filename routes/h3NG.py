@@ -338,7 +338,8 @@ def h3_generate_ng():
                        for f, t in zip(kf_files, kf_times)],
             references=[(f.read(), os.path.splitext(f.filename or "")[1]) for f in ref_files],
             reference_size=str(request.form.get("reference_size") or "match").strip().lower(),
-            adaln_blocks=str(request.form.get("adaln_blocks") or "").strip())
+            adaln_blocks=str(request.form.get("adaln_blocks") or "").strip(),
+            fast_vae=str(request.form.get("fast_vae") or "").strip().lower() in ("1", "true", "on"))
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:

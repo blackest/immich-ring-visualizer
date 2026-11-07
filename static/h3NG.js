@@ -87,6 +87,7 @@
     els.v13 = document.getElementById("ng-h3-v13");
     els.tristepRow = document.getElementById("ng-h3-tristep-row");
     els.tristep = document.getElementById("ng-h3-tristep");
+    els.fastVae = document.getElementById("ng-h3-fastvae");
     els.flexRow = document.getElementById("ng-h3-flex-row");
     els.flex = document.getElementById("ng-h3-flex");
     els.flexTurboRow = document.getElementById("ng-h3-flex-turbo-row");
@@ -510,6 +511,7 @@
     if (turbo) form.append("turbo", "true");
     if (v13) form.append("v13", "true");
     if (tristep) form.append("tristep", "true");
+    if (els.fastVae && els.fastVae.checked) form.append("fast_vae", "true");
     if (flex) form.append("flex", "true");
     if (flexTurbo) form.append("flex_turbo", "true");
     var loras = loraUi.selected();
