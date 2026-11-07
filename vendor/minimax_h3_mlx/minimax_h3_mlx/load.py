@@ -13,7 +13,9 @@ error accumulates coherently along the denoising trajectory.
 
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -203,6 +205,15 @@ def load_dit(
     return model
 
 
+def _video_vae_classes():
+    """The video VAE classes: video_vae (the original, default) or video_vae_v2 (Phosphene v5.0-image3's
+    decoder: mixed-precision blocks, compiled, pipelined) when ``H3_VAE_IMPL=v2``. Opt-in, so the
+    default path is exactly what it was."""
+    use_v2 = os.environ.get("H3_VAE_IMPL", "").strip().lower() == "v2"
+    mod = importlib.import_module(".video_vae_v2" if use_v2 else ".video_vae", __package__)
+    return mod.VideoVAE, mod.VideoVAEConfig
+
+
 def load_video_vae(model_dir: str | Path, strict: bool = True):
     """Load the video VAE from a released ``video_vae/`` directory.
 
@@ -210,7 +221,7 @@ def load_video_vae(model_dir: str | Path, strict: bool = True):
     the port reproduces. Only the convolution weights move: torch stores
     ``(C_out, C_in, kD, kH, kW)`` and MLX wants ``(C_out, kD, kH, kW, C_in)``.
     """
-    from .video_vae import VideoVAE, VideoVAEConfig
+    VideoVAE, VideoVAEConfig = _video_vae_classes()
 
     model_dir = Path(model_dir)
     with open(model_dir / "config.json") as fh:
@@ -276,7 +287,7 @@ def load_video_vae(model_dir: str | Path, strict: bool = True):
 
 def load_compact_video_vae(path: str | Path, strict: bool = True):
     """Load ddalcu's self-describing single-file video VAE export."""
-    from .video_vae import VideoVAE, VideoVAEConfig
+    VideoVAE, VideoVAEConfig = _video_vae_classes()
 
     path = Path(path)
     wrapper = _metadata_json(safetensor_metadata(path), "minimax_h3_video_vae")

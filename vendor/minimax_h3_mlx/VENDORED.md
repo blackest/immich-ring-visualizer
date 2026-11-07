@@ -46,3 +46,9 @@ here, re-run `run_tests.sh`, then render once. Nothing here changes when Phosphe
 `phosphene/v5.0` branch has its own `--reference IMAGE` (a face or character sheet on the FL2VA model, given to every window),
 which is a different feature under the same name; renaming ours means a later sync from upstream cannot collide with it.
 Our flag is for the Ref2VA DiT: pictures and clips, one window.
+
+**VAE v2 (2026-11-07):** `minimax_h3_mlx/video_vae_v2.py` is a verbatim copy of `minimax_h3_mlx/video_vae.py`
+from Phosphene's engine pin `cd07c3c` (`phosphene/v5.0-image3`, Apache-2.0): mixed-precision blocks, compiled blocks,
+`decode_chunks`. It is OPT-IN (`H3_VAE_IMPL=v2`, the "VAE v2" checkbox); the default decoder is still `video_vae.py`.
+Changed to select it: `load.py` (`_video_vae_classes`) and `scripts/generate_staged.py` (module pick at import,
+`decode_video` uses `decode_chunks` when the model has it).

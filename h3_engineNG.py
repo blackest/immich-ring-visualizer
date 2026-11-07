@@ -576,7 +576,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           references: Optional[list] = None,
                           reference_size: str = "match",
                           adaln_blocks: str = "",
-                          fast_vae: bool = False) -> dict:
+                          fast_vae: bool = False,
+                          vae_v2: bool = False) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -938,7 +939,13 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     # float32 default. It uses only the vendored runner's own H3_VAE_DTYPE switch (video_vae.py
     # resolved_decode_dtype), so a Phosphene update cannot change it; off = the old path exactly.
     run_env = _clean_subprocess_env_ng()
-    if fast_vae:
+    if vae_v2:
+        # "VAE v2": the vendored copy of Phosphene v5.0-image3's decoder (video_vae_v2.py: mixed
+        # precision, compiled blocks, pipelined). Its own default dtype applies, so it wins over Fast VAE.
+        run_env["H3_VAE_IMPL"] = "v2"
+        if on_log:
+            on_log("[h3] VAE v2: image3 decoder (H3_VAE_IMPL=v2)")
+    elif fast_vae:
         run_env["H3_VAE_DTYPE"] = "float16"
         if on_log:
             on_log("[h3] Fast VAE: video decode in float16 (H3_VAE_DTYPE=float16)")
@@ -1061,4 +1068,5 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "references": [Path(r).name for r in references],
         "adaln_blocks": adaln_blocks,
         "fast_vae": bool(fast_vae),
+        "vae_v2": bool(vae_v2),
     }

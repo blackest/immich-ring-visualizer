@@ -92,7 +92,12 @@ from minimax_h3_mlx.scheduler import (
 )
 from minimax_h3_mlx.stepcache import StepResidualCache
 from minimax_h3_mlx.text_encoder import MiniMaxH3TextEncoder
-from minimax_h3_mlx.video_vae import resolved_decode_batch, resolved_decode_dtype
+import importlib as _importlib
+_vae_mod = _importlib.import_module(
+    "minimax_h3_mlx.video_vae_v2"
+    if __import__("os").environ.get("H3_VAE_IMPL", "").strip().lower() == "v2"
+    else "minimax_h3_mlx.video_vae")
+resolved_decode_batch, resolved_decode_dtype = _vae_mod.resolved_decode_batch, _vae_mod.resolved_decode_dtype
 
 
 def gb(value: int) -> float:
@@ -243,9 +248,25 @@ def decode_video(model, rows, frames: int, latent_frames: int, latent_h: int, la
     )
     mean = mx.array(np.array(cfg.latents_mean, np.float32)).reshape(1, -1, 1, 1, 1)
     std = mx.array(np.array(cfg.latents_std, np.float32)).reshape(1, -1, 1, 1, 1)
-    decoded = np.array(model.decode((latents * std + mean).astype(mx.float32)))
+    z = (latents * std + mean).astype(mx.float32)
     pixel_mean = np.array(PIXEL_MEAN, np.float32).reshape(1, 3, 1, 1, 1)
     pixel_std = np.array(PIXEL_STD, np.float32).reshape(1, 3, 1, 1, 1)
+    if hasattr(model, "decode_chunks"):
+        # Only the v2 decoder (H3_VAE_IMPL=v2) has decode_chunks: the next temporal piece is on the
+        # GPU while this one is copied to uint8. Same values as the whole-clip path, lower decode peak.
+        out = None
+        cursor = 0
+        for piece in model.decode_chunks(z):
+            if cursor >= frames:
+                continue
+            host = np.clip(np.array(piece) * pixel_std + pixel_mean, 0.0, 1.0)
+            host = host[0].transpose(1, 2, 3, 0)[: frames - cursor]
+            if out is None:
+                out = np.empty((frames, *host.shape[1:]), np.uint8)
+            out[cursor : cursor + len(host)] = (host * 255.0 + 0.5).astype(np.uint8)
+            cursor += len(host)
+        return out[:cursor]
+    decoded = np.array(model.decode(z))
     decoded = np.clip(decoded * pixel_std + pixel_mean, 0.0, 1.0)
     decoded = decoded[0].transpose(1, 2, 3, 0)[:frames]
     return (decoded * 255.0 + 0.5).astype(np.uint8)
