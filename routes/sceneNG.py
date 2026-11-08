@@ -95,7 +95,8 @@ def scene_generate_ng():
             script=str(form.get("script") or ""), characters=_characters_from_request(),
             quality=str(form.get("quality") or "draft").strip().lower(), fast=_truthy(form.get("fast"), True),
             finish_pass=_truthy(form.get("finish")), finish_params=finish_params,
-            match_exposure=_truthy(form.get("match_exposure"), True), seed=int(seed_raw) if seed_raw else None)
+            match_exposure=_truthy(form.get("match_exposure"), True), seed=int(seed_raw) if seed_raw else None,
+            ambience_pass=_truthy(form.get("ambience")))
     except ValueError as e:        # SceneRequestError, a bad number, or a refusal from the speech/finish checks
         return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True, "job_id": job.job_id, "poll_url": f"/api/ng/scene/jobs/{job.job_id}"}), 202

@@ -53,6 +53,7 @@
     els.quality = $("ng-scene-quality");
     els.fast = $("ng-scene-fast");
     els.match = $("ng-scene-match");
+    els.ambience = $("ng-scene-ambience");
     els.finish = $("ng-scene-finish");
     els.finishNote = $("ng-scene-finish-note");
     els.finishOpts = $("ng-scene-finish-opts");
@@ -505,6 +506,7 @@
   function applyJob(item, job) {
     item.stage = job.stage || item.stage;
     item.clips = job.clips || item.clips;
+    item.bedErrors = job.bed_errors || {};
     if (item.clips.length) {
       item.title = item.clips[0].speaker + ": " + item.clips[0].text +
         (item.clips.length > 1 ? "  (+" + (item.clips.length - 1) + " more)" : "");
@@ -527,6 +529,7 @@
     if (item.status === "submitting") return "submitting...";
     if (item.status === "queued") return "queued";
     if (item.stage === "voicing") return "making the voices...";
+    if (item.stage === "ambience") return "making the ambience...";
     if (item.stage === "joining") return "joining the clips...";
     var n = item.clips.length;
     var cur = item.clips.filter(function (c) { return c.status === "rendering"; })[0];
@@ -644,6 +647,11 @@
         row.appendChild(dl);
       }
     }
+    if (item.status === "done" && item.bedErrors && Object.keys(item.bedErrors).length) {
+      var bw = mk("div", "log", "No ambience for: " + Object.keys(item.bedErrors).join(", "));
+      bw.style.color = "var(--ng-danger)";
+      row.appendChild(bw);
+    }
     var warn = item.clips.filter(function (c) { return c.finish_error; });
     if (item.status === "done" && warn.length) {
       var w = mk("div", "log", "The exposure step did not run on " + warn.length + " clip(s): " + warn[0].finish_error);
@@ -717,6 +725,7 @@
     form.append("quality", els.quality.value || "draft");
     form.append("fast", els.fast.value === "1" ? "true" : "false");           // sent explicitly: empty means "default on"
     form.append("match_exposure", els.match.checked ? "true" : "false");
+    if (els.ambience.checked) form.append("ambience", "true");
     if (els.finish.checked) {
       form.append("finish", "true");
       if (els.fClarity.value !== "") form.append("clarity_strength", els.fClarity.value);

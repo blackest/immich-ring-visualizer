@@ -282,6 +282,7 @@ class RouteTests(_Base):
         self.assertEqual((k.looks["battlements"][:2], w.looks["hall"][:2]), ((b"PNGK", ".png"), (b"PNGW", ".jpg")))
         self.assertEqual((w.voice["clip_bytes"], w.voice["clip_ext"]), (b"RIFFvoice", ".wav"))
         self.assertEqual((job.fast, job.match_exposure, job.finish, job.seed), (True, True, False, 11))   # fast and match default on
+        self.assertFalse(job.ambience)                                                                   # ambience is opt-in
         jid = job.job_id
         self.assertEqual(self.client.get(f"/api/ng/scene/jobs/{jid}").get_json()["status"], "queued")
         self.assertEqual(len(self.client.get("/api/ng/scene/jobs").get_json()["jobs"]), 1)
@@ -330,6 +331,45 @@ def solid_png(color, size=(200, 120)):
     buf = io.BytesIO()
     Image.new("RGB", size, color).save(buf, "PNG")
     return buf.getvalue()
+
+
+class AmbienceTests(_Base):
+    def test_one_bed_per_setting_is_made_first_then_mixed_under_the_clips_of_that_setting(self):
+        job = self.start(seed=11, ambience_pass=True)
+        scene._run_scene(job)
+        beds = [c for c in self.h3_calls if c["first"] is None]
+        self.assertEqual(len(beds), 2)                                     # two settings: battlements and great hall
+        self.assertIn("on the battlements", beds[0]["prompt"])
+        self.assertIn("in the great hall", beds[1]["prompt"])
+        self.assertTrue(all("no speech" in c["prompt"] and c["loras"] == [] for c in beds))
+        self.assertEqual(set(job.beds), {"on the battlements", "in the great hall"})
+        self.assertEqual(job.bed_errors, {})
+        self.assertEqual(self.h3_calls[0]["first"], None)                  # beds come before the dialogue clips
+        self.assertEqual(len(self.h3_calls), 5)
+        self.assertTrue(Path(job.output_path).is_file())
+        self.assertTrue(all((job.job_dir / f"shot{i:02d}_ambience.mp4").is_file() for i in (1, 2, 3)))
+        self.assertTrue(scene.job_status_ng(job.job_id)["ambience"])
+
+    def test_off_by_default_and_a_failed_bed_leaves_only_that_setting_dry(self):
+        job = self.start()
+        scene._run_scene(job)
+        self.assertEqual((len(self.h3_calls), job.beds), (3, {}))
+        self.h3_calls.clear()
+        real = scene.h3_jobs.start_h3_job_ng
+
+        def flaky(first, *a, **kw):
+            j = real(first, *a, **kw)
+            if first is None and "great hall" in a[1]:
+                j.error = "no sound"
+            return j
+        with mock.patch.object(scene.h3_jobs, "start_h3_job_ng", flaky):
+            job2 = self.start(ambience_pass=True)
+            scene._run_scene(job2)
+        self.assertEqual(set(job2.beds), {"on the battlements"})
+        self.assertIn("no sound", job2.bed_errors["in the great hall"])
+        self.assertTrue(Path(job2.output_path).is_file())                  # the scene still came out
+        self.assertTrue((job2.job_dir / "shot01_ambience.mp4").is_file())
+        self.assertFalse((job2.job_dir / "shot02_ambience.mp4").exists())
 
 
 class SharedFrameTests(_Base):

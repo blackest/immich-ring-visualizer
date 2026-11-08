@@ -12,6 +12,8 @@ One scene job chains the pieces we already have:
                   for that line's setting), the line's setting in its prompt, and that line's audio. Fixed 5 s windows.
   (A line starting with `&` shares the previous line's shot: two speakers in ONE frame, as a split-screen first frame
    made from their two pictures and one audio track carrying both voices in turn; see scene_scriptNG.)
+  (Optional, between 1 and 2: one 5 s ambience bed per setting, H3's own sound of the empty place, mixed under the
+   dialogue of every clip in that setting; a bed that fails leaves that setting dry, never stops the scene.)
   3. joining   -- the clips trimmed to their speech and cut together in script order, with an exposure hold on each
                   clip (H3 clips brighten as they play, which stepped 16-20 levels at every cut) and, optionally, the
                   full soft-finish look. A failed finish never loses a render: that clip is joined unfinished.
@@ -39,6 +41,7 @@ import h3_jobsNG as h3_jobs
 import h3_lora_libraryNG as h3_lora_lib
 import numpy as np
 
+import scene_ambienceNG as ambience
 import scene_composeNG as compose
 import scene_scriptNG as script_mod
 import scene_voiceNG as voice_mod
@@ -112,6 +115,7 @@ class SceneJobNG:
     finish: bool
     finish_params: dict
     match_exposure: bool
+    ambience: bool
     seed: Optional[int]
     timeout_s: Optional[float]
     job_dir: Path
@@ -124,6 +128,8 @@ class SceneJobNG:
     error_type: Optional[str] = None
     cancelled: bool = False
     speech_job_ids: dict = field(default_factory=dict)   # speaker key -> speech job id
+    beds: dict = field(default_factory=dict)             # casefolded setting -> path of its ambience wav
+    bed_errors: dict = field(default_factory=dict)       # casefolded setting -> why that setting has no bed
     output_path: Optional[str] = None
 
 
@@ -186,7 +192,8 @@ def _validate_voice(ch: SceneCharacter, speakable: str) -> None:
 
 def start_scene_job_ng(script: str, characters: list, quality: str = "draft", fast: bool = True,
                        finish_pass: bool = False, finish_params: Optional[dict] = None,
-                       match_exposure: bool = True, seed: Optional[int] = None) -> SceneJobNG:
+                       match_exposure: bool = True, seed: Optional[int] = None,
+                       ambience_pass: bool = False) -> SceneJobNG:
     """Validate everything that can be checked now (a bad request fails the POST, not an hour in) and enqueue."""
     if quality not in QUALITIES:
         raise SceneRequestError(f"quality must be one of {', '.join(QUALITIES)}")
@@ -232,6 +239,7 @@ def start_scene_job_ng(script: str, characters: list, quality: str = "draft", fa
     job = SceneJobNG(
         job_id=job_id, script=script, lines=lines, characters=chars, quality=quality, width=width, height=height,
         fast=bool(fast), finish=bool(finish_pass), finish_params=finish_clean, match_exposure=bool(match_exposure),
+        ambience=bool(ambience_pass),
         seed=seed, timeout_s=h3.resolve_h3_quality_timeout_ng(quality, CLIP_S), job_dir=job_dir,
         clips=[_clip_for(i, shot) for i, shot in enumerate(shots)])
     with _JOBS_LOCK:
@@ -363,6 +371,35 @@ def _render_stage(job: SceneJobNG, pieces: dict) -> None:
         clip.mp4_path, clip.status = hj.mp4_path, "done"
 
 
+def _bed_key(setting: str) -> str:
+    return setting.split(" | ")[0].strip().casefold()
+
+
+def _ambience_stage(job: SceneJobNG) -> None:
+    """One bed per distinct non-empty setting (a shared frame uses its first setting). A failure only leaves that
+    setting dry."""
+    wanted: dict = {}
+    for clip in job.clips:
+        key = _bed_key(clip.setting)
+        if key and key not in wanted:
+            wanted[key] = clip.setting.split(" | ")[0].strip()
+    for n, (key, setting) in enumerate(wanted.items(), 1):
+        job.stage = "ambience"
+        try:
+            hj = h3_jobs.start_h3_job_ng(
+                None, ".jpg", ambience.ambience_prompt_ng(setting), CLIP_S,
+                seed=None if job.seed is None else job.seed + 100 + n, model="h3q8", width=job.width, height=job.height,
+                steps=talk.TALK_STEPS, tristep=job.fast, loras=[], timeout_s=job.timeout_s)
+            _wait_for(job, lambda hj=hj: hj.finished_at is not None, lambda hj=hj: h3_jobs.cancel_h3_job_ng(hj.job_id))
+            if hj.error:
+                raise RuntimeError(hj.error)
+            job.beds[key] = ambience.extract_audio_ng(hj.mp4_path, str(job.job_dir / f"ambience_{n}.wav"))
+        except SceneCancelled:
+            raise
+        except Exception as e:  # noqa: BLE001 -- the scene goes on without this bed
+            job.bed_errors[key] = str(e)
+
+
 def _finish_clip(job: SceneJobNG, clip: SceneClip) -> str:
     """The clip to join: held to its own starting exposure (and given the full look when asked). If that step fails
     the render is kept and joined as it came."""
@@ -406,13 +443,21 @@ def _join_stage(job: SceneJobNG) -> None:
     parts = []
     for clip in job.clips:
         clip.final_path = _finish_clip(job, clip)
-        parts.append((clip.final_path, min(CLIP_S, (clip.audio_seconds or CLIP_S) + TAIL_S)))
+        keep = min(CLIP_S, (clip.audio_seconds or CLIP_S) + TAIL_S)
+        bed = job.beds.get(_bed_key(clip.setting))
+        if bed:
+            try:
+                clip.final_path = ambience.mix_ambience_ng(
+                    clip.final_path, bed, str(job.job_dir / f"shot{clip.index + 1:02d}_ambience.mp4"), keep)
+            except Exception as e:  # noqa: BLE001 -- the dry clip is still good
+                job.bed_errors[_bed_key(clip.setting)] = f"mixing: {e}"
+        parts.append((clip.final_path, keep))
     out = job.job_dir / "scene.mp4"
     join_clips_ng(parts, str(out))
     job.output_path = str(out)
     (job.job_dir / "scene.json").write_text(json.dumps({
         "script": job.script, "quality": job.quality, "fast": job.fast, "finish": job.finish,
-        "match_exposure": job.match_exposure, "seed": job.seed,
+        "match_exposure": job.match_exposure, "ambience": job.ambience, "bed_errors": job.bed_errors, "seed": job.seed,
         "clips": [{"index": c.index, "speaker": c.speaker, "setting": c.setting, "text": c.text, "shared": c.shared,
                    "lines": c.line_indexes, "audio_seconds": c.audio_seconds, "h3_job_id": c.h3_job_id,
                    "finish_error": c.finish_error}
@@ -422,6 +467,8 @@ def _join_stage(job: SceneJobNG) -> None:
 def _run_scene(job: SceneJobNG) -> None:
     job.stage = "voicing"
     pieces = _voice_stage(job)
+    if job.ambience:
+        _ambience_stage(job)
     job.stage = "rendering"
     _render_stage(job, pieces)
     job.stage = "joining"
@@ -490,7 +537,8 @@ def job_status_ng(job_id: str) -> dict:
     return {
         "job_id": job.job_id, "status": status, "stage": job.stage, "lines": len(job.lines), "shots": len(job.clips),
         "quality": job.quality,
-        "fast": job.fast, "finish": job.finish, "match_exposure": job.match_exposure, "seed": job.seed,
+        "fast": job.fast, "finish": job.finish, "match_exposure": job.match_exposure, "ambience": job.ambience,
+        "bed_errors": job.bed_errors, "seed": job.seed,
         "clips": clips, "error": job.error, "error_type": job.error_type, "cancelled": bool(job.cancelled),
         "queued_at": job.queued_at, "dispatched_at": job.dispatched_at, "finished_at": job.finished_at,
         "video_url": f"/api/ng/scene/jobs/{job.job_id}/video" if job.stage == "done" else None,
