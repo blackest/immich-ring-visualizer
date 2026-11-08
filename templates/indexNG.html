@@ -1192,6 +1192,24 @@
             <div id="ng-talk-queue"></div>
           </div>
 
+          <!-- Scene view's rail pane -- the scene queue (voices, one clip per line, then the join). See
+               static/sceneNG.js. -->
+          <div id="ng-scene-pane" style="display: none">
+            <div id="ng-scene-unavailable" class="ng-chat-banner" style="display: none">
+              <div id="ng-scene-unavailable-text"></div>
+            </div>
+            <div id="ng-scene-queue-head">
+              <span>Scene queue <span id="ng-scene-queue-count"></span></span>
+              <button type="button" id="ng-scene-queue-clear" class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin: 0">clear finished</button>
+            </div>
+            <p id="ng-scene-queue-empty" class="ng-placeholder">
+              Nothing queued yet. Set up your characters, write the script and press
+              &ldquo;Make the scene&rdquo;.
+            </p>
+            <div id="ng-scene-queue"></div>
+          </div>
+
           <!-- Music view's rail pane -- render queue for YuE2
                style+lyrics-to-song jobs. See static/musicNG.js. -->
           <div id="ng-music-pane" style="display: none">
@@ -3467,6 +3485,80 @@
               </div>
             </div>
 
+            <!-- Scene view's main region -- characters (a face and a voice each) and a script of lines in, one joined
+                 clip with sound out. See static/sceneNG.js. -->
+            <div id="ng-scene-main" style="display: none">
+              <div id="ng-scene-form" class="ng-gen-canvas">
+                <div class="ng-gen-label" style="margin-top: 0">Characters</div>
+                <p class="ng-placeholder">
+                  Each character has a face (a LoRA and/or pictures) and a voice. Give a picture a setting name
+                  (like <code>battlements</code>) and a script line tagged <code>[battlements]</code> starts from it.
+                </p>
+                <div id="ng-scene-cards"></div>
+                <button type="button" id="ng-scene-add-char" class="ng-gen-btn ng-gen-btn-quiet"
+                  style="width: auto">add a character</button>
+
+                <label class="ng-gen-label" for="ng-scene-script">Script</label>
+                <textarea id="ng-scene-script" class="ng-gen-input" rows="9"
+                  placeholder="KNIGHT [on the battlements]: The wall has stood a long time, and so have I.&#10;WOMAN [in the great hall]: Then come in out of the wind.&#10;KNIGHT: Some nights I count the stones."></textarea>
+                <div class="ng-gen-linkrow">
+                  <button type="button" id="ng-scene-selectall" class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto">Select all</button>
+                  <span id="ng-scene-count" class="ng-gen-status"></span>
+                </div>
+                <p class="ng-placeholder">
+                  One line is one 5 second clip (about 12 words). End each line with a full stop so there is a breath
+                  between lines. The <code>[setting]</code> is optional; a line without one stays where that speaker was.
+                </p>
+
+                <div class="ng-gen-identity-row">
+                  <div>
+                    <label class="ng-gen-label" for="ng-scene-quality">Quality</label>
+                    <select id="ng-scene-quality" class="ng-gen-input">
+                      <option value="draft">Draft (640x384)</option>
+                      <option value="standard">Standard (768x448)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-scene-fast">Speed</label>
+                    <select id="ng-scene-fast" class="ng-gen-input">
+                      <option value="1">Fast (about 6 min per line)</option>
+                      <option value="0">Full quality (about 20 min per line)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-scene-seed">Seed (optional)</label>
+                    <input id="ng-scene-seed" class="ng-gen-input" type="number" step="1" placeholder="random" />
+                  </div>
+                </div>
+
+                <label class="ng-checkbox-row"><input type="checkbox" id="ng-scene-match" checked />
+                  Keep each clip&rsquo;s exposure steady (clips brighten as they play, which shows as a step at every cut)</label>
+                <label class="ng-checkbox-row"><input type="checkbox" id="ng-scene-finish" />
+                  Soft finish on every clip (a gentle colour pass: lifts crushed shadows, softens skin)</label>
+                <p id="ng-scene-finish-note" class="ng-placeholder" style="display: none"></p>
+                <div id="ng-scene-finish-opts" class="ng-gen-identity-row" style="display: none">
+                  <div>
+                    <label class="ng-gen-label" for="ng-scene-finish-clarity">Clarity</label>
+                    <input id="ng-scene-finish-clarity" class="ng-gen-input" type="number" min="-0.5" max="0" step="0.05" value="-0.2" />
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-scene-finish-tone">Shadow lift</label>
+                    <input id="ng-scene-finish-tone" class="ng-gen-input" type="number" min="0" max="1" step="0.05" value="0.25" />
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-scene-finish-sat">Saturation</label>
+                    <input id="ng-scene-finish-sat" class="ng-gen-input" type="number" min="0.5" max="1.2" step="0.05" value="0.9" />
+                  </div>
+                </div>
+
+                <div class="ng-gen-action-bar">
+                  <button type="button" id="ng-scene-generate" class="ng-gen-btn">Make the scene</button>
+                </div>
+                <div id="ng-scene-status" class="ng-gen-status"></div>
+              </div>
+            </div>
+
             <!-- Music view's main region -- style + lyrics + length +
                  mode form. See static/musicNG.js. Text in, audio out --
                  no reference image at all, unlike every other Generate-
@@ -4308,6 +4400,7 @@
         <button class="ng-task-btn" data-task="musicedit">Music Edit</button>
         <button class="ng-task-btn" data-task="speech">Speech</button>
         <button class="ng-task-btn" data-task="talk">Talk</button>
+        <button class="ng-task-btn" data-task="scene">Scene</button>
         <button class="ng-task-btn" data-task="chat">Chat</button>
         <button class="ng-task-btn" data-task="rachel">Rachel</button>
         <button class="ng-task-btn" data-task="hdmulti">Hd-Multi</button>
@@ -4379,6 +4472,7 @@
     <script src="{{ url_for('static', filename='musiceditNG.js') }}"></script>
     <script src="{{ url_for('static', filename='speechNG.js') }}"></script>
     <script src="{{ url_for('static', filename='talkNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='sceneNG.js') }}"></script>
     <script src="{{ url_for('static', filename='hdmultiNG.js') }}"></script>
     <script src="{{ url_for('static', filename='kleinLayoutNG.js') }}"></script>
     <script src="{{ url_for('static', filename='kleinNG.js') }}"></script>

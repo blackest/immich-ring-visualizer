@@ -3746,3 +3746,47 @@ textarea.ng-gen-input.ng-textarea-expanded {
 }
 #ng-talk-clip-wrap.drag, #ng-talk-face-wrap.drag { outline: 2px dashed var(--ng-accent); }
 #ng-talk-queue video { width: 100%; border-radius: 4px; margin-top: 4px; grid-column: 1 / -1; }
+
+/* ============================================================
+   Scene view (task === "scene") -- rail pane #ng-scene-pane = the scene queue, main #ng-scene-main = characters,
+   script and options. Same shape as the Talk view.
+   ============================================================ */
+#ng-scene-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  display: flex;
+  flex-direction: column;
+}
+#ng-scene-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8571rem;
+  color: var(--ng-text);
+  margin-bottom: 10px;
+}
+#ng-scene-queue-count { color: var(--ng-text-dim); }
+#ng-scene-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 16px 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+#ng-scene-queue video { width: 100%; border-radius: 4px; margin-top: 4px; grid-column: 1 / -1; }
+.ng-scene-card {
+  border: 1px solid var(--ng-border);
+  border-radius: 8px;
+  background: var(--ng-panel-raised);
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.ng-scene-card-head { display: flex; gap: 8px; align-items: center; }
+.ng-scene-look-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+.ng-scene-look-row.drag, .ng-scene-card .ng-dropzone.drag { outline: 2px dashed var(--ng-accent); }
+

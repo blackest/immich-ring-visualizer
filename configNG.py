@@ -81,6 +81,7 @@ MUSIC_JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_music_job_logsNG")
 # voice, a character's saved voice sample, or an uploaded clip. One folder per job
 # holds the script, the reference clip and the finished wav + its .json record.
 SPEECHGEN_DIR = os.path.join(EXPORT_DIR, "_speechgen")
+SCENEGEN_DIR = os.path.join(EXPORT_DIR, "_scenegen")  # Scene view: the joined scene, its script and per-line audio
 
 # Hd-Multi view (routes/hdmultiNG.py) -- one-off HiDream edit/multi-ref
 # generations (1-3 reference images + a prompt -> one result image).

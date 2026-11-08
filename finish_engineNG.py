@@ -145,6 +145,7 @@ def finish_video_ng(src_mp4: str, out_path: str, params: Optional[dict] = None,
             raise RuntimeError(f"the finish did not complete within {int(timeout_s)} s")
         time.sleep(_POLL_S)
     reader.join(timeout=5)
+    proc.stdout.close()
     if proc.returncode != 0 or not out.is_file():
         raise RuntimeError("the finish failed: " + (" | ".join(tail[-3:]) or f"exit code {proc.returncode}"))
     return {"path": str(out), "params": p}
