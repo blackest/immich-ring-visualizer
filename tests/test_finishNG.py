@@ -73,6 +73,24 @@ class MathTests(unittest.TestCase):
         lift = out[0, :, 0] - ramp[0, :, 0]
         self.assertGreater(lift[3], lift[9])        # a low-mid is lifted more than a near-white; the lift tapers to nothing at white
 
+    def test_the_exposure_hold_pulls_a_brightening_clip_back_to_its_start_and_is_off_at_zero(self):
+        np = self.np
+        def clip(levels):
+            return [np.full((40, 40, 3), v, dtype=np.float32) for v in levels]
+        frames = clip([0.32, 0.32, 0.32] + [0.32 + 0.0015 * i for i in range(1, 40)])     # brightens as it plays, about +18% like the knight clips
+        hold = self.sf.ExposureHold(1.0)
+        out = [hold.apply(f) for f in frames]
+        self.assertAlmostEqual(float(out[0].mean()), 0.32, places=4)                         # the reference frames are untouched
+        self.assertLess(abs(float(out[-1].mean()) - 0.32), 0.02)                             # the late frame is back near the start
+        self.assertLess(float(out[-1].mean()), float(frames[-1].mean()))
+        off = self.sf.ExposureHold(0.0)
+        self.assertTrue(all(np.array_equal(off.apply(f), f) for f in frames))
+        shared = self.sf.ExposureHold(1.0, target=0.25)                                       # a shared target darkens a bright clip to match
+        self.assertLess(float(shared.apply(frames[0]).mean()), 0.32)
+        for _ in range(60):
+            g = shared.apply(clip([0.9])[0])
+        self.assertGreaterEqual(float(g.mean()), 0.9 * self.sf.HOLD_GAIN_LIMITS[0] - 1e-6)   # never more than the gain limit
+
     def test_strength_zero_and_saturation_one_is_the_identity_and_saturation_trims_chroma(self):
         np = self.np
         img = np.random.default_rng(2).random((8, 8, 3)).astype(np.float32)

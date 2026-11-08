@@ -7,6 +7,8 @@ The recipe is the one from the Ref2VA look-fix tutorial, measured here on a char
   1. Clarity at a small negative strength (default -0.20, radius 24): softer local contrast / skin texture.
   2. A Cineon-ish tone map at a low strength (default 0.25) with saturation 0.9: black and white stay put, low
      shadows lift gently.
+  0. First, an exposure hold (default 1.0 = full, 0 = off): H3 clips brighten as they play (centre 81 -> 96 over 3 s
+     on the knight clips), which shows as a step at every cut. The hold keeps each frame at its first-frame level.
 
 What it does NOT do: bring back shadows that were clipped during generation (the hybrid AdaLN block range does
 most of that work). The tone mapper's Filmic modes are the wrong choice for normal gamma video -- at neutral
@@ -36,12 +38,12 @@ from typing import Callable, Optional
 
 FINISH_SCRIPT = Path(__file__).resolve().parent / "vendor" / "soft_finish" / "soft_finish.py"
 
-DEFAULTS = {"clarity_strength": -0.20, "clarity_radius": 24.0, "tone_strength": 0.25, "saturation": 0.9}
+DEFAULTS = {"clarity_strength": -0.20, "clarity_radius": 24.0, "tone_strength": 0.25, "saturation": 0.9, "hold": 1.0}
 # The ranges the form offers; wider than that would only invite a bad grade.
 LIMITS = {"clarity_strength": (-0.5, 0.0), "clarity_radius": (4.0, 64.0),
-          "tone_strength": (0.0, 1.0), "saturation": (0.5, 1.2)}
+          "tone_strength": (0.0, 1.0), "saturation": (0.5, 1.2), "hold": (0.0, 1.0)}
 _ARG = {"clarity_strength": "--clarity", "clarity_radius": "--radius", "tone_strength": "--tone",
-        "saturation": "--saturation"}
+        "saturation": "--saturation", "hold": "--hold"}
 
 _TIMEOUT_S = 600.0
 _POLL_S = 0.5

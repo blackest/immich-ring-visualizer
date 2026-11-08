@@ -11,6 +11,12 @@ the nodes, which is what the recipe was tuned on):
      low shadows lift gently. The Filmic curves are deliberately not offered -- on normal gamma video they darken
      the picture (measured: mean 64.6 -> 26.5).
 
+Optional third step, first in the order: an EXPOSURE HOLD. H3 clips tend to brighten as they play (measured on the
+knight clips: face region 132 -> 142 over 2 s while the sky stayed at 169), so a cut to the next clip steps back
+to the dark start. The hold scales every frame so the brightness of the centre of the picture (where the subject
+is) stays at its first-frame level, or at `--exposure-target` so several clips land at the same exposure. The
+correction is smoothed and limited to 0.8x-1.25x per frame so it never pumps.
+
 It does not recover shadows that were clipped during generation.
 
 The maths is a numpy/OpenCV port of two nodes from Orion4D_FXMax v1.0.0 (MIT, https://github.com/orion4d/
@@ -37,8 +43,11 @@ import numpy as np
 
 EPS = 1e-6
 # The recipe: Clarity -0.20 at radius 24, Cineon-ish at strength 0.25, saturation 0.9.
-DEFAULTS = {"clarity": -0.20, "radius": 24.0, "tone": 0.25, "saturation": 0.9}
+DEFAULTS = {"clarity": -0.20, "radius": 24.0, "tone": 0.25, "saturation": 0.9, "hold": 1.0}
 MIDTONE_SOFTNESS = 0.35
+HOLD_GAIN_LIMITS = (0.8, 1.25)   # per-frame gain stays inside this
+HOLD_SMOOTH = 0.25               # exponential smoothing of the gain (lower = steadier)
+HOLD_BASE_FRAMES = 3             # the target is the mean of the first few frames, not one noisy frame
 CINEON_ROLLOFF = 0.65
 CRF = "16"
 
@@ -89,8 +98,40 @@ def tone_cineon(img: np.ndarray, strength: float, saturation: float) -> np.ndarr
     return np.clip(img + (mapped - img) * strength, 0.0, 1.0)
 
 
-def finish_frame(rgb_u8: np.ndarray, p: dict) -> np.ndarray:
+def centre_luma(img: np.ndarray) -> float:
+    """Mean luma of the central half of the picture (0..1): where the subject usually is."""
+    h, w = img.shape[:2]
+    return float(luma(img[h // 4: 3 * h // 4, w // 4: 3 * w // 4]).mean())
+
+
+class ExposureHold:
+    """Holds the centre brightness at a target. strength 0 = off, 1 = full."""
+
+    def __init__(self, strength: float, target=None):
+        self.strength = float(strength)
+        self.target = target          # None: learn it from the first frames
+        self._seen = []
+        self._gain = 1.0
+
+    def apply(self, img: np.ndarray) -> np.ndarray:
+        if self.strength <= 0.0:
+            return img
+        cur = centre_luma(img)
+        if self.target is None:
+            self._seen.append(cur)
+            if len(self._seen) >= HOLD_BASE_FRAMES:
+                self.target = float(np.mean(self._seen))
+            return img                 # the first frames define the reference: unchanged
+        want = float(np.clip(self.target / max(cur, 1e-4), *HOLD_GAIN_LIMITS))
+        self._gain += HOLD_SMOOTH * (want - self._gain)
+        gain = 1.0 + self.strength * (self._gain - 1.0)
+        return np.clip(img * gain, 0.0, 1.0)
+
+
+def finish_frame(rgb_u8: np.ndarray, p: dict, hold: "ExposureHold" = None) -> np.ndarray:
     img = rgb_u8.astype(np.float32) / 255.0
+    if hold is not None:
+        img = hold.apply(img)
     img = clarity(img, p["clarity"], p["radius"])
     img = tone_cineon(img, p["tone"], p["saturation"])
     return (img * 255.0 + 0.5).astype(np.uint8)
@@ -128,13 +169,14 @@ def run(src: str, dst: str, p: dict) -> None:
     enc = subprocess.Popen(enc_cmd, stdin=subprocess.PIPE)
     size = w * h * 3
     n = 0
+    hold = ExposureHold(p.get("hold", 0.0), p.get("exposure_target"))
     try:
         while True:
             buf = dec.stdout.read(size)
             if len(buf) < size:
                 break
             frame = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 3)
-            enc.stdin.write(finish_frame(frame, p).tobytes())
+            enc.stdin.write(finish_frame(frame, p, hold).tobytes())
             n += 1
             if n % 12 == 0 or n == info["frames"]:
                 print(f"[finish] frame {n}/{info['frames'] or '?'}", file=sys.stderr, flush=True)
@@ -160,11 +202,16 @@ def main(argv=None) -> int:
     ap.add_argument("--radius", type=float, default=DEFAULTS["radius"], help="clarity radius")
     ap.add_argument("--tone", type=float, default=DEFAULTS["tone"], help="Cineon-ish tone map strength, 0..1")
     ap.add_argument("--saturation", type=float, default=DEFAULTS["saturation"])
+    ap.add_argument("--hold", type=float, default=DEFAULTS["hold"],
+                    help="exposure hold, 0 (off) to 1 (full): keep the centre brightness at its first-frame level")
+    ap.add_argument("--exposure-target", type=float, default=None,
+                    help="with --hold: the centre luma (0..1) to hold, so several clips match (default: this clip's own start)")
     a = ap.parse_args(argv)
     if not os.path.isfile(a.src):
         print(f"no such file: {a.src}", file=sys.stderr)
         return 2
-    run(a.src, a.dst, {"clarity": a.clarity, "radius": a.radius, "tone": a.tone, "saturation": a.saturation})
+    run(a.src, a.dst, {"clarity": a.clarity, "radius": a.radius, "tone": a.tone, "saturation": a.saturation,
+                       "hold": a.hold, "exposure_target": a.exposure_target})
     return 0
 
 

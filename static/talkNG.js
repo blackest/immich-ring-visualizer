@@ -76,6 +76,7 @@
     els.finishClarity = $("ng-talk-finish-clarity");
     els.finishTone = $("ng-talk-finish-tone");
     els.finishSat = $("ng-talk-finish-sat");
+    els.finishHold = $("ng-talk-finish-hold");
     els.generate = $("ng-talk-generate");
     els.status = $("ng-talk-status");
   }
@@ -214,6 +215,7 @@
     if (els.finishClarity.value !== "") form.append("clarity_strength", els.finishClarity.value);
     if (els.finishTone.value !== "") form.append("tone_strength", els.finishTone.value);
     if (els.finishSat.value !== "") form.append("saturation", els.finishSat.value);
+    if (els.finishHold.value !== "") form.append("hold", els.finishHold.value);
   }
 
   function itemFromJob(job) {
