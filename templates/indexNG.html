@@ -3421,6 +3421,13 @@
                     </select>
                   </div>
                   <div>
+                    <label class="ng-gen-label" for="ng-talk-fast">Speed</label>
+                    <select id="ng-talk-fast" class="ng-gen-input">
+                      <option value="1">Fast (about 6 min)</option>
+                      <option value="">Full quality (about 20 min)</option>
+                    </select>
+                  </div>
+                  <div>
                     <label class="ng-gen-label" for="ng-talk-seed">Seed (optional)</label>
                     <input id="ng-talk-seed" class="ng-gen-input" type="number" step="1" placeholder="random" />
                   </div>
@@ -3450,8 +3457,8 @@
                 </div>
                 <div id="ng-talk-status" class="ng-gen-status"></div>
                 <p class="ng-placeholder">
-                  First the voice is made, then the picture is rendered to it: a fixed 5 second clip, about
-                  20 minutes at draft quality.
+                  First the voice is made, then the picture is rendered to it: a fixed 5 second clip. Fast uses
+                  the 3-step adapter (a little softer); full quality takes about three times longer.
                 </p>
               </div>
             </div>

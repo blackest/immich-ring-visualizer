@@ -68,6 +68,7 @@
     els.selectAll = $("ng-talk-selectall");
     els.count = $("ng-talk-count");
     els.quality = $("ng-talk-quality");
+    els.fast = $("ng-talk-fast");
     els.seed = $("ng-talk-seed");
     els.finish = $("ng-talk-finish");
     els.finishNote = $("ng-talk-finish-note");
@@ -480,6 +481,7 @@
     form.append("kind", k);
     form.append("text", text);
     form.append("quality", els.quality.value || "draft");
+    if (els.fast && els.fast.value) form.append("fast", "true");
     if (els.seed.value !== "") form.append("seed", els.seed.value);
     if (els.finish && els.finish.checked) {
       form.append("finish", "true");

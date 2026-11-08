@@ -15,7 +15,9 @@ interleave their stages.
 The clip is a fixed 5 s window (TALK_CLIP_S): that is the length measured to work (a speech WAV drove a clear,
 articulated mouth that stopped when the voice stopped). Shorter and chained lengths are untested, so a script
 whose speech runs longer than the window is refused after the speech stage with a plain message, not cut off.
-No speed adapter is used with audio drive yet (untested), so a draft takes about 20 minutes.
+Two speeds: full (16 steps, about 20 minutes for a 5 s draft) and Fast (the 3-forward TaoMate adapter, about 6
+minutes). Measured 2026-11-08 on the same picture, prompt, seed and speech WAV: the mouth still follows the voice and
+stops when it stops, a little softer than the full run. Other speed adapters (Turbo, Flex) are untested with audio drive.
 """
 
 from __future__ import annotations
@@ -91,6 +93,7 @@ class TalkJobNG:
     lora_path: str
     lora_strength: float
     quality: str
+    fast: bool
     width: int
     height: int
     seed: Optional[int]
@@ -164,7 +167,7 @@ def _run_job(job: TalkJobNG) -> None:
     job.stage = "rendering"
     hj = h3_jobs.start_h3_job_ng(
         job.first_frame, job.first_frame_ext, job.prompt, TALK_CLIP_S, seed=job.seed, model="h3q8",
-        width=job.width, height=job.height, steps=TALK_STEPS,
+        width=job.width, height=job.height, steps=TALK_STEPS, tristep=job.fast,
         loras=[{"name": job.lora_name, "path": job.lora_path, "strength": job.lora_strength}] if job.lora_name else [],
         timeout_s=job.timeout_s, audio_bytes=wav, audio_ext=".wav")
     job.h3_job_id = hj.job_id
@@ -224,7 +227,7 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
                       voice_consent: bool = False, clip_bytes: Optional[bytes] = None, clip_ext: str = "",
                       subject: str = "", scene: str = "", lora_name: str = "", lora_strength: float = 1.0,
                       first_frame: Optional[bytes] = None, first_frame_ext: str = ".jpg", quality: str = "draft",
-                      seed: Optional[int] = None, finish_pass: bool = False,
+                      seed: Optional[int] = None, fast: bool = False, finish_pass: bool = False,
                       finish_params: Optional[dict] = None) -> TalkJobNG:
     """Validates everything that can be checked now (so a bad request fails the POST, not 20 minutes in) and
     enqueues. A LoRA and a saved voice are looked up by NAME in the shared library, never a client path."""
@@ -262,6 +265,8 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
     if not (lora_name or first_frame):
         raise TalkRequestError("pick a character LoRA or add a face picture -- otherwise there is no face to speak")
 
+    if fast and h3._resolve_h3_tristep_ng() is None:
+        raise TalkRequestError("Fast needs the 3-step adapter (TaoMate) in the H3 turbo-lora folder, and it is not there")
     try:
         finish_clean = finish.normalize_params_ng(finish_params) if finish_pass else {}
     except finish.FinishRequestError as e:
@@ -276,7 +281,7 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
         style_id=style_id, style_text=style_text, language=language, speed=float(speed),
         ref_text=(ref_text or "").strip(), voice_consent=bool(voice_consent), subject=subject, scene=scene,
         prompt=build_prompt_ng(subject, scene), lora_name=lora_name or "", lora_path=lora_path,
-        lora_strength=float(lora_strength), quality=quality, width=width, height=height, seed=seed,
+        lora_strength=float(lora_strength), quality=quality, fast=bool(fast), width=width, height=height, seed=seed,
         timeout_s=timeout_s, first_frame=first_frame or None, first_frame_ext=first_frame_ext or ".jpg",
         clip_bytes=clip_bytes if kind == "clip" else None, clip_ext=clip_ext,
         finish=bool(finish_pass), finish_params=finish_clean)
@@ -359,7 +364,7 @@ def job_status_ng(job_id: str) -> dict:
     original = f"/api/ng/h3/jobs/{job.h3_job_id}/video" if job.stage in ("finishing", "done") and job.h3_job_id else None
     return {
         "job_id": job.job_id, "status": status, "stage": job.stage, "text": job.text, "voice": job.voice_label,
-        "kind": job.kind, "subject": job.subject, "lora": job.lora_name, "quality": job.quality,
+        "kind": job.kind, "subject": job.subject, "lora": job.lora_name, "quality": job.quality, "fast": job.fast,
         "width": job.width, "height": job.height, "seed": job.seed, "prompt": job.prompt,
         "error": job.error, "error_type": job.error_type, "cancelled": bool(job.cancelled),
         "queued_at": job.queued_at, "dispatched_at": job.dispatched_at, "finished_at": job.finished_at,

@@ -36,6 +36,7 @@ class _Base(unittest.TestCase):
         for target, name, val in (
                 (talk, "_QUEUE", self.queue),
                 (talk, "_ensure_worker_started", lambda: None),
+                (talk.h3, "_resolve_h3_tristep_ng", lambda: ("/adapters/tristep.safetensors", None)),
                 (talk.h3_lora_lib, "resolve_h3_lora_path_ng", lambda n: f"/loras/{n}.safetensors" if n == "face" else None)):
             p = mock.patch.object(target, name, val)
             p.start()
@@ -137,6 +138,29 @@ class ChainTests(_Base):
         cancel.assert_called_once_with("s1")
 
 
+class FastTests(ChainTests):
+    def test_off_by_default_and_the_render_is_a_full_one(self):
+        h3_job = SimpleNamespace(job_id="h1", finished_at=2.0, error=None, mp4_path="/x/h3.mp4")
+        job = self.run_chain(_fake_speech(tmp=self.tmpdir.name), h3_job)
+        self.assertFalse(job.fast)
+        self.assertFalse(self.h3.call_args.kwargs["tristep"])
+        self.assertFalse(talk.job_status_ng(job.job_id)["fast"])
+
+    def test_fast_asks_the_h3_job_for_the_three_step_adapter(self):
+        h3_job = SimpleNamespace(job_id="h1", finished_at=2.0, error=None, mp4_path="/x/h3.mp4")
+        job = self.run_chain(_fake_speech(tmp=self.tmpdir.name), h3_job, fast=True)
+        self.assertTrue(job.fast)
+        self.assertTrue(self.h3.call_args.kwargs["tristep"])
+        self.assertTrue(talk.job_status_ng(job.job_id)["fast"])
+
+    def test_fast_without_the_adapter_is_refused_before_anything_is_queued(self):
+        with mock.patch.object(talk.h3, "_resolve_h3_tristep_ng", lambda: None):
+            with self.assertRaisesRegex(talk.TalkRequestError, "3-step adapter"):
+                self.start(fast=True)
+            self.start()       # a full-quality job does not need it
+        self.assertEqual(self.queue.put.call_count, 1)
+
+
 class StatusTests(_Base):
     def test_stages_map_to_the_queue_statuses(self):
         job = self.start()
@@ -188,6 +212,11 @@ class RouteTests(_Base):
         self.assertEqual(self.client.get(f"/api/ng/talk/jobs/{jid}").get_json()["status"], "queued")
         self.assertEqual(len(self.client.get("/api/ng/talk/jobs").get_json()["jobs"]), 1)
         self.assertTrue(self.client.delete(f"/api/ng/talk/jobs/{jid}").get_json()["ok"])
+
+    def test_the_fast_field_is_read(self):
+        for data, expected in (({"fast": "true"}, True), ({}, False)):
+            r = self.client.post("/api/ng/talk/generate", data={"text": "Hi.", "voice": "aiden", "lora": "face", **data})
+            self.assertEqual(talk.get_job_ng(r.get_json()["job_id"]).fast, expected)
 
     def test_the_face_picture_and_voice_clip_are_read(self):
         r = self.client.post("/api/ng/talk/generate", data={

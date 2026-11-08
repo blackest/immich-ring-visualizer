@@ -70,7 +70,8 @@ def talk_generate_ng():
             first_frame=face.read() if face else None,
             first_frame_ext=os.path.splitext(face.filename or "")[1].lower() if face else ".jpg",
             quality=str(form.get("quality") or "draft").strip().lower(),
-            seed=int(seed_raw) if seed_raw else None, finish_pass=_truthy(form.get("finish")),
+            seed=int(seed_raw) if seed_raw else None, fast=_truthy(form.get("fast")),
+            finish_pass=_truthy(form.get("finish")),
             finish_params=_finish_params(form))
     except (speech.SpeechRequestError, talk.TalkRequestError, ValueError) as e:
         return jsonify({"error": str(e)}), 400
