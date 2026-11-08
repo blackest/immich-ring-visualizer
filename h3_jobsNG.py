@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+import h3_audio_driveNG as h3_audio_drive
 import h3_engineNG as h3
 import h3_flexNG as h3_flex
 import h3_ref2vaNG as h3_ref2va
@@ -49,6 +50,7 @@ class H3JobNG:
     has_image: bool = True  # False = text-to-video, no keyframe
     keyframe_times: list = field(default_factory=list)  # one "when" per kf_N.* file in the job dir
     has_last_frame: bool = False  # last.* in the job dir is the still the clip ends on
+    has_audio_drive: bool = False  # drive.* in the job dir is the soundtrack the picture is generated to (lip-sync)
     width: int = h3.H3_WIDTH
     height: int = h3.H3_HEIGHT
     steps: int = h3.H3_STEPS
@@ -145,6 +147,7 @@ def _worker_loop() -> None:
         image_path = next(job.job_dir.glob("ref.*"), None)
         extend_path = job.job_dir / EXTEND_SOURCE_NAME
         last_path = next(job.job_dir.glob("last.*"), None)
+        audio_path = next(job.job_dir.glob("drive.*"), None)
         keyframes = [(str(next(job.job_dir.glob(f"kf_{n}.*"))), when)
                      for n, when in enumerate(job.keyframe_times)]
         if job.run is not None:  # a task job: its own runner instead of the H3 engine
@@ -161,6 +164,8 @@ def _worker_loop() -> None:
                 raise FileNotFoundError("keyframe image went missing before render")
             if job.has_last_frame and last_path is None:
                 raise FileNotFoundError("last-frame image went missing before render")
+            if job.has_audio_drive and audio_path is None:
+                raise FileNotFoundError("audio-drive file went missing before render")
             cfg_kwargs = {"model": job.model}
             if job.timeout_s is not None:
                 cfg_kwargs["timeout_s"] = job.timeout_s
@@ -178,6 +183,7 @@ def _worker_loop() -> None:
                 fast_vae=job.fast_vae, vae_v2=job.vae_v2,
                 extend_from=str(extend_path) if job.extends else None,
                 last_frame_path=str(last_path) if last_path else None,
+                audio_drive_path=str(audio_path) if audio_path else None,
                 keyframes=keyframes,
                 on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
@@ -229,6 +235,8 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      adaln_blocks: str = "",
                      fast_vae: bool = False,
                      vae_v2: bool = False,
+                     audio_bytes: Optional[bytes] = None,
+                     audio_ext: str = ".wav",
                      reroll: Optional[dict] = None,
                      on_done: Optional[Callable] = None) -> H3JobNG:
     """Writes image_bytes directly into a fresh per-job directory under
@@ -278,6 +286,12 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         if h3_flex.resolve_flex_turbo_ng(h3.H3_MODELS_ROOT) is None:
             raise FileNotFoundError("the Pika H3 Flex Turbo LoRA is not in the H3 models folder (pika-h3-flex/)")
     h3._validate_h3_duration_ng(duration_s)
+    if audio_bytes is not None:
+        if not audio_bytes or len(audio_bytes) > h3_audio_drive.MAX_AUDIO_BYTES:
+            raise ValueError("the audio-drive file is empty or too large")
+        h3_audio_drive.check_audio_drive_ng(
+            "audio", refmods=refmods, references=references, extend_from="extend" if extend_bytes is not None else None,
+            runner=h3._resolve_h3_runner_ng(h3.H3Config()) or h3.H3_RUNNER, check_file=False)
     if (last_bytes is not None or keyframes) and refmods:
         raise ValueError("a RefMod render takes no first, last or keyframe images")
     if keyframes and extend_bytes is not None:
@@ -352,12 +366,14 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         (job_dir / f"kf_{n}{kf_ext}").write_bytes(kf_bytes)
     if extend_bytes is not None:
         (job_dir / EXTEND_SOURCE_NAME).write_bytes(extend_bytes)
+    if audio_bytes is not None:
+        (job_dir / f"drive{h3_audio_drive.clean_ext_ng(audio_ext)}").write_bytes(audio_bytes)
     for name, (ref_bytes, _ext) in zip(reference_names, references or []):
         (job_dir / name).write_bytes(ref_bytes)
 
     job = H3JobNG(job_id=job_id, prompt=prompt, duration_s=duration_s,
                   seed=seed, job_dir=job_dir, model=model, has_image=has_image,
-                  has_last_frame=last_bytes is not None,
+                  has_last_frame=last_bytes is not None, has_audio_drive=audio_bytes is not None,
                   keyframe_times=[w for _b, _e, w in keyframes or []], width=width, height=height, steps=steps, turbo=turbo, v13=v13,
                   tristep=tristep, flex=flex, flex_turbo=flex_turbo, loras=loras, refmods=refmods,
                   timeout_s=timeout_s, chain_prompts=chain_prompts or [], extends=extend_bytes is not None,
@@ -367,6 +383,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         "model": model, "width": width, "height": height, "steps": steps, "turbo": turbo, "v13": v13,
         "tristep": tristep, "flex": flex, "flex_turbo": flex_turbo, "has_image": has_image, "timeout_s": timeout_s,
         "adaln_blocks": adaln_blocks, "fast_vae": bool(fast_vae), "vae_v2": bool(vae_v2),
+        "has_audio_drive": audio_bytes is not None,
         "loras": [{"name": l["name"], "path": l["path"], "strength": l["strength"]} for l in loras],
     }, indent=2), encoding="utf-8")
     with _JOBS_LOCK:
@@ -453,6 +470,7 @@ def job_status_ng(job_id: str) -> dict:
         "flex_turbo": job.flex_turbo,
         "fast_vae": job.fast_vae,
         "vae_v2": job.vae_v2,
+        "has_audio_drive": job.has_audio_drive,
         "loras": [{"name": l["name"], "strength": l["strength"]} for l in job.loras],
         "refmods": [{"name": r["name"], "strength": r["strength"]} for r in job.refmods],
         "references": len(job.references),

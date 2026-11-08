@@ -70,6 +70,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Optional
 
+import h3_audio_driveNG as h3_audio_drive
 import h3_flexNG as h3_flex
 import h3_loraNG as h3_lora
 import h3_ref2vaNG as h3_ref2va
@@ -577,7 +578,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           reference_size: str = "match",
                           adaln_blocks: str = "",
                           fast_vae: bool = False,
-                          vae_v2: bool = False) -> dict:
+                          vae_v2: bool = False,
+                          audio_drive_path: Optional[str] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
     is optional -- when given, it's H3's FL2VA first-frame keyframe
     conditioning (--first-frame); when None, it's a plain text-to-video
@@ -635,7 +637,11 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     then the NEW time added after it, the output is the source followed by the
     continuation, and the runner takes the hand-over from the source's own tail,
     so no keyframe image and no RefMod. Each new window adds window_frames - 1
-    frames; chain_prompts, if given, names one prompt per new window."""
+    frames; chain_prompts, if given, names one prompt per new window.
+
+    audio_drive_path is an optional soundtrack the picture is generated to (--audio-drive, "lip-sync"): the
+    delivered audio is that same file. Each 5 s window gets its own slice. Not with RefMods, reference
+    pictures or extend; see h3_audio_driveNG."""
     loras = _validate_h3_loras_ng(loras)
     width = H3_WIDTH if width is None else int(width)
     height = H3_HEIGHT if height is None else int(height)
@@ -782,6 +788,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                              "no keyframe image or RefMod with it")
         if not h3_lora.runner_has_flag_ng(runner, "--extend-from"):
             raise ValueError("this H3 runner has no --extend-from -- update the minimax-h3-mlx runner")
+    h3_audio_drive.check_audio_drive_ng(audio_drive_path, refmods=refmods, references=references,
+                                        extend_from=extend_from, runner=runner)
     if loras:
         limit = h3_lora_limit_ng(runner, speed_adapter=bool(turbo or v13 or tristep or flex or flex_turbo))
         if len(loras) > limit:
@@ -869,6 +877,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         cmd += ["--last-frame", last_frame_path]
     for kf_path, when in keyframes or []:
         cmd += ["--keyframe", f"{kf_path}@{when}"]
+    cmd += h3_audio_drive.audio_drive_argv_ng(audio_drive_path)
     if turbo:
         # The pinned runner only re-orders a speed adapter's qkv rows under
         # --lora-qkv-permute (off by default, global to the run); without
@@ -1069,4 +1078,5 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "adaln_blocks": adaln_blocks,
         "fast_vae": bool(fast_vae),
         "vae_v2": bool(vae_v2),
+        "audio_drive": bool(audio_drive_path),
     }

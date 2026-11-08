@@ -3712,3 +3712,37 @@ textarea.ng-gen-input.ng-textarea-expanded {
   align-items: center;
 }
 #ng-speech-clip-wrap.drag { outline: 2px dashed var(--ng-accent); }
+
+/* ============================================================
+   Talk view (task === "talk") -- rail pane #ng-talk-pane = the talk queue, main #ng-talk-main =
+   the form. Same shape as the Speech view.
+   ============================================================ */
+#ng-talk-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  display: flex;
+  flex-direction: column;
+}
+#ng-talk-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8571rem;
+  color: var(--ng-text);
+  margin-bottom: 10px;
+}
+#ng-talk-queue-count { color: var(--ng-text-dim); }
+#ng-talk-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 16px 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+#ng-talk-clip-wrap.drag, #ng-talk-face-wrap.drag { outline: 2px dashed var(--ng-accent); }
+#ng-talk-queue video { width: 100%; border-radius: 4px; margin-top: 4px; grid-column: 1 / -1; }

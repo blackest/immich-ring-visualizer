@@ -1174,6 +1174,24 @@
             <div id="ng-speech-queue"></div>
           </div>
 
+          <!-- Talk view's rail pane -- the talk queue (speech, then an H3 lip-sync render). See
+               static/talkNG.js. -->
+          <div id="ng-talk-pane" style="display: none">
+            <div id="ng-talk-unavailable" class="ng-chat-banner" style="display: none">
+              <div id="ng-talk-unavailable-text"></div>
+            </div>
+            <div id="ng-talk-queue-head">
+              <span>Talk queue <span id="ng-talk-queue-count"></span></span>
+              <button type="button" id="ng-talk-queue-clear" class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin: 0">clear finished</button>
+            </div>
+            <p id="ng-talk-queue-empty" class="ng-placeholder">
+              Nothing queued yet. Pick a character, write a line and press
+              &ldquo;Make it talk&rdquo;.
+            </p>
+            <div id="ng-talk-queue"></div>
+          </div>
+
           <!-- Music view's rail pane -- render queue for YuE2
                style+lyrics-to-song jobs. See static/musicNG.js. -->
           <div id="ng-music-pane" style="display: none">
@@ -3314,6 +3332,111 @@
               </div>
             </div>
 
+            <!-- Talk view's main region -- a character (a LoRA and/or a face picture), a voice and a line in,
+                 a lip-synced clip out. See static/talkNG.js. -->
+            <div id="ng-talk-main" style="display: none">
+              <div id="ng-talk-form" class="ng-gen-canvas">
+                <div class="ng-gen-label" style="margin-top: 0">Character</div>
+                <label class="ng-gen-label" for="ng-talk-lora">Character LoRA</label>
+                <select id="ng-talk-lora" class="ng-gen-input"></select>
+                <p id="ng-talk-lora-note" class="ng-placeholder"></p>
+                <label class="ng-gen-label" for="ng-talk-lora-strength">LoRA strength</label>
+                <input id="ng-talk-lora-strength" class="ng-gen-input" type="number" min="0" max="2" step="0.05" value="1" />
+
+                <div id="ng-talk-face-wrap" class="ng-dropzone">
+                  <div class="ng-gen-label" style="margin-top: 0">Face picture (optional)</div>
+                  <p id="ng-talk-face-empty" class="ng-placeholder">
+                    No picture. Drag one here to start from it, or:
+                  </p>
+                  <p id="ng-talk-face-name" style="display: none; word-break: break-all"></p>
+                  <input type="file" id="ng-talk-face-file" accept="image/*" />
+                  <button type="button" id="ng-talk-face-clear" class="ng-gen-btn ng-gen-btn-quiet"
+                    style="display: none; width: auto">remove picture</button>
+                </div>
+
+                <label class="ng-gen-label" for="ng-talk-subject">Who is on screen</label>
+                <input id="ng-talk-subject" class="ng-gen-input" type="text" maxlength="200"
+                  placeholder="e.g. a grey-haired man in a dark jacket, or the character&rsquo;s name" />
+                <label class="ng-gen-label" for="ng-talk-scene">Scene detail (optional)</label>
+                <input id="ng-talk-scene" class="ng-gen-input" type="text" maxlength="400"
+                  placeholder="e.g. a workshop behind them, evening light" />
+
+                <div class="ng-gen-label">Voice</div>
+                <div id="ng-talk-kind-row">
+                  <label class="ng-checkbox-row"><input type="radio" name="ng-talk-kind" value="preset" checked />
+                    Preset voice</label>
+                  <label class="ng-checkbox-row"><input type="radio" name="ng-talk-kind" value="character" />
+                    A character&rsquo;s saved voice</label>
+                  <label class="ng-checkbox-row"><input type="radio" name="ng-talk-kind" value="clip" />
+                    A voice clip</label>
+                </div>
+
+                <div id="ng-talk-preset-wrap">
+                  <label class="ng-gen-label" for="ng-talk-voice">Speaker</label>
+                  <select id="ng-talk-voice" class="ng-gen-input"></select>
+                  <label class="ng-gen-label" for="ng-talk-style">Delivery</label>
+                  <select id="ng-talk-style" class="ng-gen-input"></select>
+                </div>
+
+                <div id="ng-talk-character-wrap" style="display: none">
+                  <label class="ng-gen-label" for="ng-talk-character">Saved voice</label>
+                  <select id="ng-talk-character" class="ng-gen-input"></select>
+                  <audio id="ng-talk-character-audio" controls style="width: 100%; margin-top: 6px"></audio>
+                  <p id="ng-talk-character-empty" class="ng-placeholder" style="display: none">
+                    No character has a saved voice yet. A saved voice is a file named
+                    <code>name.voice.mp3</code> beside the character LoRAs.
+                  </p>
+                </div>
+
+                <div id="ng-talk-clip-wrap" class="ng-dropzone" style="display: none">
+                  <div class="ng-gen-label" style="margin-top: 0">Voice clip</div>
+                  <p id="ng-talk-clip-empty" class="ng-placeholder">No clip yet. Drag an audio file here, or:</p>
+                  <p id="ng-talk-clip-name" style="display: none; word-break: break-all"></p>
+                  <input type="file" id="ng-talk-clip-file" accept="audio/*,video/*" />
+                </div>
+
+                <div id="ng-talk-clone-extra" style="display: none">
+                  <label class="ng-gen-label" for="ng-talk-reftext">What the sample says (optional; a closer match)</label>
+                  <textarea id="ng-talk-reftext" class="ng-gen-input" rows="2" maxlength="600"
+                    placeholder="The words spoken in the sample, if you know them"></textarea>
+                  <label class="ng-checkbox-row"><input type="checkbox" id="ng-talk-consent" />
+                    This voice is my own, or I have the speaker&rsquo;s permission to clone it.</label>
+                </div>
+
+                <label class="ng-gen-label" for="ng-talk-text">What they say</label>
+                <textarea id="ng-talk-text" class="ng-gen-input" rows="4"
+                  placeholder="One or two short sentences. The clip is 5 seconds, about 12 words."></textarea>
+                <div class="ng-gen-linkrow">
+                  <button type="button" id="ng-talk-selectall" class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto">Select all</button>
+                  <span id="ng-talk-count" class="ng-gen-status"></span>
+                </div>
+
+                <div class="ng-gen-identity-row">
+                  <div>
+                    <label class="ng-gen-label" for="ng-talk-quality">Quality</label>
+                    <select id="ng-talk-quality" class="ng-gen-input">
+                      <option value="draft">Draft (640x384)</option>
+                      <option value="standard">Standard (768x448)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-talk-seed">Seed (optional)</label>
+                    <input id="ng-talk-seed" class="ng-gen-input" type="number" step="1" placeholder="random" />
+                  </div>
+                </div>
+
+                <div class="ng-gen-action-bar">
+                  <button type="button" id="ng-talk-generate" class="ng-gen-btn">Make it talk</button>
+                </div>
+                <div id="ng-talk-status" class="ng-gen-status"></div>
+                <p class="ng-placeholder">
+                  First the voice is made, then the picture is rendered to it: a fixed 5 second clip, about
+                  20 minutes at draft quality.
+                </p>
+              </div>
+            </div>
+
             <!-- Music view's main region -- style + lyrics + length +
                  mode form. See static/musicNG.js. Text in, audio out --
                  no reference image at all, unlike every other Generate-
@@ -4154,6 +4277,7 @@
         <button class="ng-task-btn" data-task="music">Music</button>
         <button class="ng-task-btn" data-task="musicedit">Music Edit</button>
         <button class="ng-task-btn" data-task="speech">Speech</button>
+        <button class="ng-task-btn" data-task="talk">Talk</button>
         <button class="ng-task-btn" data-task="chat">Chat</button>
         <button class="ng-task-btn" data-task="rachel">Rachel</button>
         <button class="ng-task-btn" data-task="hdmulti">Hd-Multi</button>
@@ -4224,6 +4348,7 @@
     <script src="{{ url_for('static', filename='musicNG.js') }}"></script>
     <script src="{{ url_for('static', filename='musiceditNG.js') }}"></script>
     <script src="{{ url_for('static', filename='speechNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='talkNG.js') }}"></script>
     <script src="{{ url_for('static', filename='hdmultiNG.js') }}"></script>
     <script src="{{ url_for('static', filename='kleinLayoutNG.js') }}"></script>
     <script src="{{ url_for('static', filename='kleinNG.js') }}"></script>

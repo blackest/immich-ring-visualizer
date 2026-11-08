@@ -321,6 +321,7 @@ def h3_generate_ng():
     try:
         extend_file = request.files.get("extend_file")
         last_file = request.files.get("last_file")
+        audio_file = request.files.get("audio_drive")
         kf_files = request.files.getlist("keyframe_files")
         kf_times = [t.strip() for t in request.form.getlist("keyframe_times")]
         ref_files = request.files.getlist("reference_files")
@@ -340,7 +341,9 @@ def h3_generate_ng():
             reference_size=str(request.form.get("reference_size") or "match").strip().lower(),
             adaln_blocks=str(request.form.get("adaln_blocks") or "").strip(),
             fast_vae=str(request.form.get("fast_vae") or "").strip().lower() in ("1", "true", "on"),
-            vae_v2=str(request.form.get("vae_v2") or "").strip().lower() in ("1", "true", "on"))
+            vae_v2=str(request.form.get("vae_v2") or "").strip().lower() in ("1", "true", "on"),
+            audio_bytes=audio_file.read() if audio_file else None,
+            audio_ext=os.path.splitext(audio_file.filename or "")[1] if audio_file else ".wav")
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 404
     except ValueError as e:
