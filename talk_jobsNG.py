@@ -9,6 +9,9 @@ Job Log and the memory handling are the existing ones. This file only chains the
 progress, and tidies the request into the two calls. One Talk job at a time (FIFO), so two submissions do not
 interleave their stages.
 
+  3. finishing -- optional: the soft-finish pass (finish_jobsNG, ComfyUI) over the clip. A failed finish never loses
+                  the render: the job still completes with the original clip and reports finish_error.
+
 The clip is a fixed 5 s window (TALK_CLIP_S): that is the length measured to work (a speech WAV drove a clear,
 articulated mouth that stopped when the voice stopped). Shorter and chained lengths are untested, so a script
 whose speech runs longer than the window is refused after the speech stage with a plain message, not cut off.
@@ -26,6 +29,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import finish_engineNG as finish
+import finish_jobsNG as finish_jobs
 import h3_engineNG as h3
 import h3_jobsNG as h3_jobs
 import h3_lora_libraryNG as h3_lora_lib
@@ -104,6 +109,10 @@ class TalkJobNG:
     speech_job_id: Optional[str] = None
     h3_job_id: Optional[str] = None
     mp4_path: Optional[str] = None
+    finish: bool = False
+    finish_params: dict = field(default_factory=dict)
+    finish_job_id: Optional[str] = None
+    finish_error: Optional[str] = None
 
 
 _JOBS: dict = {}
@@ -165,6 +174,19 @@ def _run_job(job: TalkJobNG) -> None:
         raise RuntimeError(hj.error)
     job.mp4_path = hj.mp4_path
 
+    if job.finish:
+        job.stage = "finishing"
+        try:
+            fj = finish_jobs.start_finish_job_ng(hj.job_id, job.finish_params)
+            job.finish_job_id = fj.job_id
+            _wait_for(job, lambda: fj.finished_at is not None, lambda: finish_jobs.cancel_finish_job_ng(fj.job_id))
+            if fj.error:
+                job.finish_error = fj.error
+        except TalkJobCancelled:
+            raise
+        except Exception as e:  # noqa: BLE001 -- the render is safe; say why the finish did not happen
+            job.finish_error = str(e)
+
 
 def _worker_loop() -> None:
     while True:
@@ -202,7 +224,8 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
                       voice_consent: bool = False, clip_bytes: Optional[bytes] = None, clip_ext: str = "",
                       subject: str = "", scene: str = "", lora_name: str = "", lora_strength: float = 1.0,
                       first_frame: Optional[bytes] = None, first_frame_ext: str = ".jpg", quality: str = "draft",
-                      seed: Optional[int] = None) -> TalkJobNG:
+                      seed: Optional[int] = None, finish_pass: bool = False,
+                      finish_params: Optional[dict] = None) -> TalkJobNG:
     """Validates everything that can be checked now (so a bad request fails the POST, not 20 minutes in) and
     enqueues. A LoRA and a saved voice are looked up by NAME in the shared library, never a client path."""
     text = (text or "").replace("\r\n", "\n").strip()
@@ -239,6 +262,10 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
     if not (lora_name or first_frame):
         raise TalkRequestError("pick a character LoRA or add a face picture -- otherwise there is no face to speak")
 
+    try:
+        finish_clean = finish.normalize_params_ng(finish_params) if finish_pass else {}
+    except finish.FinishRequestError as e:
+        raise TalkRequestError(str(e)) from e
     width, height = h3.resolve_h3_quality_ng(quality)
     timeout_s = h3.resolve_h3_quality_timeout_ng(quality, TALK_CLIP_S)
 
@@ -251,7 +278,8 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
         prompt=build_prompt_ng(subject, scene), lora_name=lora_name or "", lora_path=lora_path,
         lora_strength=float(lora_strength), quality=quality, width=width, height=height, seed=seed,
         timeout_s=timeout_s, first_frame=first_frame or None, first_frame_ext=first_frame_ext or ".jpg",
-        clip_bytes=clip_bytes if kind == "clip" else None, clip_ext=clip_ext)
+        clip_bytes=clip_bytes if kind == "clip" else None, clip_ext=clip_ext,
+        finish=bool(finish_pass), finish_params=finish_clean)
     with _JOBS_LOCK:
         _JOBS[job.job_id] = job
         _prune_old_jobs_locked()
@@ -292,6 +320,29 @@ def _render_progress(h3_job_id: Optional[str]) -> dict:
     return out
 
 
+def start_finish_ng(job_id: str, params: Optional[dict] = None):
+    """Soft-finish a Talk clip that is already done (the row's button). One finish at a time per Talk job."""
+    job = get_job_ng(job_id)
+    if job is None:
+        raise LookupError(f"no such job {job_id!r}")
+    if job.stage != "done" or not job.h3_job_id:
+        raise TalkRequestError("only a finished clip can be finished")
+    if _finish_status(job).get("status") in ("queued", "rendering"):
+        raise TalkRequestError("a finish is already running on this clip")
+    fj = finish_jobs.start_finish_job_ng(job.h3_job_id, params)
+    job.finish_job_id, job.finish_error = fj.job_id, None
+    return fj
+
+
+def _finish_status(job: TalkJobNG) -> dict:
+    if not job.finish_job_id:
+        return {}
+    try:
+        return finish_jobs.job_status_ng(job.finish_job_id)
+    except LookupError:
+        return {}
+
+
 def job_status_ng(job_id: str) -> dict:
     job = get_job_ng(job_id)
     if job is None:
@@ -303,6 +354,9 @@ def job_status_ng(job_id: str) -> dict:
             h3_status = h3_jobs.job_status_ng(job.h3_job_id)["status"]
         except LookupError:
             pass
+    fin = _finish_status(job)
+    finished = fin.get("status") == "completed"
+    original = f"/api/ng/h3/jobs/{job.h3_job_id}/video" if job.stage in ("finishing", "done") and job.h3_job_id else None
     return {
         "job_id": job.job_id, "status": status, "stage": job.stage, "text": job.text, "voice": job.voice_label,
         "kind": job.kind, "subject": job.subject, "lora": job.lora_name, "quality": job.quality,
@@ -311,9 +365,13 @@ def job_status_ng(job_id: str) -> dict:
         "queued_at": job.queued_at, "dispatched_at": job.dispatched_at, "finished_at": job.finished_at,
         "speech_job_id": job.speech_job_id, "h3_job_id": job.h3_job_id, "h3_status": h3_status,
         "progress": _render_progress(job.h3_job_id) if job.stage == "rendering" else {},
-        "audio_url": f"/api/ng/speech/jobs/{job.speech_job_id}/audio" if job.speech_job_id and job.stage in ("rendering", "done") else None,
-        "video_url": f"/api/ng/h3/jobs/{job.h3_job_id}/video" if job.stage == "done" and job.h3_job_id else None,
-        "download_url": f"/api/ng/h3/jobs/{job.h3_job_id}/download" if job.stage == "done" and job.h3_job_id else None,
+        "audio_url": f"/api/ng/speech/jobs/{job.speech_job_id}/audio" if job.speech_job_id and job.stage in ("rendering", "finishing", "done") else None,
+        "finish": job.finish, "finish_status": fin.get("status"), "finish_error": job.finish_error or fin.get("error"),
+        "finished": finished,
+        "original_video_url": original if job.stage == "done" else None,
+        "video_url": (fin.get("video_url") if finished else original) if job.stage == "done" and job.h3_job_id else None,
+        "download_url": (fin.get("download_url") if finished else f"/api/ng/h3/jobs/{job.h3_job_id}/download")
+                        if job.stage == "done" and job.h3_job_id else None,
     }
 
 

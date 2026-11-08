@@ -26,6 +26,7 @@
   var faceFile = null;
   var optionsLoaded = false;
   var maxChars = 600;
+  var finishOk = false;
 
   function $(id) { return document.getElementById(id); }
 
@@ -68,6 +69,12 @@
     els.count = $("ng-talk-count");
     els.quality = $("ng-talk-quality");
     els.seed = $("ng-talk-seed");
+    els.finish = $("ng-talk-finish");
+    els.finishNote = $("ng-talk-finish-note");
+    els.finishOpts = $("ng-talk-finish-opts");
+    els.finishClarity = $("ng-talk-finish-clarity");
+    els.finishTone = $("ng-talk-finish-tone");
+    els.finishSat = $("ng-talk-finish-sat");
     els.generate = $("ng-talk-generate");
     els.status = $("ng-talk-status");
   }
@@ -129,6 +136,14 @@
     fetch(API + "/status")
       .then(function (r) { return r.json(); })
       .then(function (d) {
+        finishOk = !!d.finish_ok;
+        if (els.finish) {
+          els.finish.disabled = !finishOk;
+          if (!finishOk) els.finish.checked = false;
+          els.finishNote.style.display = finishOk ? "none" : "";
+          els.finishNote.textContent = finishOk ? "" : "Soft finish is not available: " + (d.finish_problems || []).join("; ");
+          els.finishOpts.style.display = finishOk && els.finish.checked ? "" : "none";
+        }
         if (!els.unavailable) return;
         if (d.ok) { els.unavailable.style.display = "none"; return; }
         els.unavailable.style.display = "";
@@ -190,10 +205,21 @@
 
   function isActive(item) { return item.status === "queued" || item.status === "rendering"; }
 
+  // A finished clip is still worth polling while its soft finish runs.
+  function finishing(item) { return item.status === "done" && (item.finishStatus === "queued" || item.finishStatus === "rendering"); }
+  function needsPolling(item) { return item.jobId && (isActive(item) || finishing(item)); }
+
+  function finishForm(form) {
+    if (els.finishClarity.value !== "") form.append("clarity_strength", els.finishClarity.value);
+    if (els.finishTone.value !== "") form.append("tone_strength", els.finishTone.value);
+    if (els.finishSat.value !== "") form.append("saturation", els.finishSat.value);
+  }
+
   function itemFromJob(job) {
     var item = {
       localId: "t" + ++localSeq, jobId: job.job_id, status: "queued", text: job.text || "", voice: "",
       lora: "", stage: "queued", progress: {}, error: null, audioUrl: null, videoUrl: null, downloadUrl: null,
+      originalUrl: null, finishStatus: null, finishError: null, finished: false,
       createdAt: Date.now(), jobIdAt: 0, removed: false,
     };
     applyJob(item, job);
@@ -206,9 +232,16 @@
     item.stage = job.stage || item.stage;
     item.progress = job.progress || {};
     if (job.audio_url && !item.audioUrl) item.audioUrl = job.audio_url + "?v=" + Date.now();
+    item.finishStatus = job.finish_status || null;
+    item.finishError = job.finish_error || null;
     if (job.status === "completed") {
       item.status = "done";
-      if (!item.videoUrl && job.video_url) item.videoUrl = job.video_url + "?v=" + Date.now();
+      // The shown clip switches to the finished one when it lands (the url changes, so the player reloads).
+      if (job.video_url && (item.finished !== !!job.finished || !item.videoUrl)) {
+        item.videoUrl = job.video_url + "?v=" + Date.now();
+      }
+      item.finished = !!job.finished;
+      item.originalUrl = job.original_video_url || item.originalUrl;
       item.downloadUrl = job.download_url || item.downloadUrl;
     } else if (job.status === "failed") {
       item.status = "failed";
@@ -224,6 +257,7 @@
     if (item.status === "submitting") return "submitting...";
     if (item.status === "queued") return "queued";
     if (item.stage === "speaking") return "making the voice...";
+    if (item.stage === "finishing" || finishing(item)) return "finishing (colour pass)...";
     var p = item.progress || {};
     if (p.step && p.steps) return "rendering, step " + p.step + "/" + p.steps;
     return p.phase ? "rendering (" + p.phase.replace(/_/g, " ") + ")" : "rendering...";
@@ -236,7 +270,7 @@
   }
 
   function pollOnce() {
-    var active = queue.filter(function (q) { return q.jobId && isActive(q); });
+    var active = queue.filter(needsPolling);
     if (!active.length) { clearInterval(pollTimer); pollTimer = null; return; }
     active.forEach(function (item) {
       fetch(API + "/jobs/" + item.jobId)
@@ -283,7 +317,7 @@
           }
         });
         renderQueue();
-        if (queue.some(function (q) { return q.jobId && isActive(q); })) ensurePolling();
+        if (queue.some(needsPolling)) ensurePolling();
       })
       .catch(function () { /* server busy or restarting */ });
   }
@@ -363,10 +397,38 @@
         var dl = document.createElement("a");
         dl.className = "ng-btn";
         dl.href = item.downloadUrl;
-        dl.textContent = "Download mp4";
+        dl.textContent = item.finished ? "Download finished mp4" : "Download mp4";
         dl.style.gridColumn = "1 / -1";
         dl.style.marginTop = "4px";
         row.appendChild(dl);
+      }
+      if (item.finished && item.originalUrl) {
+        var orig = document.createElement("a");
+        orig.className = "ng-btn";
+        orig.href = item.originalUrl;
+        orig.target = "_blank";
+        orig.textContent = "Original (unfinished)";
+        orig.style.gridColumn = "1 / -1";
+        orig.style.marginTop = "4px";
+        row.appendChild(orig);
+      }
+      if (!item.finished && !finishing(item) && finishOk) {
+        var fb = document.createElement("button");
+        fb.type = "button";
+        fb.className = "ng-btn";
+        fb.textContent = "Soft finish";
+        fb.title = "A gentle colour pass through ComfyUI: lifts crushed shadows, softens skin. The original is kept.";
+        fb.style.gridColumn = "1 / -1";
+        fb.style.marginTop = "4px";
+        fb.addEventListener("click", function () { finishItem(item); });
+        row.appendChild(fb);
+      }
+      if (item.finishError) {
+        var fe = document.createElement("div");
+        fe.className = "log";
+        fe.style.color = "var(--ng-danger)";
+        fe.textContent = "Soft finish did not happen: " + item.finishError;
+        row.appendChild(fe);
       }
     }
     return row;
@@ -378,6 +440,26 @@
     if (els.queueEmpty) els.queueEmpty.style.display = queue.length ? "none" : "";
     els.queue.innerHTML = "";
     queue.forEach(function (item) { els.queue.appendChild(buildRow(item)); });
+  }
+
+  function finishItem(item) {
+    var form = new FormData();
+    finishForm(form);
+    item.finishStatus = "queued";
+    item.finishError = null;
+    renderQueue();
+    fetch(API + "/jobs/" + item.jobId + "/finish", { method: "POST", body: form })
+      .then(function (res) { return res.json().then(function (p) { return { ok: res.ok, payload: p }; }); })
+      .then(function (r) {
+        if (!r.ok) {
+          item.finishStatus = null;
+          item.finishError = (r.payload && r.payload.error) || "could not start the finish";
+        } else {
+          ensurePolling();
+        }
+        renderQueue();
+      })
+      .catch(function (e) { item.finishStatus = null; item.finishError = e.message; renderQueue(); });
   }
 
   // ---- submit --------------------------------------------------------------------------------
@@ -399,6 +481,10 @@
     form.append("text", text);
     form.append("quality", els.quality.value || "draft");
     if (els.seed.value !== "") form.append("seed", els.seed.value);
+    if (els.finish && els.finish.checked) {
+      form.append("finish", "true");
+      finishForm(form);
+    }
     if (els.lora.value) {
       form.append("lora", els.lora.value);
       form.append("lora_strength", els.loraStrength.value || "1");
@@ -421,7 +507,8 @@
     var item = {
       localId: "t" + ++localSeq, jobId: null, status: "submitting", text: text, voice: voiceName.split(" -- ")[0],
       lora: els.lora.value || "", stage: "queued", progress: {}, error: null, audioUrl: null, videoUrl: null,
-      downloadUrl: null, createdAt: Date.now(), jobIdAt: 0, removed: false,
+      downloadUrl: null, originalUrl: null, finishStatus: null, finishError: null, finished: false,
+      createdAt: Date.now(), jobIdAt: 0, removed: false,
     };
     queue.unshift(item);
     renderQueue();
@@ -478,6 +565,9 @@
       r.addEventListener("change", onKindChange);
     });
     els.lora.addEventListener("change", onLoraChange);
+    els.finish.addEventListener("change", function () {
+      els.finishOpts.style.display = finishOk && els.finish.checked ? "" : "none";
+    });
     els.character.addEventListener("change", onCharacterChange);
     els.text.addEventListener("input", updateCount);
     els.selectAll.addEventListener("click", function () { els.text.focus(); els.text.select(); });

@@ -3426,6 +3426,25 @@
                   </div>
                 </div>
 
+                <label class="ng-checkbox-row"><input type="checkbox" id="ng-talk-finish" />
+                  Soft finish after the render (a gentle colour pass through ComfyUI: lifts crushed shadows,
+                  softens skin; the original is kept)</label>
+                <p id="ng-talk-finish-note" class="ng-placeholder" style="display: none"></p>
+                <div id="ng-talk-finish-opts" class="ng-gen-identity-row" style="display: none">
+                  <div>
+                    <label class="ng-gen-label" for="ng-talk-finish-clarity">Clarity</label>
+                    <input id="ng-talk-finish-clarity" class="ng-gen-input" type="number" min="-0.5" max="0" step="0.05" value="-0.2" />
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-talk-finish-tone">Shadow lift</label>
+                    <input id="ng-talk-finish-tone" class="ng-gen-input" type="number" min="0" max="1" step="0.05" value="0.25" />
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-talk-finish-sat">Saturation</label>
+                    <input id="ng-talk-finish-sat" class="ng-gen-input" type="number" min="0.5" max="1.2" step="0.05" value="0.9" />
+                  </div>
+                </div>
+
                 <div class="ng-gen-action-bar">
                   <button type="button" id="ng-talk-generate" class="ng-gen-btn">Make it talk</button>
                 </div>

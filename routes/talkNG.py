@@ -8,6 +8,7 @@ import os
 
 from flask import Blueprint, jsonify, request
 
+import finish_engineNG as finish
 import h3_engineNG
 import speech_engineNG as speech
 import talk_jobsNG as talk
@@ -17,6 +18,15 @@ talkNG_bp = Blueprint("talkNG", __name__)
 
 def _truthy(v) -> bool:
     return str(v or "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _finish_params(form) -> dict:
+    out = {}
+    for key in finish.DEFAULTS:
+        raw = str(form.get(key) or "").strip()
+        if raw:
+            out[key] = float(raw)
+    return out
 
 
 @talkNG_bp.route("/api/ng/talk/status", methods=["GET"])
@@ -32,8 +42,11 @@ def talk_status_ng():
                                            ("text_config_ok", "the H3 text config")) if not h3.get(key)]
     if h3_missing:
         problems.append("H3 is not ready: missing " + ", ".join(h3_missing))
+    fin = finish.finish_health_ng()
     return jsonify({"ok": not problems, "problems": problems, "clip_s": talk.TALK_CLIP_S,
-                    "qualities": list(talk.TALK_QUALITIES)})
+                    "qualities": list(talk.TALK_QUALITIES), "finish_ok": fin["ok"],
+                    "finish_problems": fin["problems"], "finish_defaults": finish.DEFAULTS,
+                    "finish_limits": finish.LIMITS})
 
 
 @talkNG_bp.route("/api/ng/talk/generate", methods=["POST"])
@@ -57,7 +70,8 @@ def talk_generate_ng():
             first_frame=face.read() if face else None,
             first_frame_ext=os.path.splitext(face.filename or "")[1].lower() if face else ".jpg",
             quality=str(form.get("quality") or "draft").strip().lower(),
-            seed=int(seed_raw) if seed_raw else None)
+            seed=int(seed_raw) if seed_raw else None, finish_pass=_truthy(form.get("finish")),
+            finish_params=_finish_params(form))
     except (speech.SpeechRequestError, talk.TalkRequestError, ValueError) as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True, "job_id": job.job_id, "poll_url": f"/api/ng/talk/jobs/{job.job_id}"}), 202
@@ -74,6 +88,18 @@ def talk_job_status_ng(job_id):
         return jsonify(talk.job_status_ng(job_id))
     except LookupError as e:
         return jsonify({"error": str(e)}), 404
+
+
+@talkNG_bp.route("/api/ng/talk/jobs/<job_id>/finish", methods=["POST"])
+def talk_finish_ng(job_id):
+    """Soft-finish a clip that is already done (the row's button); the original is kept beside the result."""
+    try:
+        fj = talk.start_finish_ng(job_id, _finish_params(request.form))
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+    except ValueError as e:        # TalkRequestError / FinishRequestError / a bad number
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "finish_job_id": fj.job_id}), 202
 
 
 @talkNG_bp.route("/api/ng/talk/jobs/<job_id>", methods=["DELETE"])
