@@ -40,9 +40,13 @@ class ModuleTests(_DriveBase):
         self.assertEqual(drive.audio_drive_argv_ng(str(self.wav)), ["--audio-drive", str(self.wav)])
 
     def test_refused_combinations(self):
-        for kw in ({"refmods": [{"path": "r"}]}, {"references": ["pic.png"]}, {"extend_from": "e.mp4"}):
-            with self.subTest(kw=kw), self.assertRaises(ValueError):
-                drive.check_audio_drive_ng(str(self.wav), **kw)
+        with self.assertRaises(ValueError):
+            drive.check_audio_drive_ng(str(self.wav), extend_from="e.mp4")
+
+    def test_a_refmod_or_reference_is_allowed(self):
+        # lifted 2026-11-08: the runner takes --refmod with --audio-drive, and the mouth followed the words
+        drive.check_audio_drive_ng(str(self.wav), refmods=[{"path": "r"}], runner=self.runner)
+        drive.check_audio_drive_ng(str(self.wav), references=["pic.png"], runner=self.runner)
 
     def test_missing_file_and_old_runner(self):
         with self.assertRaises(FileNotFoundError):
@@ -68,9 +72,10 @@ class CommandTests(_DriveBase):
     def test_off_means_no_flag(self):
         self.assertNotIn("--audio-drive", self._cmd(model="h3q8"))
 
-    def test_refmod_and_extend_are_refused_before_launch(self):
-        with self.assertRaises(ValueError):
-            self._cmd(model="h3ref", refmods=[self._item()], audio_drive_path=str(self.wav))
+    def test_extend_is_refused_before_launch_and_a_refmod_is_not(self):
+        cmd = self._cmd(model="h3ref", refmods=[self._item()], audio_drive_path=str(self.wav))
+        self.assertEqual(self._value(cmd, "--audio-drive"), str(self.wav))
+        self.assertIn("--refmod", cmd)
         src = self.tmp / "src.mp4"
         src.write_bytes(b"x")
         with self.assertRaises(ValueError):
@@ -113,8 +118,7 @@ class JobTests(_DriveBase):
         self.assertEqual(list(job.job_dir.glob("drive.*")), [])
 
     def test_bad_requests_fail_the_post_synchronously(self):
-        for kw in ({"audio_bytes": b""}, {"audio_bytes": b"x", "extend_bytes": b"y"},
-                   {"audio_bytes": b"x", "refmods": [self._item()], "model": "h3ref"}):
+        for kw in ({"audio_bytes": b""}, {"audio_bytes": b"x", "extend_bytes": b"y"}):
             with self.subTest(kw=list(kw)), self.assertRaises(ValueError):
                 self._start(**kw)
         self.queue.put.assert_not_called()

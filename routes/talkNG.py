@@ -66,7 +66,7 @@ def talk_generate_ng():
             clip_bytes=clip.read() if clip else None,
             clip_ext=os.path.splitext(clip.filename or "")[1] if clip else "",
             subject=str(form.get("subject") or ""), scene=str(form.get("scene") or ""),
-            lora_name=str(form.get("lora") or "").strip(), lora_strength=float(form.get("lora_strength") or 1.0),
+            lora_name=str(form.get("lora") or "").strip(), refmod_name=str(form.get("refmod") or "").strip(), lora_strength=float(form.get("lora_strength") or 1.0),
             first_frame=face.read() if face else None,
             first_frame_ext=os.path.splitext(face.filename or "")[1].lower() if face else ".jpg",
             quality=str(form.get("quality") or "draft").strip().lower(),

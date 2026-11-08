@@ -14,6 +14,21 @@ the commit Phosphene v4.19.x pins (`scripts/pinokio/h3_checkout.sh`, ref `phosph
 
 **Taken from upstream after the base:** `bef6d03` ("feat: Pika H3 Flex sampler (--pika-flex)", Phosphene v4.19.15): `scheduler.py` re-noise sampler, `--sigma-knots --sampler --video-shift --audio-shift --pika-flex` in `generate_staged.py`, `tests/test_pika_flex.py`. Applied with `git apply` (clean) on 2026-10-30; README and `run_tests.sh` changes of that commit are not vendored.
 
+**Updated 2026-11-08 to Phosphene v5.0.7's pin (`59da1474b3`)**, 19 commits after the base above: low-memory streaming
+(`dit_stream.py`, `memory_plan.py`, `tensor_stream.py`, `vae_stream.py`, `--stream-dit`, `--dit-resident`), the streamed text
+encoder, the float16-mixed video decoder (default; `H3_VAE_DTYPE=float32` gives the old picture exactly), upstream's own
+`--reference` pictures (`reference.py`) and their tests. Merged by hand with a three-way merge against `bef6d03`: `load_dit` takes
+both `lazy_adaln` and `stream`; `generate_staged.py` keeps our `--refmod` / `--ref2va-reference` packing beside upstream's
+`reference_grids`; `text_encoder.encode` passes `references=` only when given, so upstream's tests' stubs still fit.
+Checked by real renders against the old runner (same seed): audio bit-identical, picture within 0.4-0.5/255 (the decoder),
+identical with `H3_VAE_DTYPE=float32`; `--stream-dit` output identical with the denoise peak 4 GB instead of 22 GB.
+The image-generation modules of that pin (`ph3_image*.py`, `generate_image.py`, ...) are not vendored; `video_vae_v2.py` is
+kept but no longer the default decoder.
+
+**Ours on top of that:** `--refmod` / `--ref2va-reference` now compose with `--audio-drive` (one entry removed from the
+refusal list in `generate_staged.py`). Tested: a RefMod-only render with a driven speech line, the mouth followed the words,
+the identity held, output audio equal to the driven file. A first frame, keyframes, extend and chained windows are still refused.
+
 **Added on top of the base** (six commits from the fork's `reference-flag` branch, 2026-10-27 to 28):
 
 | commit | what |

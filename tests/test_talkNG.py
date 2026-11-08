@@ -107,6 +107,26 @@ class ChainTests(_Base):
         self.assertEqual((kw["model"], kw["steps"]), ("h3q8", talk.TALK_STEPS))
         self.assertEqual((job.speech_job_id, job.h3_job_id, job.mp4_path), ("s1", "h1", "/x/h3.mp4"))
 
+    def test_a_refmod_is_the_whole_character_and_renders_on_the_ref2va_model(self):
+        entry = {"path": "/refmods/knight.safetensors", "images": 8, "videos": 0}
+        with mock.patch.object(talk.h3_refmod_lib, "resolve_h3_refmod_ng",
+                               lambda n: entry if n == "knight" else None):
+            h3_job = SimpleNamespace(job_id="h1", finished_at=2.0, error=None, mp4_path="/x/h3.mp4")
+            job = self.run_chain(_fake_speech(tmp=self.tmpdir.name), h3_job, lora_name="", refmod_name="knight")
+            args, kw = self.h3.call_args
+            self.assertIsNone(args[0])                                   # no first-frame picture
+            self.assertEqual(kw["model"], "h3ref")
+            self.assertEqual(kw["refmods"], [{"name": "knight", "path": "/refmods/knight.safetensors",
+                                              "strength": 1.0, "images": 8, "videos": 0}])
+            self.assertEqual(kw["loras"], [])
+            self.assertEqual(kw["audio_bytes"], b"RIFFwavdata")
+            self.assertEqual(talk.job_status_ng(job.job_id)["refmod"], "knight")
+            for bad in ({"refmod_name": "nobody", "lora_name": ""},
+                        {"refmod_name": "knight", "lora_name": "face"},
+                        {"refmod_name": "knight", "lora_name": "", "first_frame": b"IMG"}):
+                with self.subTest(bad=bad), self.assertRaises(talk.TalkRequestError):
+                    self.start(**bad)
+
     def test_speech_too_long_for_the_window_is_refused_before_any_render(self):
         with self.assertRaisesRegex(talk.TalkRequestError, "shorten the script"):
             self.run_chain(_fake_speech(seconds=7.2, tmp=self.tmpdir.name), None)

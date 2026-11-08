@@ -9,8 +9,9 @@ when the voice stopped, with and without a character LoRA (the LoRA's own refere
 weights are -- see h3_loraNG). Slow: about 19-20 min per 5 s at that size, because the audio rows join the
 packed sequence.
 
-What it does not combine with, as the runner enforces: RefMod / Ref2VA reference pictures (single window, no
-other media) and `--extend-from` ("extend, then lip-sync"). A first frame, a last frame, keyframes, LoRAs and
+A RefMod (or Ref2VA reference) CAN drive a face: the runner's refusal was lifted 2026-11-08 after a test (the driven
+audio is a frozen target, separate from the RefMod's condition rows; the mouth followed the words and the identity
+held with no LoRA and no first frame). What it does not combine with: `--extend-from` ("extend, then lip-sync"). A first frame, a last frame, keyframes, LoRAs and
 speed adapters are not refused by the runner; speed adapters with audio drive are untested.
 
 This module only checks the request and builds the argv; the engine and job queue call it.
@@ -37,9 +38,6 @@ def check_audio_drive_ng(audio_drive_path: Optional[str], *, refmods=None, refer
     """Refuse a combination the runner cannot do, before the model loads. No-op when no audio is given."""
     if audio_drive_path is None:
         return
-    if refmods or references:
-        raise ValueError("audio drive takes no RefMod or reference pictures (the runner renders those as a single "
-                         "window with no other media) -- use a first-frame picture and a LoRA for the character")
     if extend_from is not None:
         raise ValueError("audio drive does not combine with extend -- extend first, then lip-sync")
     if check_file and not Path(audio_drive_path).is_file():

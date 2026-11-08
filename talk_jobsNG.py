@@ -36,6 +36,7 @@ import finish_jobsNG as finish_jobs
 import h3_engineNG as h3
 import h3_jobsNG as h3_jobs
 import h3_lora_libraryNG as h3_lora_lib
+import h3_refmod_libraryNG as h3_refmod_lib
 import speech_engineNG as speech
 import speech_jobsNG as speech_jobs
 
@@ -116,6 +117,8 @@ class TalkJobNG:
     finish_params: dict = field(default_factory=dict)
     finish_job_id: Optional[str] = None
     finish_error: Optional[str] = None
+    refmod_name: str = ""
+    refmod_entry: dict = field(default_factory=dict, repr=False)
 
 
 _JOBS: dict = {}
@@ -166,7 +169,8 @@ def _run_job(job: TalkJobNG) -> None:
 
     job.stage = "rendering"
     hj = h3_jobs.start_h3_job_ng(
-        job.first_frame, job.first_frame_ext, job.prompt, TALK_CLIP_S, seed=job.seed, model="h3q8",
+        job.first_frame, job.first_frame_ext, job.prompt, TALK_CLIP_S, seed=job.seed,
+        model="h3ref" if job.refmod_name else "h3q8", refmods=[job.refmod_entry] if job.refmod_name else [],
         width=job.width, height=job.height, steps=TALK_STEPS, tristep=job.fast,
         loras=[{"name": job.lora_name, "path": job.lora_path, "strength": job.lora_strength}] if job.lora_name else [],
         timeout_s=job.timeout_s, audio_bytes=wav, audio_ext=".wav")
@@ -228,7 +232,7 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
                       subject: str = "", scene: str = "", lora_name: str = "", lora_strength: float = 1.0,
                       first_frame: Optional[bytes] = None, first_frame_ext: str = ".jpg", quality: str = "draft",
                       seed: Optional[int] = None, fast: bool = False, finish_pass: bool = False,
-                      finish_params: Optional[dict] = None) -> TalkJobNG:
+                      finish_params: Optional[dict] = None, refmod_name: str = "") -> TalkJobNG:
     """Validates everything that can be checked now (so a bad request fails the POST, not 20 minutes in) and
     enqueues. A LoRA and a saved voice are looked up by NAME in the shared library, never a client path."""
     text = (text or "").replace("\r\n", "\n").strip()
@@ -262,8 +266,17 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
         lora_path = h3_lora_lib.resolve_h3_lora_path_ng(lora_name) or ""
         if not lora_path:
             raise TalkRequestError(f"unknown or unusable LoRA {lora_name!r}")
-    if not (lora_name or first_frame):
-        raise TalkRequestError("pick a character LoRA or add a face picture -- otherwise there is no face to speak")
+    refmod_entry: dict = {}
+    if refmod_name:
+        if first_frame or lora_name:
+            raise TalkRequestError("a RefMod is the whole character here: leave the face picture and the LoRA empty")
+        entry = h3_refmod_lib.resolve_h3_refmod_ng(refmod_name)
+        if entry is None:
+            raise TalkRequestError(f"unknown or unusable RefMod {refmod_name!r}")
+        refmod_entry = {"name": refmod_name, "path": entry["path"], "strength": 1.0,
+                        "images": entry["images"], "videos": entry["videos"]}
+    elif not (lora_name or first_frame):
+        raise TalkRequestError("pick a character (a RefMod or a LoRA) or add a face picture -- otherwise there is no face to speak")
 
     if fast and h3._resolve_h3_tristep_ng() is None:
         raise TalkRequestError("Fast needs the 3-step adapter (TaoMate) in the H3 turbo-lora folder, and it is not there")
@@ -284,7 +297,7 @@ def start_talk_job_ng(text: str, kind: str, voice: str = "", character_voice: st
         lora_strength=float(lora_strength), quality=quality, fast=bool(fast), width=width, height=height, seed=seed,
         timeout_s=timeout_s, first_frame=first_frame or None, first_frame_ext=first_frame_ext or ".jpg",
         clip_bytes=clip_bytes if kind == "clip" else None, clip_ext=clip_ext,
-        finish=bool(finish_pass), finish_params=finish_clean)
+        finish=bool(finish_pass), finish_params=finish_clean, refmod_name=refmod_name or "", refmod_entry=refmod_entry)
     with _JOBS_LOCK:
         _JOBS[job.job_id] = job
         _prune_old_jobs_locked()
@@ -364,7 +377,7 @@ def job_status_ng(job_id: str) -> dict:
     original = f"/api/ng/h3/jobs/{job.h3_job_id}/video" if job.stage in ("finishing", "done") and job.h3_job_id else None
     return {
         "job_id": job.job_id, "status": status, "stage": job.stage, "text": job.text, "voice": job.voice_label,
-        "kind": job.kind, "subject": job.subject, "lora": job.lora_name, "quality": job.quality, "fast": job.fast,
+        "kind": job.kind, "subject": job.subject, "lora": job.lora_name, "refmod": job.refmod_name, "quality": job.quality, "fast": job.fast,
         "width": job.width, "height": job.height, "seed": job.seed, "prompt": job.prompt,
         "error": job.error, "error_type": job.error_type, "cancelled": bool(job.cancelled),
         "queued_at": job.queued_at, "dispatched_at": job.dispatched_at, "finished_at": job.finished_at,

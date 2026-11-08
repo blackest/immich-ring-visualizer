@@ -41,6 +41,7 @@
     els.queueClear = $("ng-talk-queue-clear");
     els.queue = $("ng-talk-queue");
     els.lora = $("ng-talk-lora");
+    els.refmod = $("ng-talk-refmod");
     els.loraNote = $("ng-talk-lora-note");
     els.loraStrength = $("ng-talk-lora-strength");
     els.faceWrap = $("ng-talk-face-wrap");
@@ -109,7 +110,14 @@
     Promise.all([
       fetch("/api/ng/h3/loras").then(function (r) { return r.json(); }),
       fetch(SPEECH_API + "/voices").then(function (r) { return r.json(); }),
+      fetch("/api/ng/h3/refmods").then(function (r) { return r.json(); }).catch(function () { return {}; }),
     ]).then(function (res) {
+      var refmods = ((res[2] && res[2].refmods) || []).filter(function (m) { return m.ok; });
+      if (els.refmod) {
+        fillSelect(els.refmod, [{ name: "", label: "(none)" }].concat(refmods.map(function (m) {
+          return { name: m.name, label: m.name };
+        })), "name", function (m) { return m.label; });
+      }
       var loras = ((res[0] && res[0].loras) || []).filter(function (l) { return l.ok; });
       var d = res[1];
       optionsLoaded = true;
@@ -472,7 +480,9 @@
     var text = (els.text.value || "").trim();
     if (!text) { setStatus("Write what they say first.", true); return; }
     if (text.length > maxChars) { setStatus("That is over " + maxChars + " characters; the clip is 5 seconds.", true); return; }
-    if (!els.lora.value && !faceFile) { setStatus("Pick a character LoRA or add a face picture.", true); return; }
+    var rm = els.refmod ? els.refmod.value : "";
+    if (!rm && !els.lora.value && !faceFile) { setStatus("Pick a character RefMod or LoRA, or add a face picture.", true); return; }
+    if (rm && (els.lora.value || faceFile)) { setStatus("A RefMod is the whole character: clear the LoRA and the face picture.", true); return; }
     if (k === "clip" && !clipFile) { setStatus("Add a voice clip first.", true); return; }
     if (k !== "preset" && !els.consent.checked) {
       setStatus("Tick the box to confirm the voice is yours or that you have permission to clone it.", true);
@@ -489,6 +499,7 @@
       form.append("finish", "true");
       finishForm(form);
     }
+    if (rm) form.append("refmod", rm);
     if (els.lora.value) {
       form.append("lora", els.lora.value);
       form.append("lora_strength", els.loraStrength.value || "1");

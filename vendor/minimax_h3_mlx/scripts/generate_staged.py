@@ -100,6 +100,12 @@ _vae_mod = _importlib.import_module(
 resolved_decode_batch, resolved_decode_dtype = _vae_mod.resolved_decode_batch, _vae_mod.resolved_decode_dtype
 
 
+def parse_lora_path(spec) -> Path:
+    from minimax_h3_mlx import lora as lora_mod
+
+    return Path(lora_mod.parse_spec(str(spec))[0])
+
+
 def gb(value: int) -> float:
     return value / 1024**3
 
@@ -241,6 +247,17 @@ def row_timestep_plan(layout, video_timesteps, audio_timesteps, frozen_video=Non
     return mx.array(np.array(table, dtype=np.float32)), plan
 
 
+def load_encode_vae(args):
+    """The video VAE for an encode (keyframes, references, carried frames). Low-memory renders
+    load only its CNN encoder: the 4.5 GiB ViT decoder is never run by an encode."""
+    path = args.compact_root / "video_vae.safetensors"
+    if getattr(args, "stream_vae_decoder", False):
+        from minimax_h3_mlx.vae_stream import load_compact_video_vae_encoder_only
+
+        return load_compact_video_vae_encoder_only(path)
+    return load_compact_video_vae(path)
+
+
 def decode_video(model, rows, frames: int, latent_frames: int, latent_h: int, latent_w: int, patch):
     cfg = model.config
     latents = unpatchify_video_tokens(
@@ -248,28 +265,35 @@ def decode_video(model, rows, frames: int, latent_frames: int, latent_h: int, la
     )
     mean = mx.array(np.array(cfg.latents_mean, np.float32)).reshape(1, -1, 1, 1, 1)
     std = mx.array(np.array(cfg.latents_std, np.float32)).reshape(1, -1, 1, 1, 1)
-    z = (latents * std + mean).astype(mx.float32)
     pixel_mean = np.array(PIXEL_MEAN, np.float32).reshape(1, 3, 1, 1, 1)
     pixel_std = np.array(PIXEL_STD, np.float32).reshape(1, 3, 1, 1, 1)
-    if hasattr(model, "decode_chunks"):
-        # Only the v2 decoder (H3_VAE_IMPL=v2) has decode_chunks: the next temporal piece is on the
-        # GPU while this one is copied to uint8. Same values as the whole-clip path, lower decode peak.
-        out = None
-        cursor = 0
-        for piece in model.decode_chunks(z):
-            if cursor >= frames:
-                continue
-            host = np.clip(np.array(piece) * pixel_std + pixel_mean, 0.0, 1.0)
-            host = host[0].transpose(1, 2, 3, 0)[: frames - cursor]
-            if out is None:
-                out = np.empty((frames, *host.shape[1:]), np.uint8)
-            out[cursor : cursor + len(host)] = (host * 255.0 + 0.5).astype(np.uint8)
-            cursor += len(host)
-        return out[:cursor]
-    decoded = np.array(model.decode(z))
-    decoded = np.clip(decoded * pixel_std + pixel_mean, 0.0, 1.0)
-    decoded = decoded[0].transpose(1, 2, 3, 0)[:frames]
-    return (decoded * 255.0 + 0.5).astype(np.uint8)
+    z = (latents * std + mean).astype(mx.float32)
+    if _os.environ.get("H3_VAE_DECODE_WHOLE") == "1" or not hasattr(model, "decode_chunks"):
+        # The historical blocking path: one lazy graph for the whole clip, then one host copy.
+        # H3_VAE_DECODE_WHOLE=1 selects it; the pipelined path below is bit-identical to it
+        # (asserted on a real 1024x576/124f clip, float32 and float16-mixed). On an M4 Max the two
+        # take the same time within run-to-run noise (MLX already keeps the GPU fed across tiles
+        # inside one graph, and the host tail is under a second); the pipeline's gain is the decode
+        # peak, 1.2-2.0 GiB lower, because a clip's float32 pixels never sit on the GPU at once.
+        decoded = np.array(model.decode(z))
+        decoded = np.clip(decoded * pixel_std + pixel_mean, 0.0, 1.0)
+        decoded = decoded[0].transpose(1, 2, 3, 0)[:frames]
+        return (decoded * 255.0 + 0.5).astype(np.uint8)
+    # Pipelined: the next temporal piece is already on the GPU while this one is copied and
+    # converted to uint8 here. Same arithmetic, element for element, as the blocking path above
+    # (the conversion is elementwise, so doing it per piece cannot change a value).
+    out = None
+    cursor = 0
+    for piece in model.decode_chunks(z):
+        if cursor >= frames:
+            continue
+        host = np.clip(np.array(piece) * pixel_std + pixel_mean, 0.0, 1.0)
+        host = host[0].transpose(1, 2, 3, 0)[: frames - cursor]
+        if out is None:
+            out = np.empty((frames, *host.shape[1:]), np.uint8)
+        out[cursor : cursor + len(host)] = (host * 255.0 + 0.5).astype(np.uint8)
+        cursor += len(host)
+    return out[:cursor]
 
 
 def decode_video_tae(
@@ -383,7 +407,7 @@ def media_mode_errors(args, parser) -> str:
             ("--refmod with --ref2va-reference", args.refmod and args.ref2va_reference),
             ("--first-frame", args.first_frame), ("--last-frame", args.last_frame),
             ("--keyframe", keyframes), ("--extend-from", args.extend_from),
-            ("--video-to-audio", args.video_to_audio), ("--audio-drive", args.audio_drive),
+            ("--video-to-audio", args.video_to_audio),
             ("--chain-windows", args.chain_windows != 1 or args.chain_total_frames is not None),
             ("--chain-context-frames", args.chain_context_frames),
         ) if value]
@@ -797,6 +821,7 @@ class WindowConditioning:
     history_audio: np.ndarray | None = None
     drive_audio: np.ndarray | None = None
     frozen_frames: np.ndarray | None = None
+    references: list = field(default_factory=list)
 
     @property
     def decode_video(self) -> bool:
@@ -813,10 +838,134 @@ class WindowConditioning:
             "drive_audio_seconds": (
                 None if self.drive_audio is None else round(self.drive_audio.shape[1] / 32000.0, 4)
             ),
+            "references": len(self.references),
             "frozen_video_frames": (
                 None if self.frozen_frames is None else int(len(self.frozen_frames))
             ),
         }
+
+
+def shift_reference_labels(prompt: str, base_keyframes: int, keyframes: int) -> str:
+    """Move "<Picture n>" labels that name references (n > base_keyframes) to this window's
+    numbering, where the references come after `keyframes` keyframes."""
+    import re
+
+    delta = int(keyframes) - int(base_keyframes)
+    if not delta:
+        return prompt
+
+    def move(match):
+        n = int(match.group(1))
+        return f"<Picture {n + delta}>" if n > base_keyframes else match.group(0)
+
+    return re.sub(r"<Picture (\d+)>", move, prompt)
+
+
+def revoice_wanted(args, cond, lora_stack) -> bool:
+    """Re-voice runs on a window whose sound the model makes with an adapter switched on.
+
+    Skipped where it has nothing to do: no adapter to switch off, a held soundtrack (lip-sync),
+    or a held picture (Add sound already makes the sound with no speed adapter).
+    """
+    if int(getattr(args, "revoice_steps", 0) or 0) <= 0:
+        return False
+    if not lora_stack or getattr(args, "lora_already_applied", False):
+        return False
+    return cond.drive_audio is None and cond.frozen_frames is None
+
+
+def write_wav(path: Path, audio: np.ndarray, rate: int) -> None:
+    import wave
+
+    pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
+    with wave.open(str(path), "wb") as fh:
+        fh.setnchannels(int(audio.shape[0]))
+        fh.setsampwidth(2)
+        fh.setframerate(rate)
+        fh.writeframes(pcm.T.copy().tobytes())
+
+
+def run_revoice(args, record, label, dit, rv, layout, video_rows, audio_rows, embeds, seed,
+                n_cond_a, lora_stack):
+    """Re-make this window's sound with the speed adapter off; the picture rows never move.
+
+    Returns the new audio rows (conditioning rows first, untouched).
+    """
+    mod = rv["mod"]
+    kv = getattr(args, "revoice_kv", "int8")
+    started = time.perf_counter()
+    with record.phase(f"{label}revoice"):
+        switched = mod.set_adapter_scales(dit, rv["drop"], 0.0)
+        print(
+            f"re-voice: {rv['forwards']} audio steps with {', '.join(p.name for p in rv['drop'])} "
+            f"off ({switched['entries']} adapter entries), KV {kv}",
+            flush=True,
+        )
+        target_shape = (audio_rows.shape[0] - n_cond_a, audio_rows.shape[1])
+        # Its own noise: the adapter's audio is not a starting point, the base model starts over.
+        key = mx.random.key(int(seed) * 7919 + 104729)
+        noise = mx.random.normal(target_shape, key=key).astype(mx.float32)
+        strength = float(rv.get("strength", 1.0))
+        if strength < 1.0:
+            # x_t = t * x0 + (1 - t) * noise at sigma = strength (t = 1 - strength).
+            noise = (1.0 - strength) * audio_rows[n_cond_a:].astype(mx.float32) + strength * noise
+        cond_audio = audio_rows[:n_cond_a] if n_cond_a else None
+        rows = mx.concatenate([cond_audio, noise]) if n_cond_a else noise
+        rotary = None
+        store = None
+        step_seconds = []
+        for index, timestep in enumerate(rv["audio_sched"].timesteps.tolist()):
+            t0 = time.perf_counter()
+            forward_args = (
+                video_rows[None].astype(mx.bfloat16),
+                rows[None].astype(mx.bfloat16),
+                embeds.astype(mx.bfloat16),
+                rv["table"],
+                rv["plan"][index],
+                layout.token_tags,
+                layout.position_ids,
+                layout.video_indices,
+                layout.audio_indices,
+                layout.text_indices,
+            )
+            if kv == "off":
+                _, audio_out = dit(*forward_args, modulation_cache=rv["cache"])
+                pred = audio_out[0].astype(mx.float32)
+            elif store is None:
+                audio_out, store = mod.store_forward(dit, forward_args, rv["cache"], rv["rows"], kv)
+                pred = audio_out[0].astype(mx.float32)
+                rotary = dit.rope(layout.position_ids)
+            else:
+                pred = mod.audio_forward(
+                    dit, rows, rv["table"], rv["plan"][index], layout, rv["rows"], store,
+                    rv["cache"], rotary,
+                ).astype(mx.float32)
+            stepped = rv["audio_sched"].step(pred[n_cond_a:], float(timestep), rows[n_cond_a:])
+            rows = mx.concatenate([cond_audio, stepped]) if n_cond_a else stepped
+            broken = nonfinite_flag(video_rows, rows)
+            mx.eval(rows, broken)
+            if broken.item():
+                raise nonfinite_error(f"after re-voice step {index + 1}/{rv['forwards']}", lora_stack)
+            step_seconds.append(time.perf_counter() - t0)
+            print(f"re-voice step {index + 1}/{rv['forwards']}: {step_seconds[-1]:.2f}s "
+                  f"(active {gb(mx.get_active_memory()):.1f} GiB)", flush=True)
+        mod.set_adapter_scales(dit, rv["drop"], None)
+        record.data[f"{label}revoice"] = {
+            "steps": int(rv["forwards"]) + 1,
+            "forwards": int(rv["forwards"]),
+            "kv": kv,
+            "strength": strength,
+            "kv_gib": round(gb(store.nbytes), 3) if store is not None else 0.0,
+            "dynamic_rows": int(rv["rows"].dynamic.shape[0]),
+            "cached_rows": int(rv["rows"].cached.shape[0]),
+            "dropped": [str(p) for p in rv["drop"]],
+            "adapter_entries_off": int(switched["entries"]),
+            "step_seconds": [round(v, 3) for v in step_seconds],
+            "seconds": round(time.perf_counter() - started, 3),
+        }
+        record.flush()
+        del store
+    return rows
 
 
 def render_window(
@@ -847,6 +996,9 @@ def render_window(
     reference_paths = getattr(args, "ref2va_reference", None)
     references = load_references(reference_paths, args.width, args.height, frames, args.ref2va_reference_size) if reference_paths else None
     keyframe_anchors = tuple(anchor for _, anchor in cond.keyframes)
+    # The vision tower sees the keyframes first (their "<Picture n>" numbering is what the
+    # alignment line names), then the reference images, labelled after them.
+    vision_images = (keyframes or []) + list(cond.references)
     if keyframe is None and keyframes:
         # The draft cache keys on "the" first frame; it is only ever used with a plain first-frame
         # window (media_mode_errors refuses it with anything richer).
@@ -899,16 +1051,21 @@ def render_window(
             encoder = MiniMaxH3TextEncoder(
                 args.compact_root,
                 dtype=mx.bfloat16,
-                load_vision=keyframes is not None or references is not None,
+                load_vision=bool(vision_images) or references is not None,
                 verbose=True,
                 config_path=args.text_config,
+                # Low-memory mode: one embedding/decoder/vision unit resident at a time instead
+                # of the whole ~25.8 GiB conditioner. Same modules, dtypes and order.
+                stream=bool(getattr(args, "stream_text_encoder", False)),
             )
             if references:
                 embeds, text_tags = encoder.encode(prompt, references=[
                     (ref.kind, ref.image if ref.kind == "image" else sample_text_blocks(ref.frames)) for ref in references
                 ])
             else:
-                embeds, text_tags = encoder.encode(prompt, keyframes)
+                embeds, text_tags = encoder.encode(prompt, vision_images or None)
+            if getattr(encoder, "stream_stats", None):
+                record.data[f"{label}text_encoder_stream"] = encoder.stream_stats
             embeds = mx.array(embeds)
             mx.eval(embeds)
             if prompt_cache is not None:
@@ -979,7 +1136,7 @@ def render_window(
                 record.data[f"{label}keyframe_cache_hit"] = True
         else:
             with record.phase(f"{label}keyframe_encode"):
-                keyframe_vae = load_compact_video_vae(args.compact_root / "video_vae.safetensors")
+                keyframe_vae = load_encode_vae(args)
                 condition_rows = encode_keyframe_rows(
                     keyframe_vae, keyframes, args.height, args.width, patch
                 )
@@ -994,13 +1151,31 @@ def render_window(
                     record.data[f"{label}keyframe_cache_hit"] = False
         release()
 
+    reference_rows = None
+    reference_grids: tuple = ()
+    if cond.references:
+        with record.phase(f"{label}reference_encode"):
+            ref_vae = load_encode_vae(args)
+            parts, grids = [], []
+            for image in cond.references:
+                w_ref, h_ref = image.size
+                parts.append(encode_keyframe_rows(ref_vae, [image], h_ref, w_ref, patch))
+                grids.append((h_ref // 16, w_ref // 16))
+            reference_rows = mx.concatenate(parts) if len(parts) > 1 else parts[0]
+            reference_grids = tuple(grids)
+            mx.eval(reference_rows)
+            print(f"reference images: {len(parts)} at {[g for g in grids]} latent, "
+                  f"{reference_rows.shape[0]} rows", flush=True)
+        del ref_vae
+        release()
+
     # Media conditioning: carried history and/or a frozen picture, encoded while only the video VAE
     # is resident (it is unloaded again before the DiT lands, like the keyframe encode above).
     history_rows = None
     frozen_video_rows = None
     if cond.history_frames is not None or cond.frozen_frames is not None:
         with record.phase(f"{label}media_encode"):
-            media_vae = load_compact_video_vae(args.compact_root / "video_vae.safetensors")
+            media_vae = load_encode_vae(args)
             if cond.history_frames is not None:
                 history_rows = encode_video_rows(
                     media_vae, cond.history_frames, patch, sample=True
@@ -1057,8 +1232,22 @@ def render_window(
     # metrics file can no longer claim bf16 for a Q8 render.
     precision = dit_precision(args.dit)
     record.data[f"{label}dit_precision"] = precision
+    stream_policy = None
+    if getattr(args, "stream_dit", False):
+        from minimax_h3_mlx.dit_stream import StreamPolicy
+
+        stream_policy = StreamPolicy.parse(
+            getattr(args, "dit_resident", "none"),
+            prefetch=max(0, int(getattr(args, "dit_prefetch", 1))),
+            workers=max(1, int(getattr(args, "dit_stream_workers", 4))),
+            nocache=not getattr(args, "dit_stream_page_cache", False),
+            pipeline=bool(getattr(args, "dit_pipeline", False)),
+        )
+        if getattr(args, "lora_mode", "runtime") == "fuse":
+            raise SystemExit("--stream-dit needs --lora-mode runtime (a fused adapter would be "
+                             "overwritten by the next block read)")
     with record.phase(f"{label}dit_load_{precision}"):
-        dit = load_dit(args.dit, verbose=True, lazy_adaln=getattr(args, "lazy_adaln", False))
+        dit = load_dit(args.dit, verbose=True, lazy_adaln=getattr(args, "lazy_adaln", False), stream=stream_policy)
         patch = dit.config.patch_size
         lora_spec = getattr(args, "lora", None)
         lora_specs = [lora_spec] if isinstance(lora_spec, (str, Path)) else list(lora_spec or [])
@@ -1080,6 +1269,12 @@ def render_window(
                 record.data[f"{label}lora"] = reports[0].summary()
                 if len(reports) > 1:
                     record.data[f"{label}lora_stack"] = [r.summary() for r in reports]
+                if getattr(dit, "streamer", None) is not None:
+                    # The adapter factors of streamed blocks stream with them when they are the
+                    # file's bytes verbatim (no permute / swap / dtype promotion).
+                    adapters = dit.streamer.stream_adapters(transformed=bool(
+                        getattr(args, "lora_qkv_permute", False) or getattr(args, "lora_fc1_swap", False)))
+                    print(f"  streamed DiT adapters: {adapters}", flush=True)
             else:
                 record.data[f"{label}lora"] = {
                     "path": str(lora_stack[0][0]),
@@ -1134,6 +1329,7 @@ def render_window(
             history_latent_frames=history_latent_frames,
             history_audio_latents=history_audio_latents,
             history_audio_offset=history_audio_offset,
+            reference_grids=reference_grids,
         )
     n_target_video = int(layout.video_indices.shape[0]) - layout.num_condition_video_rows
     n_target_audio = int(layout.audio_indices.shape[0]) - layout.num_condition_audio_rows
@@ -1276,6 +1472,45 @@ def render_window(
                       " (pass --lora-adaln TIME_EMBEDDER for adaLN pairs)")),
                 flush=True,
             )
+        revoice = None
+        if revoice_wanted(args, cond, lora_stack):
+            # Built here because the per-block adaLN projections are dropped just below: the
+            # re-voice pass runs its own (audio-only) schedule, so it needs its own table.
+            from minimax_h3_mlx import revoice as revoice_mod
+
+            rv_video, rv_audio = build_schedules(args.revoice_steps, config)
+            strength = float(getattr(args, "revoice_strength", 1.0) or 1.0)
+            if strength < 1.0:
+                # Start part-way down the audio schedule from the adapter's own sound, noised to
+                # `strength`: the timing (what the lips do) is kept, the timbre is re-made.
+                rv_audio.set_timesteps(sigmas=revoice_mod.start_sigmas(
+                    [float(v) for v in rv_audio.sigmas.tolist()], strength))
+            rv_forwards = len(rv_audio.timesteps)
+            # The picture is held clean (t = 1), keyframe rows stay at their augmentation level,
+            # and the text rows sit at t = 0 for every step - the level they see on step 0 of any
+            # render - so nothing but the target audio rows changes across the pass and the
+            # stored keys/values stay exact for every non-audio row.
+            rv_table, rv_plan = row_timestep_plan(
+                layout,
+                mx.zeros((rv_forwards,), dtype=mx.float32),
+                rv_audio.timesteps,
+                np.ones(n_target_video, dtype=bool),
+                None,
+            )
+            rv_cache = ModulationCache.build(dit, rv_table, dtype=mx.bfloat16)
+            mx.eval(rv_cache.tables)
+            drop = [Path(p) for p in (args.revoice_drop or [])] or ([lora_stack[0][0]] if lora_stack else [])
+            revoice = {
+                "mod": revoice_mod,
+                "audio_sched": rv_audio,
+                "table": rv_table,
+                "plan": rv_plan,
+                "cache": rv_cache,
+                "forwards": rv_forwards,
+                "drop": drop,
+                "rows": revoice_mod.plan_rows(layout),
+                "strength": strength,
+            }
         skip_spec = getattr(args, "skip_blocks", None)
         if skip_spec:
             skipped_blocks = resolve_skip_blocks(skip_spec, cache, dit.config.num_layers)
@@ -1338,6 +1573,18 @@ def render_window(
             condition_rows = MiniMaxH3Scheduler(
                 shift=config.sigma_shift_video
             ).scale_noise(condition_rows, KEYFRAME_NOISE_AUG, condition_noise)
+        noised_refs = None
+        if reference_rows is not None:
+            # Their own draw, so a seed renders the same base noise with or without references.
+            ref_noise = mx.random.normal(
+                reference_rows.shape, key=mx.random.key(int(seed) * 131 + 17)
+            ).astype(mx.float32)
+            noised_refs = MiniMaxH3Scheduler(shift=config.sigma_shift_video).scale_noise(
+                reference_rows, KEYFRAME_NOISE_AUG, ref_noise)
+            condition_rows = (
+                noised_refs if condition_rows is None
+                else mx.concatenate([noised_refs, condition_rows])
+            )
         video_rows = patchify_video_latents(latents, patch)
         frozen_video_values = None
         if frozen_video_rows is not None:
@@ -1502,6 +1749,17 @@ def render_window(
         record.data[f"{label}step_cache"] = step_cache.summary()
         print(f"step cache: reused {step_cache.skipped}/{num_forwards} forwards")
 
+    adapter_audio_rows = None
+    if revoice is not None:
+        mx.eval(video_rows, audio_rows)
+        if getattr(args, "revoice_keep_original", False):
+            adapter_audio_rows = audio_rows
+        audio_rows = run_revoice(
+            args, record, label, dit, revoice, layout, video_rows, audio_rows, embeds, seed,
+            n_cond_a, lora_stack,
+        )
+        del revoice
+
     mx.eval(video_rows, audio_rows)
     stage_a_cache = getattr(args, "save_stage_a", None)
     if stage_a_cache is not None:
@@ -1543,41 +1801,106 @@ def render_window(
             print(f"stage-A cache: {stage_a_cache}", flush=True)
             for name, value in stored["digests"].items():
                 print(f"  {name} {tuple(stored['shapes'][name])} sha256 {value[:16]}", flush=True)
+    streamer = getattr(dit, "streamer", None)
+    if streamer is not None:
+        streamer.close()
+        record.data[f"{label}dit_stream"] = streamer.summary()
+        record.flush()
+        info = record.data[f"{label}dit_stream"]
+        print(f"DiT stream: {info['blocks_loaded']} block loads, {info['gib_read']:.1f} GiB read in "
+              f"{info['read_seconds']:.1f}s of worker time, main thread waited "
+              f"{info['wait_seconds']:.2f}s (max {info['max_wait_seconds']:.2f}s)", flush=True)
+        dit.streamer = None
+        del streamer
     del dit, cache, plan, timestep_table, video_sched, audio_sched
     release()
 
-    if not cond.decode_video:
-        # Video-to-audio: the picture was held, so the delivery is the supplied pixels.
-        video = np.asarray(cond.frozen_frames[:frames], dtype=np.uint8)
-        del video_rows
-    elif getattr(args, "draft_decode", "full") == "tae":
-        with record.phase(f"{label}video_tae_decode"):
-            from minimax_h3_mlx.tiny_video_vae import load_tiny_h3_video_decoder
+    decode_cache = getattr(args, "decode_cache_gb", None)
+    previous_cache_limit = None
+    if decode_cache is not None:
+        # Low-RAM: after a streamed denoise the run peak is the decode, and most of the process
+        # footprint there is MLX's cache of freed buffers. Capped for the decode only, restored
+        # after, so the denoise (and a chain's next window) keeps its allocator reuse.
+        previous_cache_limit = mx.set_cache_limit(int(max(0.0, decode_cache) * 1024**3))
+    try:
+        if not cond.decode_video:
+            # Video-to-audio: the picture was held, so the delivery is the supplied pixels.
+            video = np.asarray(cond.frozen_frames[:frames], dtype=np.uint8)
+            del video_rows
+        elif getattr(args, "draft_decode", "full") == "tae":
+            with record.phase(f"{label}video_tae_decode"):
+                from minimax_h3_mlx.tiny_video_vae import load_tiny_h3_video_decoder
 
-            video_tae = load_tiny_h3_video_decoder(args.tae_checkpoint)
-            video = decode_video_tae(
-                video_tae, video_rows[n_cond_v:], frames, latent_frames, latent_h, latent_w, patch
-            )
-        del video_tae, video_rows
-    else:
-        # This is the dense/HQ path. Keep it isolated from preview changes: release validation
-        # hashes this exact decoder's video stream against a pre-branch render.
-        with record.phase(f"{label}video_vae_decode"):
-            video_vae = load_compact_video_vae(args.compact_root / "video_vae.safetensors")
-            video = decode_video(
-                video_vae, video_rows[n_cond_v:], frames, latent_frames, latent_h, latent_w, patch
-            )
-        del video_vae, video_rows
-    release()
-    if cond.decode_video:
-        check_decoded_video(video, lora_stack)
+                video_tae = load_tiny_h3_video_decoder(args.tae_checkpoint)
+                video = decode_video_tae(
+                    video_tae, video_rows[n_cond_v:], frames, latent_frames, latent_h, latent_w, patch
+                )
+            del video_tae, video_rows
+        else:
+            # This is the dense/HQ path. Keep it isolated from preview changes: release validation
+            # hashes this exact decoder's video stream against a pre-branch render.
+            with record.phase(f"{label}video_vae_decode"):
+                vae_stream = None
+                if getattr(args, "stream_vae_decoder", False):
+                    # Low-memory: the ViT decoder's 36 blocks stream from the file, two resident;
+                    # the CNN encoder (keyframes only) is not loaded. Same pixels.
+                    from minimax_h3_mlx.vae_stream import load_compact_video_vae_streamed
 
-    with record.phase(f"{label}audio_vae_decode"):
-        audio_vae = load_compact_audio_vae(args.compact_root / "audio_vae.safetensors")
-        audio = decode_audio(audio_vae, audio_rows[n_cond_a:], audio_latents, frames)
-        sample_rate = audio_vae.config.sampling_rate
-    del audio_vae, audio_rows, embeds, layout
-    release()
+                    video_vae, vae_stream = load_compact_video_vae_streamed(
+                        args.compact_root / "video_vae.safetensors")
+                else:
+                    video_vae = load_compact_video_vae(args.compact_root / "video_vae.safetensors")
+                try:
+                    video = decode_video(
+                        video_vae, video_rows[n_cond_v:], frames, latent_frames, latent_h, latent_w,
+                        patch
+                    )
+                except RuntimeError as exc:
+                    # Low-memory only: a finished denoise must not die in the decode. Tiles are
+                    # decoded independently, so one tile per call is the same arithmetic in the
+                    # least memory; MLX refuses an allocation with a RuntimeError before Metal
+                    # does, which is the case this catches.
+                    text = str(exc).lower()
+                    if (getattr(args, "low_memory", "off") == "off" or video_vae.decode_batch <= 1
+                            or not any(w in text for w in ("allocat", "memory", "malloc"))):
+                        raise
+                    print(f"video decode ran out of memory at {video_vae.decode_batch} tiles per "
+                          "call; retrying one tile at a time", flush=True)
+                    record.data[f"{label}decode_retry"] = {"from_batch": video_vae.decode_batch,
+                                                           "error": str(exc)[:200]}
+                    mx.clear_cache()
+                    video_vae.decode_batch = 1
+                    video = decode_video(
+                        video_vae, video_rows[n_cond_v:], frames, latent_frames, latent_h, latent_w,
+                        patch
+                    )
+                finally:
+                    if vae_stream is not None:
+                        record.data[f"{label}vae_stream"] = vae_stream.summary()
+                        vae_stream.close()
+            del video_vae, video_rows
+        release()
+        if cond.decode_video:
+            check_decoded_video(video, lora_stack)
+
+        with record.phase(f"{label}audio_vae_decode"):
+            audio_vae = load_compact_audio_vae(args.compact_root / "audio_vae.safetensors")
+            audio = decode_audio(audio_vae, audio_rows[n_cond_a:], audio_latents, frames)
+            sample_rate = audio_vae.config.sampling_rate
+            if adapter_audio_rows is not None:
+                original = decode_audio(audio_vae, adapter_audio_rows[n_cond_a:], audio_latents, frames)
+                keep = args.output.with_name(f"{args.output.stem}_{label}adapter_audio.wav")
+                keep.parent.mkdir(parents=True, exist_ok=True)
+                write_wav(keep, original, int(sample_rate))
+                record.data[f"{label}revoice"]["adapter_audio"] = str(keep)
+                del original
+        del audio_vae, audio_rows, embeds, layout, adapter_audio_rows
+        release()
+    finally:
+        # Restored on every path (v2a, TAE, a failed decode or integrity check), so later work in
+        # this process never inherits the decode cap.
+        if previous_cache_limit is not None:
+            mx.set_cache_limit(previous_cache_limit)
 
     record.data[f"{label}mean_denoise_step_seconds"] = round(float(np.mean(step_times)), 3)
     record.data[f"{label}denoise_step_seconds"] = [round(value, 3) for value in step_times]
@@ -1830,6 +2153,65 @@ def main() -> int:
         help="EXPERIMENTAL speed lever: skip DiT blocks — 'auto:N' skips the N with the smallest "
         "residual gates, or list them ('12,23,31'). Blocks 0, 1 and 49 are never skipped.",
     )
+    parser.add_argument(
+        "--reference",
+        type=Path,
+        action="append",
+        default=None,
+        metavar="IMAGE",
+        help="A reference image (a character's face or sheet): packed like MiniMax's ref2va image "
+        "block - its own canvas, one slot on the clock before the target, labelled <Picture n> after "
+        "any keyframes - so the prompt can name it. Repeat for several. Every window gets it.",
+    )
+    parser.add_argument(
+        "--reference-size",
+        type=int,
+        default=2048,
+        metavar="PIXELS",
+        help="Short edge a reference image is encoded at (MiniMax's ref2va uses 2048). Smaller is "
+        "cheaper: rows grow with the square of this.",
+    )
+    parser.add_argument(
+        "--revoice-steps",
+        type=int,
+        default=0,
+        metavar="POINTS",
+        help="Re-voice: after the picture is made, switch the speed adapter off and re-make only the "
+        "sound with the base model over POINTS sigma points (POINTS-1 audio steps), the picture held "
+        "exactly as rendered. 0 (the default) is off. Runs only on windows rendered with --lora; "
+        "skipped for --audio-drive and --video-to-audio.",
+    )
+    parser.add_argument(
+        "--revoice-drop",
+        type=Path,
+        action="append",
+        default=None,
+        metavar="LORA",
+        help="The adapter(s) re-voice switches off (paths as given to --lora). Default: the first "
+        "--lora, which is where a speed adapter goes. Other LoRAs (a character's voice) stay on.",
+    )
+    parser.add_argument(
+        "--revoice-kv",
+        choices=("int8", "bf16", "off"),
+        default="int8",
+        help="Re-voice key/value store for the rows that do not change: int8 (default, half the "
+        "memory of bf16), bf16, or off = run the exact full forward on every audio step (slow).",
+    )
+    parser.add_argument(
+        "--revoice-strength",
+        type=float,
+        default=1.0,
+        metavar="SIGMA",
+        help="Where re-voice starts: 1.0 (default) re-makes the sound from noise; below 1 it starts "
+        "from the adapter's own sound noised to this level, keeping its timing (lip-sync) and "
+        "re-making its timbre. Only the schedule's points below SIGMA run.",
+    )
+    parser.add_argument(
+        "--revoice-keep-original",
+        action="store_true",
+        help="Research: also write the adapter's own sound beside the output as "
+        "<output>_adapter_audio.wav, for an A/B against the re-voiced track.",
+    )
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--metrics", type=Path, required=True)
     parser.add_argument(
@@ -1977,14 +2359,95 @@ def main() -> int:
     )
     parser.add_argument(
         "--vae-dtype",
-        choices=("float32", "float16", "bfloat16"),
+        choices=("float32", "float16", "bfloat16", "float16-mixed", "bfloat16-mixed"),
         default=None,
-        help="ViT decoder arithmetic dtype (default float32, or H3_VAE_DTYPE). float16 matches the "
-        "reference's FP16 autocast and ComfyUI's fp16 VAE.",
+        help="ViT decoder arithmetic dtype (default float16-mixed, or H3_VAE_DTYPE). float16-mixed "
+        "keeps the residual stream, norms and rotary in float32 and runs the projections and "
+        "attention in fp16 (69.6 dB vs float32, 15%% faster on M4 Max). float32 is the historical "
+        "decode, bit for bit. float16 matches the reference's FP16 autocast.",
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--cache-gb",
+        type=float,
+        default=None,
+        metavar="GB",
+        help="cap MLX's buffer cache (freed buffers kept for reuse). Unset = MLX's default "
+        "(the memory limit). On a streamed low-RAM run the cache, not live arrays, is most of "
+        "the process footprint; a cap changes no output.",
+    )
+    parser.add_argument(
+        "--decode-cache-gb",
+        type=float,
+        default=None,
+        metavar="GB",
+        help="cap MLX's buffer cache for the VAE decodes only (restored after). Low-RAM Macs: "
+        "the decode is the run peak once the DiT streams. Changes no output.",
+    )
     parser.add_argument("--wired-gb", type=float, default=50.0)
     parser.add_argument("--memory-gb", type=float, default=58.0)
+    parser.add_argument(
+        "--low-memory",
+        choices=("off", "auto", "on"),
+        default="off",
+        help="EXPERIMENTAL (exp/h3-24gb). off (default): today's path, every argument as given. "
+        "auto: keep today's path when its estimated largest pass fits this Mac's budget, "
+        "otherwise stream the prompt encoder and the DiT, cap MLX's buffer cache and size the "
+        "decode tiles to fit. on: always the low-memory settings. Either of the last two also "
+        "checks, before anything loads, that the largest pass fits (exit 76: this Mac cannot; "
+        "exit 77: other apps leave too little free right now).",
+    )
+    parser.add_argument(
+        "--stream-vae-decoder",
+        action="store_true",
+        help="EXPERIMENTAL low-RAM: stream the video VAE's ViT decoder one block at a time (two "
+        "of 36 resident, the next read while the current computes) and skip its CNN encoder in "
+        "the decode. Same pixels; the decode holds ~0.3 GiB of weights instead of 4.85.",
+    )
+    parser.add_argument(
+        "--admission-only",
+        action="store_true",
+        help="print the memory plan and admission verdict (one H3_ADMISSION JSON line) and exit "
+        "without loading any model: 0 = would start, 76 = cannot fit this Mac, 77 = busy now",
+    )
+    parser.add_argument(
+        "--stream-text-encoder",
+        action="store_true",
+        help="Low-memory mode: stream the text/vision conditioner one unit at a time from the "
+        "safetensors byte ranges (embedding, each decoder layer, each vision block) instead of "
+        "holding all of it resident. Output conditioning is unchanged; the encode phase peaks "
+        "at about one unit instead of the whole encoder.",
+    )
+    parser.add_argument(
+        "--stream-dit",
+        action="store_true",
+        help="Low-memory mode: stream the DiT block weights from the safetensors shards per forward "
+        "(direct reads into a fixed pool of block slots, the next block prefetched while the "
+        "current one computes) instead of holding all 50 blocks resident. Same bytes, same "
+        "kernels; the denoise holds the non-block weights plus --dit-prefetch + 1 blocks.",
+    )
+    parser.add_argument(
+        "--dit-resident",
+        default="none",
+        metavar="SPEC",
+        help="with --stream-dit: what stays resident. 'none', or a comma list of parts kept in "
+        "every block (qkv,out,fc1,fc2), 'first:K' / 'blocks:A-B' whole blocks, 'gb:X' as many "
+        "whole blocks as fit in X GiB.",
+    )
+    parser.add_argument("--dit-prefetch", type=int, default=1, metavar="N",
+                        help="with --stream-dit: blocks read ahead of the one computing")
+    parser.add_argument("--dit-pipeline", action="store_true",
+                        help="with --stream-dit: queue each block before confirming the previous "
+                        "one (one more slot), so the GPU does not idle while the host builds the "
+                        "next block")
+    parser.add_argument("--dit-stream-workers", type=int, default=4, metavar="N",
+                        help="with --stream-dit: concurrent tensor reads")
+    parser.add_argument(
+        "--dit-stream-page-cache",
+        action="store_true",
+        help="with --stream-dit: read through the page cache (default bypasses it with "
+        "F_NOCACHE, so streamed weights leave no residue in RAM)",
+    )
     parser.add_argument(
         "--step-cache",
         type=float,
@@ -2111,6 +2574,29 @@ def main() -> int:
         if args.step_cache > 0 or args.step_cache_probe:
             parser.error("--sampler renoise and --step-cache do not compose (each forward's input "
                          "is freshly re-noised, so there is no residual to reuse)")
+        if args.revoice_steps:
+            parser.error("--sampler renoise and --revoice-steps do not compose")
+    if args.reference:
+        if args.draft_cache_dir is not None:
+            parser.error("--reference and --draft-cache-dir do not compose")
+        if args.reference_size < 256 or args.reference_size % 32:
+            parser.error("--reference-size must be a multiple of 32, at least 256")
+        for ref in args.reference:
+            if not Path(ref).is_file():
+                parser.error(f"--reference {ref} does not exist")
+        # The prompt cache is keyed on prompt + first frame; a reference changes the embedding.
+        args.prompt_cache = None
+    if not 0.05 <= args.revoice_strength <= 1.0:
+        parser.error("--revoice-strength must be in 0.05..1.0")
+    if args.revoice_steps and args.revoice_steps < 2:
+        parser.error("--revoice-steps must be 0 (off) or at least 2")
+    if args.revoice_steps and not args.lora:
+        parser.error("--revoice-steps re-makes the sound with an adapter switched off; pass --lora")
+    if args.revoice_drop:
+        given = {str(parse_lora_path(spec)) for spec in (args.lora or [])}
+        missing = [str(p) for p in args.revoice_drop if str(p) not in given]
+        if missing:
+            parser.error(f"--revoice-drop names adapters not passed with --lora: {missing}")
     if args.vae_dtype:
         import os
         os.environ["H3_VAE_DTYPE"] = args.vae_dtype
@@ -2288,6 +2774,28 @@ def main() -> int:
         )
 
     device = mx.device_info()
+    memory_plan = None
+    if args.low_memory != "off" or args.admission_only:
+        # Decided before anything large loads; `off` never reaches here, so today's path is
+        # untouched unless a caller opts in.
+        from minimax_h3_mlx.memory_plan import EXIT_BUSY, EXIT_CANNOT, plan_for_request
+
+        memory_plan = plan_for_request(args, device, frames, chain, window_keyframes, prompts)
+        verdict = memory_plan["admission"]["verdict"]
+        print("H3_ADMISSION " + json.dumps(memory_plan, separators=(",", ":")), flush=True)
+        print(f"memory plan: {memory_plan['mode']} (asked {args.low_memory}), largest pass "
+              f"{memory_plan['peak_pass']} ~{memory_plan['peak_gib']:.1f} GiB of a "
+              f"{memory_plan['budget_gib']:.1f} GiB budget; verdict {verdict}", flush=True)
+        if verdict != "ok":
+            print(memory_plan["admission"]["message"], flush=True)
+            if args.metrics is not None:
+                args.metrics.parent.mkdir(parents=True, exist_ok=True)
+                args.metrics.write_text(json.dumps(
+                    {"status": "refused", "memory_plan": memory_plan}, indent=2))
+        if args.admission_only:
+            return {"ok": 0, "cannot": EXIT_CANNOT, "busy": EXIT_BUSY}[verdict]
+        if verdict != "ok":
+            return EXIT_CANNOT if verdict == "cannot" else EXIT_BUSY
     max_wired = int(device["max_recommended_working_set_size"])
     wired_bytes = min(int(args.wired_gb * 1024**3), max_wired - 1024**2)
     memory_bytes = min(int(args.memory_gb * 1024**3), int(device["memory_size"]) - 1024**3)
@@ -2360,10 +2868,27 @@ def main() -> int:
         "audio_mux": str(args.audio_mux) if args.audio_mux else None,
         "video_to_audio": str(args.video_to_audio) if args.video_to_audio else None,
         "skip_blocks": args.skip_blocks,
+        "references": [str(p) for p in (args.reference or [])] or None,
+        "reference_size": args.reference_size if args.reference else None,
+        "revoice_steps": args.revoice_steps or None,
+        "revoice_kv": args.revoice_kv if args.revoice_steps else None,
+        "revoice_drop": [str(p) for p in (args.revoice_drop or [])] or None,
         # Which video-VAE decode mode produced this run, so a metrics file is self-describing
         # when someone compares decode phases across the campaign. 0/1 is the per-tile loop.
         "vae_decode_dtype": resolved_decode_dtype(),
+        "stream_text_encoder": bool(args.stream_text_encoder),
+        "stream_dit": bool(args.stream_dit),
+        "dit_resident": args.dit_resident if args.stream_dit else None,
+        "dit_prefetch": int(args.dit_prefetch) if args.stream_dit else None,
+        "dit_stream_workers": int(args.dit_stream_workers) if args.stream_dit else None,
+        "dit_stream_nocache": (not args.dit_stream_page_cache) if args.stream_dit else None,
+        "dit_pipeline": bool(args.dit_pipeline) if args.stream_dit else None,
         "vae_decode_batch": resolved_decode_batch(),
+        "cache_limit_gb": args.cache_gb,
+        "decode_cache_limit_gb": args.decode_cache_gb,
+        "low_memory": args.low_memory,
+        "stream_vae_decoder": bool(getattr(args, "stream_vae_decoder", False)),
+        "memory_plan": memory_plan,
         "wired_gb": round(gb(wired_bytes), 3),
         "memory_limit_gb": round(gb(memory_bytes), 3),
         "device": device,
@@ -2372,6 +2897,8 @@ def main() -> int:
     total_started = time.perf_counter()
     mx.set_wired_limit(wired_bytes)
     mx.set_memory_limit(memory_bytes)
+    if args.cache_gb is not None:
+        mx.set_cache_limit(int(max(0.0, args.cache_gb) * 1024**3))
 
     live_preview = None
     if args.live_preview != "off":
@@ -2417,6 +2944,11 @@ def main() -> int:
                 stretch=True,
             )
 
+        reference_images = []
+        if args.reference:
+            from minimax_h3_mlx.reference import prepare_reference_image
+
+            reference_images = [prepare_reference_image(p, args.reference_size) for p in args.reference]
         segments = []
         step_times = []
         window_report = []
@@ -2447,6 +2979,7 @@ def main() -> int:
             from PIL import Image
 
             cond = WindowConditioning()
+            cond.references = reference_images
             window_start = index * (frames - 1)  # frame 0 of this window on the new timeline
             continuing = bool(segments)
             first_frame_key = ""
@@ -2501,6 +3034,14 @@ def main() -> int:
                 key=lambda item: order.get(item[1], int(item[1].split(":")[1]) if ":" in item[1] else 0)
             )
             window_prompt = prompts[index]
+            if reference_images:
+                # References are labelled after this window's keyframes. A chain's later windows
+                # gain the carried hand-over frame, so "<Picture n>" naming a reference in window 1
+                # names it one later there.
+                if index == 0:
+                    ref_base_keyframes = len(cond.keyframes)
+                window_prompt = shift_reference_labels(
+                    window_prompt, ref_base_keyframes, len(cond.keyframes))
             if args.keyframe_alignment == "auto":
                 line = alignment_line([anchor for _, anchor in cond.keyframes], frames, window_prompt)
                 if line:
