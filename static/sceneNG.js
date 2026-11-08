@@ -5,7 +5,8 @@
  * Script format:   KNIGHT [on the battlements]: The wall has stood a long time.
  *                  WOMAN [in the great hall]: Come in out of the wind.
  * The optional [setting] says where THAT line happens; a character's picture ("look") with the same name is used as
- * that clip's first frame.
+ * that clip's first frame. A line starting with "&" puts its speaker in the SAME frame as the line before (a phone call,
+ * a split-screen): both characters need a picture, and the two lines together are about 12 words.
  *
  * The queue is rebuilt from the server (GET /api/ng/scene/jobs) when the view opens and every few seconds, so a reload
  * or a lost submit can never hide a job. Exposes window.SceneNG = { sync }. Called from ProjectManager.render().
@@ -176,6 +177,7 @@
     addLook.style.width = "auto";
     addLook.addEventListener("click", function () { addLookRow(c); });
     root.appendChild(addLook);
+    addMaker(c, root);
 
     root.appendChild(mk("div", "ng-gen-label", "Voice"));
     var kinds = mk("div");
@@ -235,6 +237,156 @@
     return c;
   }
 
+  // ---- make pictures from a picture (Klein): a look in a new place, or the eight-shot identity set -------------------
+
+  function kleinPoll(jobId, onDone, onUpdate) {
+    var tries = 0;
+    (function tick() {
+      fetch("/api/ng/klein/status/" + jobId).then(function (r) { return r.json(); }).then(function (d) {
+        var j = d.job || d;
+        if (onUpdate) onUpdate(j);
+        if (j.status === "done") return onDone(j);
+        if (j.status === "error" || j.status === "cancelled") return onDone(j);
+        if (++tries < 400) setTimeout(tick, 4000);
+      }).catch(function () { if (++tries < 400) setTimeout(tick, 6000); });
+    })();
+  }
+
+  function sourcePicture(c) {
+    var f = c.el.srcFile.files[0];
+    if (f) return f;
+    var withFile = c.looks.filter(function (l) { return l.file; })[0];
+    return withFile ? withFile.file : null;
+  }
+
+  function addMaker(c, root) {
+    var box = document.createElement("details");
+    box.className = "ng-scene-maker";
+    box.appendChild(mk("summary", null, "Make pictures from a picture (Klein)"));
+    box.appendChild(mk("p", "ng-placeholder",
+      "Start from one picture of the character (choose it here, or the first look above is used)."));
+    c.el.srcFile = document.createElement("input");
+    c.el.srcFile.type = "file"; c.el.srcFile.accept = "image/*";
+    box.appendChild(c.el.srcFile);
+
+    box.appendChild(mk("div", "ng-gen-label", "A look: the same person somewhere else"));
+    c.el.lookSetting = mk("input", "ng-gen-input");
+    c.el.lookSetting.type = "text"; c.el.lookSetting.maxLength = 160;
+    c.el.lookSetting.placeholder = "Where, e.g. in a torch-lit great hall, wearing a dark cloak";
+    box.appendChild(c.el.lookSetting);
+    var lookBtn = mk("button", "ng-gen-btn ng-gen-btn-quiet", "make 2 looks");
+    lookBtn.type = "button"; lookBtn.style.width = "auto";
+    c.el.lookMsg = mk("div", "ng-gen-status");
+    c.el.lookPics = mk("div", "ng-scene-pics");
+    box.appendChild(lookBtn); box.appendChild(c.el.lookMsg); box.appendChild(c.el.lookPics);
+
+    box.appendChild(mk("div", "ng-gen-label", "An identity RefMod: eight shots of the same person"));
+    box.appendChild(mk("p", "ng-placeholder",
+      "Four faces at different angles and expressions and four body shots, all with the same face, hair, skin and " +
+      "outfit, then a RefMod built from them and your picture. About 25 minutes."));
+    c.el.kitName = mk("input", "ng-gen-input");
+    c.el.kitName.type = "text"; c.el.kitName.maxLength = 63;
+    c.el.kitName.placeholder = "RefMod name, e.g. knight_v1 (leave empty for the pictures only)";
+    box.appendChild(c.el.kitName);
+    var kitBtn = mk("button", "ng-gen-btn ng-gen-btn-quiet", "build the eight-shot set");
+    kitBtn.type = "button"; kitBtn.style.width = "auto";
+    c.el.kitMsg = mk("div", "ng-gen-status");
+    c.el.kitPics = mk("div", "ng-scene-pics");
+    box.appendChild(kitBtn); box.appendChild(c.el.kitMsg); box.appendChild(c.el.kitPics);
+    root.appendChild(box);
+
+    lookBtn.addEventListener("click", function () { makeLooks(c, lookBtn); });
+    kitBtn.addEventListener("click", function () { buildKit(c, kitBtn); });
+  }
+
+  function who(c) {
+    return (c.el.subject.value || "").trim().replace(/^(an?|the)\s+/i, "");
+  }
+
+  function makeLooks(c, btn) {
+    var pic = sourcePicture(c), setting = c.el.lookSetting.value.trim();
+    if (!pic) { c.el.lookMsg.textContent = "Choose a picture first."; return; }
+    if (!setting) { c.el.lookMsg.textContent = "Say where."; return; }
+    var form = new FormData();
+    form.append("picture", pic, pic.name);
+    form.append("setting", setting);
+    form.append("who", who(c));
+    form.append("n", "2");
+    btn.disabled = true;
+    c.el.lookMsg.textContent = "Sending...";
+    c.el.lookPics.innerHTML = "";
+    fetch(API + "/looks", { method: "POST", body: form })
+      .then(function (res) { return res.json().then(function (p) { return { ok: res.ok, p: p }; }); })
+      .then(function (r) {
+        if (!r.ok) { btn.disabled = false; c.el.lookMsg.textContent = r.p.error || "could not start"; return; }
+        c.el.lookMsg.textContent = "Making the pictures (about 3 minutes each)...";
+        kleinPoll(r.p.klein_job, function (j) {
+          btn.disabled = false;
+          if (j.status !== "done") { c.el.lookMsg.textContent = "Klein failed: " + (j.error || j.status); return; }
+          c.el.lookMsg.textContent = "Click a picture to use it as the look \"" + setting.slice(0, 40) + "\".";
+          (j.results || []).forEach(function (res) { showLookPick(c, r.p.klein_job, res.file, setting); });
+        }, function (j) {
+          if (j.status === "running" || j.status === "waiting") {
+            c.el.lookMsg.textContent = (j.status === "waiting" ? "Waiting for the video render to finish... " : "Making the pictures (about 3 minutes each)... ") +
+              (j.results ? j.results.length : 0) + " of 2";
+          }
+        });
+      })
+      .catch(function (e) { btn.disabled = false; c.el.lookMsg.textContent = e.message; });
+  }
+
+  function showLookPick(c, jobId, file, setting) {
+    var img = document.createElement("img");
+    img.src = "/api/ng/klein/image/" + jobId + "/" + file;
+    img.className = "ng-scene-pick";
+    img.title = "use as the look \"" + setting.slice(0, 40) + "\"";
+    img.addEventListener("click", function () {
+      fetch(img.src).then(function (r) { return r.blob(); }).then(function (blob) {
+        var f = new File([blob], file, { type: blob.type || "image/png" });
+        addLookRow(c, setting.slice(0, 40), f);
+        c.el.lookMsg.textContent = "Added as a look. Tag script lines [" + setting.slice(0, 40) + "] to start from it.";
+      });
+    });
+    c.el.lookPics.appendChild(img);
+  }
+
+  function buildKit(c, btn) {
+    var pic = sourcePicture(c);
+    if (!pic) { c.el.kitMsg.textContent = "Choose a picture first."; return; }
+    var form = new FormData();
+    form.append("picture", pic, pic.name);
+    if (c.el.kitName.value.trim()) form.append("name", c.el.kitName.value.trim());
+    btn.disabled = true;
+    c.el.kitMsg.textContent = "Sending...";
+    c.el.kitPics.innerHTML = "";
+    fetch(API + "/kit", { method: "POST", body: form })
+      .then(function (res) { return res.json().then(function (p) { return { ok: res.ok, p: p }; }); })
+      .then(function (r) {
+        if (!r.ok) { btn.disabled = false; c.el.kitMsg.textContent = r.p.error || "could not start"; return; }
+        var tries = 0;
+        (function tick() {
+          fetch(API + "/kit/" + r.p.job_id).then(function (x) { return x.json(); }).then(function (d) {
+            c.el.kitPics.innerHTML = "";
+            (d.shots || []).forEach(function (sh) {
+              if (!sh.url) return;
+              var im = document.createElement("img"); im.src = sh.url; im.className = "ng-scene-pick"; im.title = sh.label;
+              c.el.kitPics.appendChild(im);
+            });
+            var label = d.stage === "refmod" ? "Building the RefMod..." : d.stage === "done" ? "" : "Making shot " + Math.min(d.done + 1, d.total) + " of " + d.total + "...";
+            if (d.stage === "done") {
+              btn.disabled = false;
+              c.el.kitMsg.textContent = d.name ? "Done: the RefMod " + d.name + " is in the H3 RefMod list." : "Done: the eight pictures are above.";
+              return;
+            }
+            if (d.stage === "failed" || d.stage === "cancelled") { btn.disabled = false; c.el.kitMsg.textContent = "Stopped: " + (d.error || d.stage); return; }
+            c.el.kitMsg.textContent = label;
+            if (++tries < 600) setTimeout(tick, 5000);
+          }).catch(function () { if (++tries < 600) setTimeout(tick, 8000); });
+        })();
+      })
+      .catch(function (e) { btn.disabled = false; c.el.kitMsg.textContent = e.message; });
+  }
+
   function populateCard(c) {
     if (!c.el.lora) return;
     var prev = c.el.lora.value;
@@ -273,7 +425,7 @@
     c.el.consent.checked = false;
   }
 
-  function addLookRow(c) {
+  function addLookRow(c, initialName, initialFile) {
     var row = mk("div", "ng-scene-look-row");
     var look = { name: null, file: null, row: row };
     look.name = mk("input", "ng-gen-input");
@@ -283,6 +435,11 @@
     var file = document.createElement("input");
     file.type = "file"; file.accept = "image/*";
     file.addEventListener("change", function () { look.file = file.files[0] || null; });
+    if (initialName) look.name.value = initialName;
+    if (initialFile) {                                 // a picture we made: put it in the file box as if it had been chosen
+      look.file = initialFile;
+      try { var dt = new DataTransfer(); dt.items.add(initialFile); file.files = dt.files; } catch (e) { /* shown by name below */ }
+    }
     var rm = mk("button", "ng-gen-btn ng-gen-btn-quiet", "remove");
     rm.type = "button"; rm.style.width = "auto";
     rm.addEventListener("click", function () {
@@ -314,8 +471,9 @@
 
   function scriptLines() {
     var lines = [];
-    (els.script.value || "").split(/\r?\n/).forEach(function (raw) {
-      if (!raw.trim()) return;
+    (els.script.value || "").split(/\r?\n/).forEach(function (raw0) {
+      if (!raw0.trim()) return;
+      var raw = raw0.replace(/^\s*&\s*/, "");                    // "& NAME: ..." shares the previous line's shot
       var m = raw.match(/^\s*([A-Za-z0-9][A-Za-z0-9 _-]{0,29}?)\s*(?:\[[^\]\n]{1,120}\])?\s*:\s*(.*\S)\s*$/);
       if (m) lines.push({ speaker: m[1].trim(), words: (m[2].match(/\S+/g) || []).length });
       else if (lines.length) lines[lines.length - 1].words += (raw.match(/\S+/g) || []).length;

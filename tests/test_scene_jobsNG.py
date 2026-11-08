@@ -55,14 +55,14 @@ class _Base(unittest.TestCase):
         tiny_clip(self.clip)
         self.speech_calls, self.h3_calls = [], []
         # one take per speaker, with a real pause between sentences (0.3 s inside a line, 0.5 s between lines)
-        takes = {"The wall stands. It has for years. I count the stones.":
+        self.takes = takes = {"The wall stands. It has for years. I count the stones.":
                  [("s", .1, 0), ("v", .8, .2), ("s", .3, 0), ("v", .9, .2), ("s", .5, 0), ("v", 1.0, .2), ("s", .1, 0)],
                  "Come in out of the wind.": [("s", .1, 0), ("v", 1.5, .12), ("s", .1, 0)]}
 
         def fake_speech(text, kind, **kw):
             self.speech_calls.append((text, kind, kw))
             path = self.t / f"take{len(self.speech_calls)}.wav"
-            sv.write_wav_ng(path, synth(takes[text]), SR)
+            sv.write_wav_ng(path, synth(self.takes[text]), SR)
             return SimpleNamespace(job_id=f"s{len(self.speech_calls)}", finished_at=1.0, error=None, audio_path=str(path))
 
         def fake_h3(first, ext, prompt, duration, **kw):
@@ -195,7 +195,7 @@ class RunTests(_Base):
             return job
         with mock.patch.object(scene.h3_jobs, "start_h3_job_ng", flaky):
             job = self.start()
-            with self.assertRaisesRegex(RuntimeError, r"line 2 \(WOMAN\): out of memory"):
+            with self.assertRaisesRegex(RuntimeError, r"shot 2 \(WOMAN\): out of memory"):
                 scene._run_scene(job)
         self.assertEqual([c.status for c in job.clips], ["done", "failed", "waiting"])
         self.assertIsNone(job.output_path)
@@ -322,6 +322,78 @@ class RouteTests(_Base):
         r = self.client.get(f"/api/ng/scene/jobs/{job.job_id}/video")
         self.assertEqual((r.status_code, r.mimetype), (200, "video/mp4"))
         self.assertIn("attachment", self.client.get(f"/api/ng/scene/jobs/{job.job_id}/download").headers["Content-Disposition"])
+
+
+def solid_png(color, size=(200, 120)):
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+class SharedFrameTests(_Base):
+    SHARED = ("KNIGHT [in the tower]: Where are you now?\n"
+              "& WOMAN [in the kitchen]: Right here, the pot boils.\n"
+              "KNIGHT: Good.")
+
+    def setUp(self):
+        super().setUp()
+        self.takes["Where are you now? Good."] = [("s", .1, 0), ("v", 1.0, .2), ("s", .5, 0), ("v", .6, .2), ("s", .1, 0)]
+        self.takes["Right here, the pot boils."] = [("s", .1, 0), ("v", 1.4, .2), ("s", .1, 0)]
+
+    def chars(self, woman_pictures=True, loras=False):
+        knight = character("Knight", looks=[{"name": "tower", "bytes": solid_png((200, 0, 0)), "ext": ".png"}])
+        woman = character("Woman", lora="", looks=[{"name": "kitchen", "bytes": solid_png((0, 0, 200)), "ext": ".png"}]
+                          if woman_pictures else [])
+        if loras or not woman_pictures:        # without pictures she must have a LoRA to count as having a face at all
+            woman["lora"] = "face"
+        return [knight, woman]
+
+    def test_a_shot_with_two_speakers_is_one_clip_with_a_split_screen_first_frame_and_both_voices(self):
+        import io
+        import wave
+        from PIL import Image
+        job = scene.start_scene_job_ng(self.SHARED, self.chars(loras=True), seed=4)
+        self.assertEqual([c.shared for c in job.clips], [True, False])
+        self.assertEqual(job.clips[0].speaker, "KNIGHT + WOMAN")
+        scene._run_scene(job)
+        self.assertEqual(len(self.h3_calls), 2)                              # three lines, two shots
+        call = self.h3_calls[0]
+        im = Image.open(io.BytesIO(call["first"])).convert("RGB")
+        self.assertEqual(im.size, (job.width, job.height))
+        left, right = im.getpixel((10, job.height // 2)), im.getpixel((job.width - 10, job.height // 2))
+        self.assertGreater(left[0], 150)                                     # the knight's picture on the left
+        self.assertGreater(right[2], 150)                                    # the woman's on the right
+        p = call["prompt"]
+        for part in ("vertical split-screen", "on the left half", "(S1), in the tower", "<d>[English] Where are you now?</d>",
+                     "On the right half", "(S2), in the kitchen", "<d>[English] Right here, the pot boils.</d>"):
+            self.assertIn(part, p)
+        self.assertEqual({l["name"] for l in call["loras"]}, {"face"})       # both have the same LoRA: listed once
+        with wave.open(io.BytesIO(call["audio_bytes"])) as w:
+            secs = w.getnframes() / w.getframerate()
+        a, b = job.clips[0].audio_seconds, 0
+        self.assertAlmostEqual(secs, a, delta=0.02)
+        self.assertGreater(a, 1.0 + scene.SHARED_GAP_S + 1.4)               # both voices plus the breath between
+        self.assertEqual(self.h3_calls[1]["first"], solid_png((200, 0, 0)))  # the next shot is the knight alone again
+        self.assertTrue(Path(job.output_path).is_file())
+        self.assertEqual(job.clips[0].line_indexes, [0, 1])
+
+    def test_two_voices_that_do_not_fit_one_window_stop_before_any_render(self):
+        self.takes["Right here, the pot boils."] = [("s", .1, 0), ("v", 4.6, .12), ("s", .1, 0)]
+        job = scene.start_scene_job_ng(self.SHARED, self.chars())
+        with self.assertRaisesRegex(RuntimeError, r"shared frame KNIGHT \+ WOMAN runs .* shorten"):
+            scene._run_scene(job)
+        self.assertEqual(self.h3_calls, [])
+
+    def test_a_shared_frame_needs_a_picture_for_both_and_the_status_reports_shots(self):
+        with self.assertRaisesRegex(scene.SceneRequestError, "Woman needs one|WOMAN needs one"):
+            scene.start_scene_job_ng(self.SHARED, self.chars(woman_pictures=False))
+        job = scene.start_scene_job_ng(self.SHARED, self.chars())
+        st = scene.job_status_ng(job.job_id)
+        self.assertEqual((st["lines"], st["shots"]), (3, 2))
+        self.assertEqual([c["shared"] for c in st["clips"]], [True, False])
+        self.assertEqual(st["clips"][0]["text"], "Where are you now? / Right here, the pot boils.")
 
 
 class JoinTests(unittest.TestCase):

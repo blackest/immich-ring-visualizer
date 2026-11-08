@@ -10,6 +10,8 @@ One scene job chains the pieces we already have:
                   pauses (scene_voiceNG) and brought to one speech level.
   2. rendering -- one H3 audio-drive clip per line (h3_jobsNG), each with that speaker's face (LoRA and/or the picture
                   for that line's setting), the line's setting in its prompt, and that line's audio. Fixed 5 s windows.
+  (A line starting with `&` shares the previous line's shot: two speakers in ONE frame, as a split-screen first frame
+   made from their two pictures and one audio track carrying both voices in turn; see scene_scriptNG.)
   3. joining   -- the clips trimmed to their speech and cut together in script order, with an exposure hold on each
                   clip (H3 clips brighten as they play, which stepped 16-20 levels at every cut) and, optionally, the
                   full soft-finish look. A failed finish never loses a render: that clip is joined unfinished.
@@ -35,6 +37,9 @@ import finish_engineNG as finish
 import h3_engineNG as h3
 import h3_jobsNG as h3_jobs
 import h3_lora_libraryNG as h3_lora_lib
+import numpy as np
+
+import scene_composeNG as compose
 import scene_scriptNG as script_mod
 import scene_voiceNG as voice_mod
 import speech_engineNG as speech
@@ -44,6 +49,7 @@ from configNG import SCENEGEN_DIR
 
 CLIP_S = talk.TALK_CLIP_S
 TAIL_S = 0.35               # kept after the last word of a line before the cut
+SHARED_GAP_S = 0.25         # breath between the two voices in a shared frame
 FADE_S = 0.02               # audio fade at each cut, so a join never clicks
 MAX_JOBS_KEPT = 10
 QUALITIES = talk.TALK_QUALITIES
@@ -81,6 +87,8 @@ class SceneClip:
     speaker: str
     setting: str
     text: str
+    line_indexes: list = field(default_factory=list)   # the script lines in this shot (two for a shared frame)
+    shared: bool = False
     audio_seconds: Optional[float] = None
     audio_path: Optional[str] = None
     h3_job_id: Optional[str] = None
@@ -197,6 +205,14 @@ def start_scene_job_ng(script: str, characters: list, quality: str = "draft", fa
     for spk in script_mod.speakers_ng(lines):
         speakable, _ = script_mod.speakable_text_ng(script_mod.lines_of_ng(lines, spk))
         _validate_voice(chars[spk.casefold()], speakable)
+    shots = script_mod.shots_ng(lines)
+    for shot in shots:
+        if len(shot) == 2:
+            for ln in shot:
+                if not chars[ln.key].looks:
+                    raise SceneRequestError(
+                        f"{ln.speaker} shares a frame with {shot[0].speaker if ln is shot[1] else shot[1].speaker}: "
+                        f"a shared frame is made from both characters' pictures, so {ln.speaker} needs one")
     if fast and h3._resolve_h3_tristep_ng() is None:
         raise SceneRequestError("Fast needs the 3-step adapter (TaoMate) in the H3 turbo-lora folder, and it is not there")
     try:
@@ -217,12 +233,17 @@ def start_scene_job_ng(script: str, characters: list, quality: str = "draft", fa
         job_id=job_id, script=script, lines=lines, characters=chars, quality=quality, width=width, height=height,
         fast=bool(fast), finish=bool(finish_pass), finish_params=finish_clean, match_exposure=bool(match_exposure),
         seed=seed, timeout_s=h3.resolve_h3_quality_timeout_ng(quality, CLIP_S), job_dir=job_dir,
-        clips=[SceneClip(ln.index, ln.speaker, ln.setting, ln.text) for ln in lines])
+        clips=[_clip_for(i, shot) for i, shot in enumerate(shots)])
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_locked()
     _QUEUE.put(job_id)
     return job
+
+
+def _clip_for(index: int, shot: list) -> SceneClip:
+    return SceneClip(index, " + ".join(ln.speaker for ln in shot), " | ".join(dict.fromkeys(ln.setting for ln in shot if ln.setting)),
+                     " / ".join(ln.text for ln in shot), line_indexes=[ln.index for ln in shot], shared=len(shot) == 2)
 
 
 # ---- the run -----------------------------------------------------------------------------------------------------
@@ -268,6 +289,12 @@ def _voice_stage(job: SceneJobNG) -> dict:
     leveled = voice_mod.match_loudness_ng([pieces[i][0] for i in ordered])
     for i, seg in zip(ordered, leveled):
         pieces[i] = (seg, pieces[i][1])
+    for clip in job.clips:                      # a shared frame must fit one window: find out before any render
+        if clip.shared:
+            seg, sr = _shot_audio(job, clip, pieces)
+            if len(seg) / sr > CLIP_S:
+                raise RuntimeError(f"the shared frame {clip.speaker} runs {len(seg) / sr:.1f} s but a clip is "
+                                   f"{CLIP_S:.0f} s -- shorten the two lines or give each their own shot")
     return pieces
 
 
@@ -275,20 +302,53 @@ def _scene_prompt(ch: SceneCharacter, setting: str) -> str:
     return talk.build_prompt_ng(ch.subject, f"Setting: {setting}." if setting else "")
 
 
+def _shared_prompt(chs: list, lines: list) -> str:
+    """The split-screen prompt, in the dataset's own pattern: left half then right half, each with a tagged speaker and
+    a spoken line, so the model can tell whose mouth works for which voice."""
+    def half(ch, ln, tag):
+        place = f", {ln.setting}" if ln.setting else ""
+        return f"{ch.subject or 'a person'} ({tag}){place}"
+    return (f"Live-action, cinematic, a vertical split-screen composite held as one continuous shot: on the left half "
+            f"{half(chs[0], lines[0], 'S1')}, says: <d>[English] {lines[0].text}</d> On the right half "
+            f"{half(chs[1], lines[1], 'S2')}, answers: <d>[English] {lines[1].text}</d> The camera holds steady on both "
+            f"halves with the seam between them fixed, each face large enough to see.")
+
+
+def _shot_audio(job: SceneJobNG, clip: SceneClip, pieces: dict) -> tuple:
+    """(samples, rate) for a shot: one piece, or the two voices in order with a breath between."""
+    segs = [pieces[i][0] for i in clip.line_indexes]
+    sr = pieces[clip.line_indexes[0]][1]
+    if len(segs) == 1:
+        return segs[0], sr
+    gap = np.zeros(int(SHARED_GAP_S * sr), dtype=segs[0].dtype)
+    return np.concatenate([segs[0], gap, segs[1]]), sr
+
+
 def _render_stage(job: SceneJobNG, pieces: dict) -> None:
+    by_index = {ln.index: ln for ln in job.lines}
     for clip in job.clips:
-        ch = job.characters[clip.speaker.casefold()]
-        seg, sr = pieces[clip.index]
-        wav_path = job.job_dir / f"line{clip.index + 1:02d}_{clip.speaker.casefold().replace(' ', '_')}.wav"
+        seg, sr = _shot_audio(job, clip, pieces)
+        wav_path = job.job_dir / f"shot{clip.index + 1:02d}_{clip.speaker.casefold().replace(' ', '_').replace('+', '_')}.wav"
         voice_mod.write_wav_ng(wav_path, seg, sr)
         clip.audio_path, clip.audio_seconds = str(wav_path), round(len(seg) / sr, 2)
-        look = ch.look_for(clip.setting)
+        lines = [by_index[i] for i in clip.line_indexes]
+        chs = [job.characters[ln.key] for ln in lines]
+        if clip.shared:
+            picks = [ch.look_for(ln.setting) for ch, ln in zip(chs, lines)]
+            first, ext = compose.split_screen_ng(picks[0][0], picks[1][0], job.width, job.height), ".png"
+            prompt = _shared_prompt(chs, lines)
+            loras = [{"name": ch.lora_name, "path": ch.lora_path, "strength": ch.lora_strength}
+                     for ch in {c.name: c for c in chs}.values() if ch.lora_name]
+        else:
+            ch, look = chs[0], chs[0].look_for(lines[0].setting)
+            first, ext = (look[0], look[1]) if look else (None, ".jpg")
+            prompt = _scene_prompt(ch, lines[0].setting)
+            loras = [{"name": ch.lora_name, "path": ch.lora_path, "strength": ch.lora_strength}] if ch.lora_name else []
         clip.status = "rendering"
         hj = h3_jobs.start_h3_job_ng(
-            look[0] if look else None, look[1] if look else ".jpg", _scene_prompt(ch, clip.setting), CLIP_S,
+            first, ext, prompt, CLIP_S,
             seed=None if job.seed is None else job.seed + clip.index, model="h3q8", width=job.width, height=job.height,
-            steps=talk.TALK_STEPS, tristep=job.fast,
-            loras=[{"name": ch.lora_name, "path": ch.lora_path, "strength": ch.lora_strength}] if ch.lora_name else [],
+            steps=talk.TALK_STEPS, tristep=job.fast, loras=loras,
             timeout_s=job.timeout_s, audio_bytes=wav_path.read_bytes(), audio_ext=".wav")
         clip.h3_job_id = hj.job_id
         try:
@@ -299,7 +359,7 @@ def _render_stage(job: SceneJobNG, pieces: dict) -> None:
             raise
         if hj.error:
             clip.status, clip.error = "failed", hj.error
-            raise RuntimeError(f"line {clip.index + 1} ({clip.speaker}): {hj.error}")
+            raise RuntimeError(f"shot {clip.index + 1} ({clip.speaker}): {hj.error}")
         clip.mp4_path, clip.status = hj.mp4_path, "done"
 
 
@@ -310,7 +370,7 @@ def _finish_clip(job: SceneJobNG, clip: SceneClip) -> str:
         return clip.mp4_path
     params = dict(job.finish_params) if job.finish else {
         "clarity_strength": 0.0, "tone_strength": 0.0, "saturation": 1.0, "hold": 1.0}     # exposure hold only
-    out = job.job_dir / f"line{clip.index + 1:02d}_held.mp4"
+    out = job.job_dir / f"shot{clip.index + 1:02d}_held.mp4"
     try:
         return finish.finish_video_ng(clip.mp4_path, str(out), params, should_cancel=lambda: job.cancelled)["path"]
     except finish.FinishCancelled:
@@ -353,8 +413,9 @@ def _join_stage(job: SceneJobNG) -> None:
     (job.job_dir / "scene.json").write_text(json.dumps({
         "script": job.script, "quality": job.quality, "fast": job.fast, "finish": job.finish,
         "match_exposure": job.match_exposure, "seed": job.seed,
-        "clips": [{"index": c.index, "speaker": c.speaker, "setting": c.setting, "text": c.text,
-                   "audio_seconds": c.audio_seconds, "h3_job_id": c.h3_job_id, "finish_error": c.finish_error}
+        "clips": [{"index": c.index, "speaker": c.speaker, "setting": c.setting, "text": c.text, "shared": c.shared,
+                   "lines": c.line_indexes, "audio_seconds": c.audio_seconds, "h3_job_id": c.h3_job_id,
+                   "finish_error": c.finish_error}
                   for c in job.clips]}, indent=2), encoding="utf-8")
 
 
@@ -420,13 +481,15 @@ def job_status_ng(job_id: str) -> dict:
     clips = []
     for c in job.clips:
         clips.append({
-            "index": c.index, "speaker": c.speaker, "setting": c.setting, "text": c.text, "status": c.status,
+            "index": c.index, "speaker": c.speaker, "setting": c.setting, "text": c.text, "shared": c.shared,
+            "status": c.status,
             "audio_seconds": c.audio_seconds, "error": c.error, "finish_error": c.finish_error,
             "h3_job_id": c.h3_job_id,
             "progress": talk._render_progress(c.h3_job_id) if c.status == "rendering" else {},
             "video_url": f"/api/ng/h3/jobs/{c.h3_job_id}/video" if c.status == "done" and c.h3_job_id else None})
     return {
-        "job_id": job.job_id, "status": status, "stage": job.stage, "lines": len(job.lines), "quality": job.quality,
+        "job_id": job.job_id, "status": status, "stage": job.stage, "lines": len(job.lines), "shots": len(job.clips),
+        "quality": job.quality,
         "fast": job.fast, "finish": job.finish, "match_exposure": job.match_exposure, "seed": job.seed,
         "clips": clips, "error": job.error, "error_type": job.error_type, "cancelled": bool(job.cancelled),
         "queued_at": job.queued_at, "dispatched_at": job.dispatched_at, "finished_at": job.finished_at,

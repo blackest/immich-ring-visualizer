@@ -20,6 +20,7 @@ from flask import Blueprint, jsonify, request, send_file
 import finish_engineNG as finish
 import h3_engineNG
 import scene_jobsNG as scene
+import scene_looksNG as looks
 import speech_engineNG as speech
 
 sceneNG_bp = Blueprint("sceneNG", __name__)
@@ -98,6 +99,51 @@ def scene_generate_ng():
     except ValueError as e:        # SceneRequestError, a bad number, or a refusal from the speech/finish checks
         return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True, "job_id": job.job_id, "poll_url": f"/api/ng/scene/jobs/{job.job_id}"}), 202
+
+
+@sceneNG_bp.route("/api/ng/scene/looks", methods=["POST"])
+def scene_look_ng():
+    """A LOOK: the same person (the `picture` upload) somewhere new (`setting`), made by Klein. Returns the Klein job
+    id; the page polls /api/ng/klein/status/<id> and shows /api/ng/klein/image/<id>/<file>."""
+    form, pic = request.form, request.files.get("picture")
+    try:
+        seed_raw = str(form.get("seed") or "").strip()
+        job_id = looks.start_look_ng(
+            pic.read() if pic else b"", os.path.splitext(pic.filename or "")[1] if pic else "",
+            str(form.get("setting") or ""), who=str(form.get("who") or ""), n=int(form.get("n") or 2),
+            seed=int(seed_raw) if seed_raw else None, keep_outfit=_truthy(form.get("keep_outfit")))
+    except RuntimeError as e:      # Klein not installed
+        return jsonify({"error": str(e)}), 503
+    except ValueError as e:        # LooksRequestError, a bad number, or Klein's own checks
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "klein_job": job_id}), 202
+
+
+@sceneNG_bp.route("/api/ng/scene/kit", methods=["POST"])
+def scene_kit_ng():
+    """An IDENTITY KIT: eight Klein pictures of the same person (four faces, four bodies) from one picture, and, when
+    `name` is given, a RefMod built from them and the original."""
+    form, pic = request.form, request.files.get("picture")
+    try:
+        seed_raw = str(form.get("seed") or "").strip()
+        job = looks.start_kit_ng(pic.read() if pic else b"", os.path.splitext(pic.filename or "")[1] if pic else "",
+                                 name=str(form.get("name") or ""), seed=int(seed_raw) if seed_raw else None)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "job_id": job.job_id, "poll_url": f"/api/ng/scene/kit/{job.job_id}"}), 202
+
+
+@sceneNG_bp.route("/api/ng/scene/kit/<job_id>", methods=["GET"])
+def scene_kit_status_ng(job_id):
+    try:
+        return jsonify(looks.kit_status_ng(job_id))
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+
+
+@sceneNG_bp.route("/api/ng/scene/kit/<job_id>", methods=["DELETE"])
+def scene_kit_cancel_ng(job_id):
+    return jsonify({"ok": looks.cancel_kit_ng(job_id)})
 
 
 @sceneNG_bp.route("/api/ng/scene/jobs", methods=["GET"])

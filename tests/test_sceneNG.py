@@ -13,6 +13,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import scene_composeNG as comp
 import scene_scriptNG as sc
 import scene_voiceNG as sv
 
@@ -53,6 +54,20 @@ class ScriptTests(unittest.TestCase):
         text, counts = sc.speakable_text_ng(sc.lines_of_ng(L, "a"))
         self.assertEqual((text, counts), ("One. Two. Three.", [2, 1]))
 
+    def test_a_line_starting_with_an_ampersand_shares_the_previous_shot(self):
+        L = sc.parse_script_ng("A: Where are you?\n& B [kitchen]: Right here.\nA: Good.")
+        self.assertEqual([l.joined for l in L], [False, True, False])
+        self.assertEqual([[l.speaker for l in shot] for shot in sc.shots_ng(L)], [["A", "B"], ["A"]])
+        self.assertEqual(L[1].setting, "kitchen")
+
+    def test_shared_frame_rules_are_refused_in_plain_words(self):
+        for bad, why in (("& A: hi.", "none yet"), ("A: hi.\n& A: again.", "two different speakers"),
+                         ("A: hi.\n& B: yo.\n& C: hey.", "two speakers at most"),
+                         ("A: one two three four five six seven eight.\n& B: nine ten eleven twelve thirteen fourteen fifteen sixteen.",
+                          "share one 5 second window"), ("A: hi.\n& no colon here", "write  NAME")):
+            with self.subTest(why=why), self.assertRaisesRegex(sc.SceneScriptError, why):
+                sc.parse_script_ng(bad)
+
     def test_the_known_check_is_case_insensitive(self):
         self.assertEqual(len(sc.parse_script_ng("knight: Hi.", known=["KNIGHT"])), 1)
 
@@ -72,6 +87,27 @@ def speech(spec, sr=SR, seed=3):
             t = np.arange(n) / sr
             parts.append((level * (np.sin(2 * np.pi * 120 * t) + 0.3 * rng.standard_normal(n))).astype(np.float32))
     return np.concatenate(parts)
+
+
+class ComposeTests(unittest.TestCase):
+    def test_two_pictures_side_by_side_each_centre_cropped_with_a_seam(self):
+        import io
+        from PIL import Image
+
+        def pic(color, size):
+            b = io.BytesIO()
+            Image.new("RGB", size, color).save(b, "PNG")
+            return b.getvalue()
+        out = comp.split_screen_ng(pic((250, 0, 0), (400, 200)), pic((0, 0, 250), (100, 300)), 640, 384)
+        im = Image.open(io.BytesIO(out)).convert("RGB")
+        self.assertEqual(im.size, (640, 384))
+        self.assertGreater(im.getpixel((100, 100))[0], 200)
+        self.assertGreater(im.getpixel((540, 100))[2], 200)
+        self.assertEqual(im.getpixel((320, 100)), (0, 0, 0))              # the seam
+        for bad in ((b"junk", pic((1, 1, 1), (50, 50)), 640, 384), (pic((1, 1, 1), (50, 50)),) * 2 + (63, 384),
+                    (pic((1, 1, 1), (50, 50)),) * 2 + (641, 384)):
+            with self.assertRaises(comp.ComposeError):
+                comp.split_screen_ng(*bad)
 
 
 class VoiceTests(unittest.TestCase):

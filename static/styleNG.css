@@ -3789,4 +3789,8 @@ textarea.ng-gen-input.ng-textarea-expanded {
 .ng-scene-card-head { display: flex; gap: 8px; align-items: center; }
 .ng-scene-look-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
 .ng-scene-look-row.drag, .ng-scene-card .ng-dropzone.drag { outline: 2px dashed var(--ng-accent); }
+.ng-scene-maker { margin-top: 8px; border-top: 1px dashed var(--ng-border); padding-top: 6px; }
+.ng-scene-maker summary { cursor: pointer; color: var(--ng-text-dim); font-size: 0.8571rem; }
+.ng-scene-pics { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.ng-scene-pick { width: 150px; border-radius: 4px; border: 1px solid var(--ng-border); cursor: pointer; }
 
