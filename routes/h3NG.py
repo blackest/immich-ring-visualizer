@@ -352,6 +352,13 @@ def h3_generate_ng():
     }), 202
 
 
+@h3NG_bp.route("/api/ng/h3/jobs", methods=["GET"])
+def h3_jobs_list_ng():
+    """What the server holds right now (queued, rendering, finished), oldest first. The H3
+    page rebuilds its render queue from this, so a reload or a lost submit can't hide a job."""
+    return jsonify({"jobs": h3_jobs.list_jobs_ng()})
+
+
 @h3NG_bp.route("/api/ng/h3/jobs/<job_id>", methods=["GET"])
 def h3_job_status_ng(job_id):
     try:

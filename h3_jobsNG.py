@@ -465,6 +465,25 @@ def job_status_ng(job_id: str) -> dict:
         "dispatched_at": job.dispatched_at,
         "finished_at": job.finished_at,
         "log_tail": job.log_tail(40),
+        "cancelled": bool(job.cancelled),
         "video_url": (f"/api/ng/h3/jobs/{job.job_id}/video"
                       if status == "completed" else None),
     }
+
+
+def list_jobs_ng() -> list:
+    """Every job the server still holds (the in-memory ring buffer), oldest first, each as
+    the same status dict a single-job poll returns but without the log tail -- so a page
+    that lost its own list (reload, lost submit, another view's batch) can rebuild it from
+    the server, which is the only source of truth for what is queued, rendering or done."""
+    with _JOBS_LOCK:
+        ids = sorted(_JOBS, key=lambda jid: _JOBS[jid].queued_at or 0)
+    out = []
+    for jid in ids:
+        try:
+            st = job_status_ng(jid)
+        except LookupError:
+            continue
+        st.pop("log_tail", None)
+        out.append(st)
+    return out

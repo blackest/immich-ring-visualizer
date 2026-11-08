@@ -1148,7 +1148,7 @@ a.ng-btn {
 /* Same paste-a-reference-image target as .ng-vg-ref-paste above, for
    Generate's own reference tray (see generateNG.js's onRefPaste) --
    kept as its own class rather than reused across tasks, matching how
-   ng-gen-*/ng-vg-* stay separate throughout this file. */
+   the ng-gen and ng-vg families stay separate throughout this file. */
 .ng-gen-ref-paste {
   margin-top: 6px;
   padding: 8px 10px;
@@ -3435,7 +3435,7 @@ textarea.ng-gen-input.ng-textarea-expanded {
 /* ============================================================
    H3 view (task === "h3") -- MiniMax-H3 prompt/image-to-video. Same
    rail=queue/main=form split as Animate's #ng-videogen-pane/-main
-   above, reusing the same .ng-gen-*/.ng-vg-ref-* styling.
+   above, reusing the same ng-gen and ng-vg-ref styling.
    ============================================================ */
 #ng-h3-pane {
   flex: 1;

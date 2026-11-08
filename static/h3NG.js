@@ -37,6 +37,10 @@
   var queue = []; // [{localId, jobId, status, refPreviewUrl, prompt, durationS, seed, model, quality, turbo, error, videoUrl, logTail}]
   var localSeq = 0;
   var pollTimer = null;
+  var syncTimer = null;
+  var dismissed = {}; // job ids the user removed from the list; the server still holds them, don't re-add
+  var SYNC_MS = 6000;
+  var SUBMIT_GIVE_UP_MS = 60000;
   var rowCache = {};
 
   // Duration bounds -- match h3_engineNG.py's H3_MIN/MAX_DURATION_S;
@@ -489,6 +493,9 @@
       error: null,
       videoUrl: null,
       logTail: [],
+      createdAt: Date.now(),
+      jobIdAt: 0,
+      removed: false,
     };
     queue.unshift(item);
     renderQueue();
@@ -531,6 +538,13 @@
       .then(function (r) {
         if (r.ok && r.payload && r.payload.job_id) {
           item.jobId = r.payload.job_id;
+          item.jobIdAt = Date.now();
+          if (item.removed) {
+            // The row was removed while the submit was still in flight: the job exists on the
+            // server now, so cancel it instead of leaving it queued with no row to cancel it from.
+            fetch(API + "/jobs/" + item.jobId, { method: "DELETE" }).catch(function () {});
+            return;
+          }
           item.status = "queued";
           setStatus("Queued.");
           ensurePolling();
@@ -566,17 +580,18 @@
       fetch(API + "/jobs/" + item.jobId)
         .then(function (r) { return r.json(); })
         .then(function (job) {
-          if (!job || !job.status) return;
-          if (job.log_tail) item.logTail = job.log_tail;
-          if (job.status === "completed") {
-            item.status = "done";
-            item.videoUrl = job.video_url + "?v=" + Date.now();
-          } else if (job.status === "failed") {
-            item.status = "failed";
-            item.error = job.error || "generation failed";
-          } else {
-            item.status = job.status; // "queued" | "rendering"
+          if (!job) return;
+          if (!job.status) {
+            // 404: the server doesn't know this job (it restarted). Without this the row
+            // sat at "queued" forever with nothing behind it.
+            if (job.error) {
+              item.status = "failed";
+              item.error = "The server no longer has this job (it restarted).";
+              renderQueue();
+            }
+            return;
           }
+          applyJob(item, job);
           renderQueue();
         })
         .catch(function () {
@@ -585,9 +600,98 @@
     });
   }
 
+  // One place that turns the server's view of a job into the row's state.
+  function applyJob(item, job) {
+    if (job.log_tail) item.logTail = job.log_tail;
+    if (job.cancelled && job.status === "queued") {
+      // Cancelled while waiting: the server only marks it failed once its turn comes and it is
+      // skipped, so until then show it as cancelled instead of a live queued job.
+      item.status = "failed";
+      item.error = "cancelled";
+    } else if (job.status === "completed") {
+      item.status = "done";
+      if (!item.videoUrl) item.videoUrl = job.video_url + "?v=" + Date.now();
+    } else if (job.status === "failed") {
+      item.status = "failed";
+      item.error = job.cancelled ? "cancelled" : (job.error || "generation failed");
+    } else {
+      item.status = job.status; // "queued" | "rendering"
+    }
+  }
+
+  function itemFromJob(job) {
+    var item = {
+      localId: "h" + ++localSeq,
+      jobId: job.job_id,
+      status: "queued",
+      refPreviewUrl: null,
+      prompt: String(job.prompt || "").slice(0, 300),
+      durationS: job.duration_s,
+      seed: null,
+      model: job.model,
+      quality: null,
+      error: null,
+      videoUrl: null,
+      logTail: [],
+      createdAt: Date.now(),
+      jobIdAt: 0,
+      removed: false,
+    };
+    applyJob(item, job);
+    return item;
+  }
+
+  // The server is the only source of truth for what is queued, rendering or done. Rebuild the
+  // page's list from it: show jobs the page doesn't know about (after a reload, a lost submit,
+  // or jobs from the batch and Enhanced views), and clear rows the server can't back up.
+  function syncFromServer() {
+    var startedAt = Date.now();
+    fetch(API + "/jobs")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var jobs = (data && data.jobs) || [];
+        var byId = {};
+        jobs.forEach(function (j) { byId[j.job_id] = j; });
+        var known = {};
+        queue.forEach(function (q) { if (q.jobId) known[q.jobId] = true; });
+
+        // Jobs the server has that the page doesn't, newest first after the rows already shown.
+        jobs.slice().reverse().forEach(function (j) {
+          if (!known[j.job_id] && !dismissed[j.job_id]) queue.push(itemFromJob(j));
+        });
+
+        queue.forEach(function (q) {
+          var active = q.status === "queued" || q.status === "rendering";
+          if (q.jobId && byId[q.jobId]) {
+            applyJob(q, byId[q.jobId]);
+          } else if (q.jobId && active && q.jobIdAt && q.jobIdAt < startedAt - 1000) {
+            q.status = "failed";
+            q.error = "The server no longer has this job (it restarted).";
+          } else if (!q.jobId && q.status === "submitting" && Date.now() - q.createdAt > SUBMIT_GIVE_UP_MS) {
+            q.status = "failed";
+            q.error = "The submit never completed.";
+          }
+        });
+        renderQueue();
+        if (queue.some(function (q) { return q.jobId && (q.status === "queued" || q.status === "rendering"); })) {
+          ensurePolling();
+        }
+      })
+      .catch(function () { /* server busy or restarting -- next tick */ });
+  }
+
+  function ensureSyncing() {
+    if (syncTimer) return;
+    syncTimer = setInterval(function () {
+      if (els.pane && els.pane.style.display !== "none") syncFromServer();
+    }, SYNC_MS);
+  }
+
   function removeItem(localId) {
     var item = queue.filter(function (q) { return q.localId === localId; })[0];
     if (!item) return;
+    item.removed = true;
+    if (item.jobId) dismissed[item.jobId] = true;
     queue = queue.filter(function (q) { return q.localId !== localId; });
     renderQueue();
     if (item.jobId && (item.status === "queued" || item.status === "rendering")) {
@@ -646,8 +750,12 @@
     // removeItem() also DELETEs the job server-side, which kills the
     // subprocess while it's rendering -- so this doubles as the abort
     // button; the title/label just makes that explicit in that state.
-    rm.title = item.status === "rendering" ? "cancel render" : "remove from queue";
-    rm.textContent = "✕";
+    var isActive = item.status === "queued" || item.status === "rendering";
+    rm.title = item.status === "rendering" ? "stop this render"
+      : item.status === "queued" ? "cancel this queued job"
+      : "remove from the list";
+    rm.textContent = item.status === "rendering" ? "stop" : item.status === "queued" ? "cancel" : "✕";
+    if (isActive) rm.style.cssText = "width:auto; padding:2px 8px; font-size:0.7857rem";
     rm.addEventListener("click", function () { removeItem(item.localId); });
     statusRow.appendChild(rm);
 
@@ -856,6 +964,9 @@
 
     els.generateBtn.addEventListener("click", generateVideo);
     els.queueClear.addEventListener("click", function () {
+      queue.forEach(function (q) {
+        if (q.jobId && (q.status === "done" || q.status === "failed")) dismissed[q.jobId] = true;
+      });
       queue = queue.filter(function (q) {
         return q.status !== "done" && q.status !== "failed";
       });
@@ -952,6 +1063,8 @@
     refmodUi.ensureLoaded();
     refmodUi.sync();
     renderQueue();
+    syncFromServer();
+    ensureSyncing();
   }
 
   // Other views hand a picture over with this, then open the H3 task; sync() above picks it up.
