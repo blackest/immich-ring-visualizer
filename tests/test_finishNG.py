@@ -35,52 +35,82 @@ class ParamTests(unittest.TestCase):
                 eng.normalize_params_ng(bad)
 
 
-class WorkflowTests(unittest.TestCase):
-    def test_the_graph_is_load_clarity_tone_write_with_the_recipe_values(self):
-        wf = eng.build_workflow_ng("/c/clip.mp4", {}, 24.0, True, "pre_")
-        self.assertEqual([wf[k]["class_type"] for k in "1234"],
-                         [eng.NODE_LOAD, eng.NODE_CLARITY, eng.NODE_TONE, eng.NODE_COMBINE])
-        self.assertEqual(wf["1"]["inputs"]["video"], "/c/clip.mp4")
-        self.assertEqual((wf["2"]["inputs"]["image"], wf["3"]["inputs"]["image"], wf["4"]["inputs"]["images"]),
-                         (["1", 0], ["2", 0], ["3", 0]))
-        import json
-        clar = json.loads(wf["2"]["inputs"]["raw_settings"])
-        tone = json.loads(wf["3"]["inputs"]["raw_settings"])
-        self.assertEqual((clar["clarity_strength"], clar["clarity_radius"]), (-0.2, 24.0))
-        self.assertEqual((tone["mode"], tone["strength"], tone["saturation"]), ("Cineon-ish", 0.25, 0.9))
-        # this pass softens: every sharpening effect in the Clarity pipeline is off
-        for key in ("sharpen_amount", "smart_amount", "highpass_amount", "texture_strength"):
-            self.assertEqual(clar[key], 0.0)
-        self.assertEqual(wf["4"]["inputs"]["filename_prefix"], "pre_")
-        self.assertEqual(wf["4"]["inputs"]["audio"], ["1", 2])
+def _soft_finish_module():
+    """The vendored script as a module (its filename is not importable as a package)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("soft_finish_script", eng.FINISH_SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-    def test_a_silent_clip_has_no_audio_link_and_the_frame_rate_follows_the_clip(self):
-        wf = eng.build_workflow_ng("/c/clip.mp4", {"saturation": 1.1}, 25.0, False)
-        self.assertNotIn("audio", wf["4"]["inputs"])
-        self.assertEqual(wf["4"]["inputs"]["frame_rate"], 25.0)
+
+class MathTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import numpy as np
+        cls.sf, cls.np = _soft_finish_module(), np
+
+    def test_a_flat_picture_is_untouched_by_clarity(self):
+        flat = self.np.full((32, 32, 3), 0.5, dtype=self.np.float32)
+        self.assertTrue(self.np.allclose(self.sf.clarity(flat, -0.5, 8.0), flat, atol=1e-5))
+
+    def test_negative_clarity_softens_midtone_detail_and_positive_sharpens_it(self):
+        np = self.np
+        rng = np.random.default_rng(1)
+        img = np.clip(0.5 + rng.normal(0, 0.05, (64, 64, 1)), 0, 1).repeat(3, axis=2).astype(np.float32)
+        soft = self.sf.clarity(img, -0.5, 6.0)
+        hard = self.sf.clarity(img, 0.5, 6.0)
+        self.assertLess(self.sf.luma(soft).std(), self.sf.luma(img).std())
+        self.assertGreater(self.sf.luma(hard).std(), self.sf.luma(img).std())
+
+    def test_the_tone_map_lifts_shadows_and_keeps_black_and_white_where_they_are(self):
+        np = self.np
+        ramp = np.linspace(0, 1, 11, dtype=np.float32)[None, :, None].repeat(3, axis=2)
+        out = self.sf.tone_cineon(ramp, 0.25, 1.0)
+        self.assertAlmostEqual(float(out[0, 0, 0]), 0.0, places=5)
+        self.assertAlmostEqual(float(out[0, -1, 0]), 1.0, places=5)
+        self.assertTrue(np.all(out[0, 1:-1, 0] > ramp[0, 1:-1, 0]))          # every shadow/mid is lifted
+        lift = out[0, :, 0] - ramp[0, :, 0]
+        self.assertGreater(lift[3], lift[9])        # a low-mid is lifted more than a near-white; the lift tapers to nothing at white
+
+    def test_strength_zero_and_saturation_one_is_the_identity_and_saturation_trims_chroma(self):
+        np = self.np
+        img = np.random.default_rng(2).random((8, 8, 3)).astype(np.float32)
+        self.assertTrue(np.array_equal(self.sf.tone_cineon(img, 0.0, 1.0), img))
+        grey = lambda a: a - self.sf.luma(a)[..., None]
+        self.assertTrue(np.array_equal(self.sf.tone_cineon(img, 0.0, 0.5), img))      # strength scales the whole pass
+        self.assertLess(np.abs(grey(self.sf.tone_cineon(img, 1.0, 0.5))).mean(), np.abs(grey(img)).mean())
+
+
+def _make_clip(path, audio=True, seconds=1):
+    cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size=96x64:rate=24:duration={seconds}"]
+    if audio:
+        cmd += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-c:a", "aac"]
+    cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)]
+    import subprocess
+    subprocess.run(cmd, check=True)
+
+
+def _probe(path):
+    import json
+    import subprocess
+    out = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-show_entries",
+                          "stream=codec_type,width,height,nb_read_frames", "-of", "json", str(path)],
+                         capture_output=True, text=True, check=True).stdout
+    return {s["codec_type"]: s for s in json.loads(out)["streams"]}
 
 
 class HealthTests(unittest.TestCase):
-    def check(self, nodes_present, local=True, reachable=True):
-        def fake_get(path, timeout=15.0):
-            if not reachable:
-                raise OSError("down")
-            node = path.rsplit("/", 1)[1]
-            if node not in nodes_present:
-                raise eng.urllib.error.HTTPError(path, 404, "nf", {}, None)
-            return {node: {}}
-        with mock.patch.object(eng, "_get", fake_get), mock.patch.object(eng, "comfy_is_local_ng", lambda b=None: local), \
-                mock.patch.object(eng, "_base", lambda: "http://c:8188"):
-            return eng.finish_health_ng()
-
-    def test_ready_when_local_and_all_four_nodes_exist(self):
-        self.assertTrue(self.check(eng.REQUIRED_NODES)["ok"])
+    def test_ready_here(self):
+        self.assertTrue(eng.finish_health_ng()["ok"], eng.finish_health_ng())
 
     def test_each_problem_is_named(self):
-        self.assertIn("Orion4D_FXMax", self.check([eng.NODE_LOAD, eng.NODE_COMBINE])["problems"][0])
-        self.assertIn("VideoHelperSuite", self.check([eng.NODE_CLARITY, eng.NODE_TONE])["problems"][0])
-        self.assertIn("not on this Mac", self.check(eng.REQUIRED_NODES, local=False)["problems"][0])
-        self.assertIn("not reachable", self.check([], reachable=False)["problems"][-1])
+        with mock.patch.object(eng.shutil, "which", lambda t: None):
+            self.assertEqual(len(eng.finish_health_ng()["problems"]), 2)
+        with mock.patch.object(eng, "FINISH_SCRIPT", Path("/nope/soft_finish.py")):
+            self.assertIn("vendored finish script", eng.finish_health_ng()["problems"][0])
+        with mock.patch.object(eng.importlib.util, "find_spec", lambda m: None):
+            self.assertIn("opencv-python", eng.finish_health_ng()["problems"][0])
 
 
 class RunTests(unittest.TestCase):
@@ -89,61 +119,46 @@ class RunTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.t = Path(self.tmp.name)
         self.src = self.t / "clip.mp4"
-        self.src.write_bytes(b"src")
-        self.comfy_out = self.t / "comfy_out"
-        self.comfy_out.mkdir()
-        self.history = {}
-        self.posts = []
+        _make_clip(self.src)
 
-    def run_finish(self, history, **kw):
-        def fake_post(path, body, timeout=30.0):
-            self.posts.append((path, body))
-            if path == "/prompt":
-                prefix = body["prompt"]["4"]["inputs"]["filename_prefix"]
-                for suffix in ("-audio.mp4", ".mp4", ".png"):
-                    (self.comfy_out / f"{prefix}_00001{suffix}").write_bytes(b"x" + suffix.encode())
-                self.prefix = prefix
-                return {"prompt_id": "p1"}
-            return {}
-        with mock.patch.object(eng, "finish_health_ng", lambda: {"ok": True, "problems": []}), \
-                mock.patch.object(eng, "probe_clip_ng", lambda p: {"fps": 24.0, "has_audio": True}), \
-                mock.patch.object(eng, "_post", fake_post), \
-                mock.patch.object(eng, "_get", lambda path, timeout=15.0: history(self)), \
-                mock.patch.object(eng, "_POLL_S", 0):
-            return eng.finish_video_ng(str(self.src), str(self.t / "out" / "f.mp4"), **kw)
+    def test_a_clip_goes_in_and_a_clip_of_the_same_size_length_and_audio_comes_out(self):
+        logs = []
+        result = eng.finish_video_ng(str(self.src), str(self.t / "out" / "f.mp4"), on_log=logs.append)
+        info = _probe(result["path"])
+        self.assertEqual((int(info["video"]["width"]), int(info["video"]["height"])), (96, 64))
+        self.assertEqual(info["video"]["nb_read_frames"], _probe(self.src)["video"]["nb_read_frames"])
+        self.assertIn("audio", info)
+        self.assertTrue(any("done" in line for line in logs))
+        self.assertFalse((self.t / "out" / "f.mp4.partial").exists())
 
-    @staticmethod
-    def ok_history(t):
-        return {"p1": {"status": {"completed": True, "status_str": "success"},
-                       "outputs": {"4": {"gifs": [{"fullpath": str(t.comfy_out / f"{t.prefix}_00001-audio.mp4")}]}}}}
+    def test_a_silent_clip_stays_silent(self):
+        silent = self.t / "silent.mp4"
+        _make_clip(silent, audio=False)
+        out = eng.finish_video_ng(str(silent), str(self.t / "s.mp4"))["path"]
+        self.assertNotIn("audio", _probe(out))
 
-    def test_success_copies_the_clip_and_clears_every_file_ComfyUI_left(self):
-        result = self.run_finish(self.ok_history)
-        self.assertEqual(Path(result["path"]).read_bytes(), b"x-audio.mp4")
-        self.assertEqual(list(self.comfy_out.iterdir()), [])        # the .mp4 and .png beside it went too
-        self.assertEqual(self.src.read_bytes(), b"src")               # the original is untouched
+    def test_the_picture_actually_changes_and_the_original_does_not(self):
+        before = self.src.read_bytes()
+        out = Path(eng.finish_video_ng(str(self.src), str(self.t / "f.mp4"))["path"])
+        self.assertEqual(self.src.read_bytes(), before)
+        self.assertNotEqual(out.read_bytes(), before)
 
-    def test_a_comfy_error_is_reported_with_its_message(self):
-        hist = lambda t: {"p1": {"status": {"completed": False, "status_str": "error", "messages": [
-            ["execution_error", {"exception_message": "CUDA out of memory"}]]}, "outputs": {}}}
-        with self.assertRaisesRegex(RuntimeError, "out of memory"):
-            self.run_finish(hist)
-
-    def test_cancel_deletes_the_queued_run_and_interrupts_it(self):
+    def test_stop_kills_it_and_leaves_no_file(self):
         with self.assertRaises(eng.FinishCancelled):
-            self.run_finish(lambda t: {}, should_cancel=lambda: True)
-        paths = [p for p, _b in self.posts]
-        self.assertIn("/queue", paths)
-        self.assertEqual(self.posts[-1], ("/interrupt", {"prompt_id": "p1"}))
+            eng.finish_video_ng(str(self.src), str(self.t / "f.mp4"), should_cancel=lambda: True)
+        self.assertEqual([p.name for p in self.t.iterdir() if p.name.startswith("f.mp4")], [])
 
-    def test_a_missing_clip_and_a_failed_health_check_are_request_errors(self):
-        self.src.unlink()
+    def test_a_file_that_is_not_a_video_fails_with_a_reason(self):
+        junk = self.t / "junk.mp4"
+        junk.write_bytes(b"not a video")
+        with self.assertRaisesRegex(RuntimeError, "finish failed"):
+            eng.finish_video_ng(str(junk), str(self.t / "j.mp4"))
+
+    def test_request_errors(self):
         with self.assertRaises(eng.FinishRequestError):
-            self.run_finish(self.ok_history)
-        with mock.patch.object(eng, "finish_health_ng", lambda: {"ok": False, "problems": ["ComfyUI is down"]}):
-            self.src.write_bytes(b"s")
-            with self.assertRaisesRegex(eng.FinishRequestError, "ComfyUI is down"):
-                eng.finish_video_ng(str(self.src), str(self.t / "o.mp4"))
+            eng.finish_video_ng(str(self.t / "nope.mp4"), str(self.t / "o.mp4"))
+        with self.assertRaises(eng.FinishRequestError):
+            eng.finish_video_ng(str(self.src), str(self.t / "o.mp4"), {"saturation": 9})
 
 
 class _Base(unittest.TestCase):

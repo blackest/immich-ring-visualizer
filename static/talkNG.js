@@ -417,7 +417,7 @@
         fb.type = "button";
         fb.className = "ng-btn";
         fb.textContent = "Soft finish";
-        fb.title = "A gentle colour pass through ComfyUI: lifts crushed shadows, softens skin. The original is kept.";
+        fb.title = "A gentle colour pass: lifts crushed shadows, softens skin. The original is kept.";
         fb.style.gridColumn = "1 / -1";
         fb.style.marginTop = "4px";
         fb.addEventListener("click", function () { finishItem(item); });
