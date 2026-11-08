@@ -40,6 +40,7 @@ from routes.h3_rerollNG import h3RerollNG_bp  # NG: new blueprint, no changes to
 from routes.h3BatchNG import h3BatchNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.h3_toolsNG import h3ToolsNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.musicNG import musicNG_bp  # NG: new blueprint, no changes to existing ones
+from routes.speechNG import speechNG_bp  # NG: new blueprint, no changes to existing ones
 
 app = Flask(__name__)
 app.register_blueprint(video_bp)
@@ -68,6 +69,7 @@ app.register_blueprint(h3RerollNG_bp)  # NG: /api/ng/h3/jobs/<id>/windows|reroll
 app.register_blueprint(h3BatchNG_bp)  # NG: /api/ng/h3/batch* (a scene of 5 s windows, each with its own reference pictures), additive only
 app.register_blueprint(enhancedh3NG_bp)  # NG: /api/ng/enhanced-h3/* (OpenH3-IR brief compiler, split per chained window), additive only
 app.register_blueprint(musicNG_bp)  # NG: /api/ng/music/* (YuE2 style+lyrics-to-song job queue), additive only
+app.register_blueprint(speechNG_bp)  # NG: /api/ng/speech/* (text-to-speech job queue: preset, character voice or clip), additive only
 if __name__ == "__main__":
     # use_reloader on its own (without debug=True) restarts the process
     # when a .py file changes -- picks up backend fixes without a manual

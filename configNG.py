@@ -77,6 +77,11 @@ MUSICGEN_DIR = os.path.join(EXPORT_DIR, "_musicgen")
 # otherwise delete it along with the rest of MUSICGEN_DIR's job_dir.
 MUSIC_JOB_LOG_DIR = os.path.join(EXPORT_DIR, "_music_job_logsNG")
 
+# Speech view (routes/speechNG.py, speech_jobsNG.py) -- text-to-speech in a preset
+# voice, a character's saved voice sample, or an uploaded clip. One folder per job
+# holds the script, the reference clip and the finished wav + its .json record.
+SPEECHGEN_DIR = os.path.join(EXPORT_DIR, "_speechgen")
+
 # Hd-Multi view (routes/hdmultiNG.py) -- one-off HiDream edit/multi-ref
 # generations (1-3 reference images + a prompt -> one result image).
 # Same "flat, persistent, keyed by job id" shape as VIDEOGEN_DIR above,

@@ -1146,6 +1146,34 @@
             <div id="ng-enhancedh3-status" class="ng-gen-status"></div>
           </div>
 
+          <!-- Speech view's rail pane -- the speech queue. See
+               static/speechNG.js. -->
+          <div id="ng-speech-pane" style="display: none">
+            <div
+              id="ng-speech-unavailable"
+              class="ng-chat-banner"
+              style="display: none"
+            >
+              <div id="ng-speech-unavailable-text"></div>
+            </div>
+            <div id="ng-speech-queue-head">
+              <span>Speech queue <span id="ng-speech-queue-count"></span></span>
+              <button
+                type="button"
+                id="ng-speech-queue-clear"
+                class="ng-gen-btn ng-gen-btn-quiet"
+                style="width: auto; margin: 0"
+              >
+                clear finished
+              </button>
+            </div>
+            <p id="ng-speech-queue-empty" class="ng-placeholder">
+              Nothing queued yet. Write a script on the main stage and press
+              &ldquo;Speak&rdquo;.
+            </p>
+            <div id="ng-speech-queue"></div>
+          </div>
+
           <!-- Music view's rail pane -- render queue for YuE2
                style+lyrics-to-song jobs. See static/musicNG.js. -->
           <div id="ng-music-pane" style="display: none">
@@ -3108,6 +3136,184 @@
               </div>
             </div>
 
+            <!-- Speech view's main region -- a script and a voice (a preset
+                 speaker, a character's saved voice, or a clip) in, a wav out.
+                 See static/speechNG.js. -->
+            <div id="ng-speech-main" style="display: none">
+              <div id="ng-speech-form" class="ng-gen-canvas">
+                <div class="ng-gen-label" style="margin-top: 0">Voice</div>
+                <div id="ng-speech-kind-row">
+                  <label class="ng-checkbox-row"
+                    ><input
+                      type="radio"
+                      name="ng-speech-kind"
+                      value="preset"
+                      checked
+                    />
+                    Preset voice</label
+                  >
+                  <label class="ng-checkbox-row"
+                    ><input
+                      type="radio"
+                      name="ng-speech-kind"
+                      value="character"
+                    />
+                    A character&rsquo;s saved voice</label
+                  >
+                  <label class="ng-checkbox-row"
+                    ><input type="radio" name="ng-speech-kind" value="clip" />
+                    A voice clip</label
+                  >
+                </div>
+
+                <div id="ng-speech-preset-wrap">
+                  <label class="ng-gen-label" for="ng-speech-voice"
+                    >Speaker</label
+                  >
+                  <select id="ng-speech-voice" class="ng-gen-input"></select>
+                  <label class="ng-gen-label" for="ng-speech-style"
+                    >Delivery</label
+                  >
+                  <select id="ng-speech-style" class="ng-gen-input"></select>
+                  <input
+                    id="ng-speech-style-text"
+                    class="ng-gen-input"
+                    type="text"
+                    maxlength="300"
+                    placeholder="Or say it your own way, e.g. whispering, like a secret"
+                  />
+                </div>
+
+                <div id="ng-speech-character-wrap" style="display: none">
+                  <label class="ng-gen-label" for="ng-speech-character"
+                    >Character</label
+                  >
+                  <select
+                    id="ng-speech-character"
+                    class="ng-gen-input"
+                  ></select>
+                  <audio
+                    id="ng-speech-character-audio"
+                    controls
+                    style="width: 100%; margin-top: 6px"
+                  ></audio>
+                  <p
+                    id="ng-speech-character-empty"
+                    class="ng-placeholder"
+                    style="display: none"
+                  >
+                    No character has a saved voice yet. A saved voice is a file
+                    named <code>name.voice.mp3</code> beside the character
+                    LoRAs.
+                  </p>
+                </div>
+
+                <div
+                  id="ng-speech-clip-wrap"
+                  class="ng-dropzone"
+                  style="display: none"
+                >
+                  <div class="ng-gen-label" style="margin-top: 0">
+                    Voice clip
+                  </div>
+                  <p id="ng-speech-clip-empty" class="ng-placeholder">
+                    No clip yet. Drag an audio file here, or:
+                  </p>
+                  <p
+                    id="ng-speech-clip-name"
+                    style="display: none; word-break: break-all"
+                  ></p>
+                  <input
+                    type="file"
+                    id="ng-speech-clip-file"
+                    accept="audio/*,video/*"
+                  />
+                </div>
+
+                <div id="ng-speech-clone-extra" style="display: none">
+                  <label class="ng-gen-label" for="ng-speech-reftext"
+                    >What the sample says (optional; a closer match)</label
+                  >
+                  <textarea
+                    id="ng-speech-reftext"
+                    class="ng-gen-input"
+                    rows="2"
+                    maxlength="600"
+                    placeholder="The words spoken in the sample, if you know them"
+                  ></textarea>
+                  <label class="ng-checkbox-row"
+                    ><input type="checkbox" id="ng-speech-consent" />
+                    This voice is my own, or I have the speaker&rsquo;s
+                    permission to clone it.</label
+                  >
+                </div>
+
+                <label class="ng-gen-label" for="ng-speech-text">Script</label>
+                <textarea
+                  id="ng-speech-text"
+                  class="ng-gen-input"
+                  rows="7"
+                  placeholder="What it should say. One line per paragraph; each line is spoken on its own."
+                ></textarea>
+                <div class="ng-gen-linkrow">
+                  <button
+                    type="button"
+                    id="ng-speech-selectall"
+                    class="ng-gen-btn ng-gen-btn-quiet"
+                    style="width: auto"
+                  >
+                    Select all
+                  </button>
+                  <span id="ng-speech-count" class="ng-gen-status"></span>
+                </div>
+
+                <div class="ng-gen-identity-row">
+                  <div>
+                    <label class="ng-gen-label" for="ng-speech-language"
+                      >Language</label
+                    >
+                    <select
+                      id="ng-speech-language"
+                      class="ng-gen-input"
+                    ></select>
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-speech-speed"
+                      >Speed</label
+                    >
+                    <input
+                      id="ng-speech-speed"
+                      class="ng-gen-input"
+                      type="number"
+                      min="0.5"
+                      max="2"
+                      step="0.05"
+                      value="1"
+                    />
+                  </div>
+                  <div>
+                    <label class="ng-gen-label" for="ng-speech-seed"
+                      >Seed (optional)</label
+                    >
+                    <input
+                      id="ng-speech-seed"
+                      class="ng-gen-input"
+                      type="number"
+                      step="1"
+                      placeholder="random"
+                    />
+                  </div>
+                </div>
+
+                <div class="ng-gen-action-bar">
+                  <button type="button" id="ng-speech-generate" class="ng-gen-btn">
+                    Speak
+                  </button>
+                </div>
+                <div id="ng-speech-status" class="ng-gen-status"></div>
+              </div>
+            </div>
+
             <!-- Music view's main region -- style + lyrics + length +
                  mode form. See static/musicNG.js. Text in, audio out --
                  no reference image at all, unlike every other Generate-
@@ -3947,6 +4153,7 @@
         <button class="ng-task-btn" data-task="enhancedh3">Enhanced H3</button>
         <button class="ng-task-btn" data-task="music">Music</button>
         <button class="ng-task-btn" data-task="musicedit">Music Edit</button>
+        <button class="ng-task-btn" data-task="speech">Speech</button>
         <button class="ng-task-btn" data-task="chat">Chat</button>
         <button class="ng-task-btn" data-task="rachel">Rachel</button>
         <button class="ng-task-btn" data-task="hdmulti">Hd-Multi</button>
@@ -4016,6 +4223,7 @@
     <script src="{{ url_for('static', filename='vendor/abcjs-basic-min.js') }}"></script>
     <script src="{{ url_for('static', filename='musicNG.js') }}"></script>
     <script src="{{ url_for('static', filename='musiceditNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='speechNG.js') }}"></script>
     <script src="{{ url_for('static', filename='hdmultiNG.js') }}"></script>
     <script src="{{ url_for('static', filename='kleinLayoutNG.js') }}"></script>
     <script src="{{ url_for('static', filename='kleinNG.js') }}"></script>
