@@ -56,6 +56,66 @@ class ValidateRequestTests(unittest.TestCase):
         self.check(kind="clip", has_ref_audio=True, voice_consent=True)
 
 
+class DescribedVoiceTests(unittest.TestCase):
+    """The third voice kind: a voice made from a written description (Qwen3-TTS VoiceDesign)."""
+    DESIGN = "a warm, slow, older male voice with a slight rasp"
+
+    def check(self, **kw):
+        base = dict(kind="design", text="Hello there.", voice="", language="english", speed=1.0, has_ref_audio=False,
+                    voice_consent=False, design_text=self.DESIGN)
+        base.update(kw)
+        eng.validate_request_ng(**base)
+
+    def test_a_description_is_all_it_needs_no_clip_no_consent_no_preset(self):
+        self.check()
+
+    def test_the_description_has_a_length_window_and_whitespace_does_not_count(self):
+        for bad in ("", "   ", "short", "x" * (eng.DESIGN_MAX_CHARS + 1), "a    b    c "):
+            with self.subTest(bad=bad[:12]), self.assertRaisesRegex(eng.SpeechRequestError, "Describe the voice"):
+                self.check(design_text=bad)
+        self.check(design_text="x" * eng.DESIGN_MAX_CHARS)
+        self.check(design_text="  " + "a " * 6 + "  ")
+
+    def test_the_other_checks_still_apply(self):
+        for kw in (dict(text="  "), dict(language="klingon"), dict(speed=3.0)):
+            with self.subTest(kw=kw), self.assertRaises(eng.SpeechRequestError):
+                self.check(**kw)
+
+    def test_health_reports_the_model_without_making_the_engine_not_ready(self):
+        with tempfile.TemporaryDirectory() as d:
+            pack = Path(d)
+            runner = Path(d) / "design_run.py"
+            runner.write_text("#")
+            with mock.patch.object(eng, "SPEECH_PACK", pack), mock.patch.object(eng, "SPEECH_DESIGN_RUNNER", runner):
+                self.assertFalse(eng.speech_health_ng()["design_ok"])
+                (pack / "voicedesign").mkdir()
+                (pack / "voicedesign" / "config.json").write_text("{}")
+                self.assertTrue(eng.speech_health_ng()["design_ok"])
+            with mock.patch.object(eng, "SPEECH_PACK", pack), mock.patch.object(eng, "SPEECH_DESIGN_RUNNER", Path(d) / "gone.py"):
+                self.assertFalse(eng.speech_health_ng()["design_ok"])             # no runner, no option
+
+    def test_the_command_uses_the_design_runner_and_the_description_not_the_preset_or_clone_flags(self):
+        class Captured(Exception):
+            pass
+
+        def fake(cmd, **kw):
+            raise Captured(cmd)
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(eng, "speech_health_ng", lambda: {"ok": True, "design_ok": True, "missing": []}), \
+                mock.patch.object(eng.subprocess, "Popen", side_effect=fake):
+            with self.assertRaises(Captured) as cm:
+                eng.generate_speech_ng("Hello.", Path(d), "design", design_text="  " + self.DESIGN + "  ", seed=5)
+        cmd = cm.exception.args[0]
+        self.assertEqual(cmd[1], str(eng.SPEECH_DESIGN_RUNNER))
+        self.assertEqual(cmd[cmd.index("--design") + 1], self.DESIGN)
+        self.assertEqual(cmd[cmd.index("--seed") + 1], "5")
+        for flag in ("--kind", "--voice", "--ref-audio", "--ref-text", "--style"):
+            self.assertNotIn(flag, cmd)
+        with mock.patch.object(eng, "speech_health_ng", lambda: {"ok": True, "design_ok": False, "missing": []}):
+            with self.assertRaisesRegex(RuntimeError, "voice-design model is not installed"):
+                eng.generate_speech_ng("Hello.", Path(tempfile.gettempdir()) / "x", "design", design_text=self.DESIGN)
+
+
 class StyleTests(unittest.TestCase):
     def test_free_text_wins_then_the_chosen_style_then_natural(self):
         self.assertEqual(eng.instruction_for("deadpan", "whispering, like a secret"), "whispering, like a secret")
@@ -129,6 +189,13 @@ class JobTests(unittest.TestCase):
         job = jobs.start_speech_job_ng("Hi.", "clip", clip_bytes=b"RIFFdata", clip_ext=".wav", voice_consent=True)
         self.assertTrue(Path(job.ref_audio_path).is_file())
         self.assertEqual(Path(job.ref_audio_path).parent, job.job_dir)
+
+    def test_a_described_voice_job_keeps_its_description_and_refuses_a_missing_one(self):
+        job = jobs.start_speech_job_ng("Hello there.", "design", design_text="  a warm   slow older male voice  ")
+        st = jobs.job_status_ng(job.job_id)
+        self.assertEqual((st["kind"], st["voice"], st["design"]), ("design", "described voice", "a warm slow older male voice"))
+        with self.assertRaisesRegex(eng.SpeechRequestError, "Describe the voice"):
+            jobs.start_speech_job_ng("Hello there.", "design", design_text="")
 
     def test_a_character_voice_is_looked_up_by_name(self):
         with tempfile.TemporaryDirectory() as d:
@@ -209,6 +276,33 @@ class RouteTests(unittest.TestCase):
         r = self.client.post("/api/ng/speech/generate", data={"kind": "preset", "voice": "aiden", "text": "Hi."})
         jid = r.get_json()["job_id"]
         self.assertEqual(self.client.get(f"/api/ng/speech/jobs/{jid}/audio").status_code, 404)
+
+    def test_the_generate_route_takes_a_description(self):
+        r = self.client.post("/api/ng/speech/generate", data={"kind": "design", "text": "Hi there.",
+                                                              "design_text": "a bright, quick young female voice"})
+        self.assertEqual(r.status_code, 202)
+        self.assertEqual(self.client.get("/api/ng/speech/jobs").get_json()["jobs"][0]["design"],
+                         "a bright, quick young female voice")
+        bad = self.client.post("/api/ng/speech/generate", data={"kind": "design", "text": "Hi.", "design_text": "x"})
+        self.assertEqual(bad.status_code, 400)
+
+    def test_a_finished_take_can_be_kept_as_a_saved_voice_by_name_never_overwriting(self):
+        job = jobs.start_speech_job_ng("Hi there.", "design", design_text="a bright, quick young female voice")
+        voices = Path(self.tmp.name) / "voices"
+        wav = Path(self.tmp.name) / "take.wav"
+        wav.write_bytes(b"RIFFwave")
+        with mock.patch.object(eng, "SPEECH_VOICES_DIR", voices):
+            url = f"/api/ng/speech/jobs/{job.job_id}/save-voice"
+            self.assertEqual(self.client.post(url, data={"name": "mara"}).status_code, 409)       # not finished yet
+            job.finished_at, job.audio_path = 1.0, str(wav)
+            for bad in ("", "bad name", "../x", "a" * 65):
+                self.assertEqual(self.client.post(url, data={"name": bad}).status_code, 400, bad)
+            r = self.client.post(url, data={"name": "mara"})
+            self.assertEqual((r.status_code, r.get_json()["name"]), (200, "mara"))
+            self.assertEqual((voices / "mara.voice.wav").read_bytes(), b"RIFFwave")
+            self.assertEqual([v["id"] for v in eng.list_voice_samples_ng()], ["mara"])           # it is a usable saved voice now
+            self.assertEqual(self.client.post(url, data={"name": "MARA"}).status_code, 409)       # no overwrite, any case
+            self.assertEqual(self.client.post("/api/ng/speech/jobs/nope/save-voice", data={"name": "z"}).status_code, 404)
 
     def test_a_voice_sample_is_served_by_name_only(self):
         self.assertEqual(self.client.get("/api/ng/speech/voices/..%2Fetc/sample").status_code, 404)

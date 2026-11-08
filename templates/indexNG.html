@@ -3200,6 +3200,28 @@
                     ><input type="radio" name="ng-speech-kind" value="clip" />
                     A voice clip</label
                   >
+                  <label class="ng-checkbox-row"
+                    ><input type="radio" name="ng-speech-kind" value="design" />
+                    Describe a voice</label
+                  >
+                </div>
+
+                <div id="ng-speech-design-wrap" style="display: none">
+                  <label class="ng-gen-label" for="ng-speech-design"
+                    >Describe the voice</label
+                  >
+                  <textarea
+                    id="ng-speech-design"
+                    class="ng-gen-input"
+                    rows="2"
+                    maxlength="300"
+                    placeholder="e.g. a warm, slow, older male voice with a slight rasp"
+                  ></textarea>
+                  <p class="ng-placeholder">
+                    Describe the kind of voice, not a person. A described voice is a new draw every time you
+                    generate, so when you like one, press &ldquo;save this voice&rdquo; on its result and use it as
+                    a character&rsquo;s saved voice: that keeps it the same across lines.
+                  </p>
                 </div>
 
                 <div id="ng-speech-preset-wrap">

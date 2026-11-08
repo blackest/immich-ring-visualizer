@@ -70,6 +70,9 @@ SPEECH_REPO_DIR = _resolve_speech_repo_dir_ng()
 SPEECH_PACK = _resolve_speech_pack_ng()
 SPEECH_PYTHON = SPEECH_REPO_DIR / ".venv" / "bin" / "python"
 SPEECH_RUNNER = Path(__file__).resolve().parent / "vendor" / "speech_runner" / "speech_run.py"
+# Ours, not Phosphene's: a voice made from a written description (Qwen3-TTS VoiceDesign). See its docstring.
+SPEECH_DESIGN_RUNNER = Path(__file__).resolve().parent / "vendor" / "speech_runner" / "speech_design_run.py"
+DESIGN_MIN_CHARS, DESIGN_MAX_CHARS = 8, 300
 # Character voice samples sit beside the character LoRAs: <name>.voice.<ext>.
 SPEECH_VOICES_DIR = SPEECH_PACK.parent / "loras"
 
@@ -143,7 +146,9 @@ def speech_health_ng() -> dict:
         missing.append(f"preset voice model not found in {SPEECH_PACK / 'customvoice'}")
     if not clone_ok:
         missing.append(f"clone voice model not found in {SPEECH_PACK / 'base'}")
-    return {"ok": not missing, "preset_ok": preset_ok, "clone_ok": clone_ok,
+    # VoiceDesign is optional: it never makes the engine "not ready", the Speech view just hides the option without it.
+    design_ok = (SPEECH_PACK / "voicedesign" / "config.json").is_file() and SPEECH_DESIGN_RUNNER.is_file()
+    return {"ok": not missing, "preset_ok": preset_ok, "clone_ok": clone_ok, "design_ok": design_ok,
             "missing": missing, "pack": str(SPEECH_PACK), "max_chars": SPEECH_MAX_CHARS}
 
 
@@ -185,10 +190,10 @@ def instruction_for(style_id: str, free_text: str) -> str:
 
 
 def validate_request_ng(kind: str, text: str, voice: str, language: str, speed: float,
-                        has_ref_audio: bool, voice_consent: bool) -> None:
+                        has_ref_audio: bool, voice_consent: bool, design_text: str = "") -> None:
     """Refuse what cannot work, in plain words, before anything is queued."""
-    if kind not in ("preset", "character", "clip"):
-        raise SpeechRequestError("Pick a voice type: preset, character or clip.")
+    if kind not in ("preset", "character", "clip", "design"):
+        raise SpeechRequestError("Pick a voice type: preset, character, clip or a described voice.")
     if not (text or "").strip():
         raise SpeechRequestError("The script is empty. Write at least one line.")
     if len(text) > SPEECH_MAX_CHARS:
@@ -200,6 +205,11 @@ def validate_request_ng(kind: str, text: str, voice: str, language: str, speed: 
     if kind == "preset":
         if voice not in PRESET_IDS:
             raise SpeechRequestError("Pick one of the preset voices.")
+    elif kind == "design":
+        n = len(" ".join((design_text or "").split()))
+        if not DESIGN_MIN_CHARS <= n <= DESIGN_MAX_CHARS:
+            raise SpeechRequestError(f"Describe the voice in {DESIGN_MIN_CHARS} to {DESIGN_MAX_CHARS} characters, "
+                                     f"for example: a warm, slow, older male voice with a slight rasp.")
     else:
         if not has_ref_audio:
             raise SpeechRequestError("The voice clip is missing. Pick the character again, or add the clip again.")
@@ -214,17 +224,19 @@ _SPEECH_SUBPROCESS_LOCK = threading.Lock()
 def generate_speech_ng(text: str, output_dir: Path, kind: str, voice: str = "", style: str = "",
                        ref_audio_path: Optional[str] = None, ref_text: str = "",
                        language: str = "english", speed: float = 1.0, seed: Optional[int] = None,
-                       voice_consent: bool = False, voice_label: str = "",
+                       voice_consent: bool = False, voice_label: str = "", design_text: str = "",
                        on_log: Optional[Callable[[str], None]] = None,
                        on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
     """One subprocess call: the script in, `speech.wav` (+ `speech.wav.json`) out. `style` is the
     already-resolved delivery instruction (see instruction_for). Raises SpeechRequestError for a bad
     request, SpeechJobCancelled if the process is killed, RuntimeError for any other failure."""
     validate_request_ng(kind, text, voice, language, speed,
-                        bool(ref_audio_path and Path(ref_audio_path).is_file()), voice_consent)
+                        bool(ref_audio_path and Path(ref_audio_path).is_file()), voice_consent, design_text)
     health = speech_health_ng()
     if not health["ok"]:
         raise RuntimeError("The speech engine is not ready: " + "; ".join(health["missing"]))
+    if kind == "design" and not health["design_ok"]:
+        raise RuntimeError("The voice-design model is not installed (it belongs in " + str(SPEECH_PACK / "voicedesign") + ").")
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -232,12 +244,19 @@ def generate_speech_ng(text: str, output_dir: Path, kind: str, voice: str = "", 
     text_file.write_text(text.replace("\r\n", "\n"), encoding="utf-8")
     out = output_dir / "speech.wav"
 
-    cmd = [str(SPEECH_PYTHON), str(SPEECH_RUNNER), "--pack", str(SPEECH_PACK),
-           "--kind", "preset" if kind == "preset" else "clone",
-           "--language", language, "--speed", f"{speed:.2f}",
-           "--seed", str(seed if seed is not None else -1),
-           "--text-file", str(text_file), "--out", str(out)]
-    if kind == "preset":
+    if kind == "design":
+        cmd = [str(SPEECH_PYTHON), str(SPEECH_DESIGN_RUNNER), "--pack", str(SPEECH_PACK),
+               "--design", " ".join(design_text.split()), "--language", language, "--speed", f"{speed:.2f}",
+               "--seed", str(seed if seed is not None else -1), "--text-file", str(text_file), "--out", str(out)]
+    else:
+        cmd = [str(SPEECH_PYTHON), str(SPEECH_RUNNER), "--pack", str(SPEECH_PACK),
+               "--kind", "preset" if kind == "preset" else "clone",
+               "--language", language, "--speed", f"{speed:.2f}",
+               "--seed", str(seed if seed is not None else -1),
+               "--text-file", str(text_file), "--out", str(out)]
+    if kind == "design":
+        pass
+    elif kind == "preset":
         cmd += ["--voice", voice]
         if style:
             cmd += ["--style", style]
@@ -305,13 +324,15 @@ def generate_speech_ng(text: str, output_dir: Path, kind: str, voice: str = "", 
         raise RuntimeError("The speech engine finished but wrote no audio. " + (error_line or ""))
 
     record = {
-        "engine": "speech", "model": "Qwen3-TTS 12Hz 1.7B (8-bit MLX)", "voice_kind": kind,
+        "engine": "speech", "model": ("Qwen3-TTS 12Hz 1.7B VoiceDesign (bf16 MLX)" if kind == "design"
+                                      else "Qwen3-TTS 12Hz 1.7B (8-bit MLX)"), "voice_kind": kind,
         "voice": voice_label or voice or "", "style": style, "language": language, "speed": speed,
-        "seed": done_info.get("seed", seed), "text": text, "ref_text": ref_text if kind != "preset" else "",
+        "design": " ".join(design_text.split()) if kind == "design" else "",
+        "seed": done_info.get("seed", seed), "text": text, "ref_text": ref_text if kind in ("character", "clip") else "",
         "audio_seconds": done_info.get("audio_seconds"), "wall_seconds": round(time.time() - started, 2),
         "runner": done_info,
     }
-    if kind != "preset":
+    if kind in ("character", "clip"):
         record["voice_consent"] = {"confirmed": True, "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                                    "statement": "The voice is the requester's own, or they have the speaker's permission."}
     (output_dir / "speech.wav.json").write_text(json.dumps(record, indent=2), encoding="utf-8")

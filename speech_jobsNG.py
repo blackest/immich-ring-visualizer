@@ -43,6 +43,7 @@ class SpeechJobNG:
     job_dir: Path
     ref_audio_path: Optional[str] = None
     ref_text: str = ""
+    design_text: str = ""          # kind "design": the voice, in words
     voice_consent: bool = False
     queued_at: float = field(default_factory=time.time)
     dispatched_at: Optional[float] = None
@@ -99,7 +100,7 @@ def _worker_loop() -> None:
                 text=job.text, output_dir=job.job_dir, kind=job.kind, voice=job.voice, style=job.style,
                 ref_audio_path=job.ref_audio_path, ref_text=job.ref_text, language=job.language,
                 speed=job.speed, seed=job.seed, voice_consent=job.voice_consent,
-                voice_label=job.voice_label, on_log=job.append_log,
+                voice_label=job.voice_label, design_text=job.design_text, on_log=job.append_log,
                 on_proc_start=lambda p: setattr(job, "_proc", p))
             job.audio_path = result["path"]
             job.audio_seconds = result.get("audio_seconds")
@@ -123,7 +124,7 @@ def start_speech_job_ng(text: str, kind: str, voice: str = "", character: str = 
                         style_id: str = "natural", style_text: str = "", language: str = "english",
                         speed: float = 1.0, seed: Optional[int] = None, ref_text: str = "",
                         voice_consent: bool = False, clip_bytes: Optional[bytes] = None,
-                        clip_ext: str = "") -> SpeechJobNG:
+                        clip_ext: str = "", design_text: str = "") -> SpeechJobNG:
     """Validates and enqueues. A character's voice is looked up by NAME in the shared loras folder (never a
     client path); a clip is written into the job folder eagerly because the runner needs a real file."""
     text = (text or "").replace("\r\n", "\n").strip()
@@ -140,9 +141,12 @@ def start_speech_job_ng(text: str, kind: str, voice: str = "", character: str = 
         voice_label = "uploaded clip"
     elif kind == "preset":
         voice_label = next((p["label"] for p in speech.PRESETS if p["id"] == voice), voice)
+    elif kind == "design":
+        voice_label = "described voice"
 
     speech.validate_request_ng(kind, text, voice, language, float(speed),
-                               has_ref_audio=bool(ref_audio_src or clip_bytes), voice_consent=bool(voice_consent))
+                               has_ref_audio=bool(ref_audio_src or clip_bytes), voice_consent=bool(voice_consent),
+                               design_text=design_text)
 
     _ensure_worker_started()
     job_id = uuid.uuid4().hex[:12]
@@ -162,7 +166,8 @@ def start_speech_job_ng(text: str, kind: str, voice: str = "", character: str = 
         job_id=job_id, text=text, kind=kind, voice=voice if kind == "preset" else "", voice_label=voice_label,
         style=speech.instruction_for(style_id, style_text) if kind == "preset" else "",
         language=language, speed=float(speed), seed=seed, job_dir=job_dir, ref_audio_path=ref_audio_path,
-        ref_text=(ref_text or "").strip(), voice_consent=bool(voice_consent))
+        ref_text=(ref_text or "").strip(), voice_consent=bool(voice_consent),
+        design_text=" ".join((design_text or "").split()) if kind == "design" else "")
     with _JOBS_LOCK:
         _JOBS[job_id] = job
         _prune_old_jobs_locked()
@@ -206,7 +211,8 @@ def job_status_ng(job_id: str) -> dict:
         status = "completed"
     return {
         "job_id": job.job_id, "status": status, "text": job.text, "kind": job.kind,
-        "voice": job.voice_label, "style": job.style, "language": job.language, "speed": job.speed,
+        "voice": job.voice_label, "style": job.style, "design": job.design_text, "language": job.language,
+        "speed": job.speed,
         "seed": job.seed, "audio_seconds": job.audio_seconds, "error": job.error,
         "error_type": job.error_type, "cancelled": bool(job.cancelled), "queued_at": job.queued_at,
         "dispatched_at": job.dispatched_at, "finished_at": job.finished_at, "log_tail": job.log_tail(40),

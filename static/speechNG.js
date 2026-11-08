@@ -49,6 +49,9 @@
     els.clipName = $("ng-speech-clip-name");
     els.clipFile = $("ng-speech-clip-file");
     els.cloneExtra = $("ng-speech-clone-extra");
+    els.designWrap = $("ng-speech-design-wrap");
+    els.design = $("ng-speech-design");
+    els.designRadio = document.querySelector('input[name="ng-speech-kind"][value="design"]');
     els.refText = $("ng-speech-reftext");
     els.consent = $("ng-speech-consent");
     els.text = $("ng-speech-text");
@@ -113,6 +116,10 @@
     fetch(API + "/status")
       .then(function (r) { return r.json(); })
       .then(function (d) {
+        if (els.designRadio) {            // the option only shows when the voice-design model is installed
+          var lab = els.designRadio.closest("label");
+          if (lab) lab.style.display = d.design_ok ? "" : "none";
+        }
         if (!els.unavailable) return;
         if (d.ok) { els.unavailable.style.display = "none"; return; }
         els.unavailable.style.display = "";
@@ -132,7 +139,8 @@
     els.presetWrap.style.display = k === "preset" ? "" : "none";
     els.charWrap.style.display = k === "character" ? "" : "none";
     els.clipWrap.style.display = k === "clip" ? "" : "none";
-    els.cloneExtra.style.display = k === "preset" ? "none" : "";
+    els.designWrap.style.display = k === "design" ? "" : "none";
+    els.cloneExtra.style.display = (k === "preset" || k === "design") ? "none" : "";
     // The confirmation is per request: it clears whenever the voice changes.
     if (els.consent) els.consent.checked = false;
   }
@@ -159,7 +167,7 @@
   function itemFromJob(job) {
     var item = {
       localId: "s" + ++localSeq, jobId: job.job_id, status: "queued", text: job.text || "",
-      voice: job.voice || "", style: job.style || "", audioSeconds: null, error: null, audioUrl: null,
+      voice: job.voice || "", style: job.style || "", kind: job.kind || "", audioSeconds: null, error: null, audioUrl: null,
       createdAt: Date.now(), jobIdAt: 0, removed: false,
     };
     applyJob(item, job);
@@ -168,6 +176,7 @@
 
   function applyJob(item, job) {
     item.voice = job.voice || item.voice;
+    item.kind = job.kind || item.kind;
     item.audioSeconds = job.audio_seconds || item.audioSeconds;
     if (job.cancelled && job.status === "queued") {
       item.status = "failed";
@@ -324,8 +333,38 @@
       dl.style.gridColumn = "1 / -1";
       dl.style.marginTop = "4px";
       row.appendChild(dl);
+      if (item.kind === "design") row.appendChild(buildSaveVoice(item));
     }
     return row;
+  }
+
+  // A described voice differs on every generation. Keeping a take as a saved voice makes it a clone reference.
+  function buildSaveVoice(item) {
+    var box = document.createElement("div");
+    box.style.cssText = "grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 4px; align-items: center; flex-wrap: wrap";
+    var input = document.createElement("input");
+    input.type = "text"; input.maxLength = 64; input.className = "ng-gen-input";
+    input.placeholder = "Name this voice, e.g. mara"; input.style.flex = "1 1 120px";
+    var btn = document.createElement("button");
+    btn.type = "button"; btn.className = "ng-gen-btn ng-gen-btn-quiet"; btn.style.width = "auto";
+    btn.textContent = "save this voice";
+    var msg = document.createElement("span");
+    msg.className = "ng-gen-status";
+    btn.addEventListener("click", function () {
+      var name = input.value.trim();
+      if (!name) { msg.textContent = "Give it a name first."; return; }
+      var form = new FormData(); form.append("name", name);
+      fetch(API + "/jobs/" + item.jobId + "/save-voice", { method: "POST", body: form })
+        .then(function (r) { return r.json().then(function (p) { return { ok: r.ok, p: p }; }); })
+        .then(function (r) {
+          if (!r.ok) { msg.textContent = r.p.error || "could not save"; return; }
+          msg.textContent = "Saved as " + r.p.name + ". It is now a saved voice (reload the voice lists to see it).";
+          voicesLoaded = false; loadVoices();
+        })
+        .catch(function (e) { msg.textContent = e.message; });
+    });
+    box.appendChild(input); box.appendChild(btn); box.appendChild(msg);
+    return box;
   }
 
   function renderQueue() {
@@ -344,7 +383,12 @@
     if (!text) { setStatus("Write a script first.", true); return; }
     if (text.length > maxChars) { setStatus("The script is over " + maxChars + " characters.", true); return; }
     if (k === "clip" && !clipFile) { setStatus("Add a voice clip first.", true); return; }
-    if (k !== "preset" && !els.consent.checked) {
+    var design = (els.design.value || "").replace(/\s+/g, " ").trim();
+    if (k === "design" && (design.length < 8 || design.length > 300)) {
+      setStatus("Describe the voice in 8 to 300 characters, e.g. a warm, slow, older male voice.", true);
+      return;
+    }
+    if ((k === "character" || k === "clip") && !els.consent.checked) {
       setStatus("Tick the box to confirm the voice is yours or that you have permission to clone it.", true);
       return;
     }
@@ -359,6 +403,8 @@
       form.append("voice", els.voice.value);
       form.append("style", els.style.value || "natural");
       if (els.styleText.value.trim()) form.append("style_text", els.styleText.value.trim());
+    } else if (k === "design") {
+      form.append("design_text", design);
     } else {
       form.append("consent", "true");
       if (els.refText.value.trim()) form.append("ref_text", els.refText.value.trim());
@@ -367,10 +413,10 @@
     }
 
     var voiceName = k === "preset" ? (els.voice.options[els.voice.selectedIndex] || {}).text || ""
-      : k === "character" ? els.character.value : "uploaded clip";
+      : k === "character" ? els.character.value : k === "design" ? "described voice" : "uploaded clip";
     var item = {
       localId: "s" + ++localSeq, jobId: null, status: "submitting", text: text,
-      voice: voiceName.split(" -- ")[0], style: "", audioSeconds: null, error: null, audioUrl: null,
+      voice: voiceName.split(" -- ")[0], style: "", kind: k, audioSeconds: null, error: null, audioUrl: null,
       createdAt: Date.now(), jobIdAt: 0, removed: false,
     };
     queue.unshift(item);

@@ -6,6 +6,7 @@ at once, the page polls GET .../jobs/<id>, and GET .../jobs lists everything the
 can rebuild its queue. /generate is multipart (the clip is the one file field)."""
 
 import os
+import shutil
 
 from flask import Blueprint, jsonify, request, send_file
 
@@ -60,6 +61,7 @@ def speech_generate_ng():
             language=str(form.get("language") or "english").strip().lower(),
             speed=float(form.get("speed") or 1.0), seed=int(seed_raw) if seed_raw else None,
             ref_text=str(form.get("ref_text") or ""), voice_consent=_truthy(form.get("consent")),
+            design_text=str(form.get("design_text") or ""),
             clip_bytes=clip.read() if clip else None,
             clip_ext=os.path.splitext(clip.filename or "")[1] if clip else "")
     except speech.SpeechRequestError as e:
@@ -67,6 +69,29 @@ def speech_generate_ng():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True, "job_id": job.job_id, "poll_url": f"/api/ng/speech/jobs/{job.job_id}"}), 202
+
+
+@speechNG_bp.route("/api/ng/speech/jobs/<job_id>/save-voice", methods=["POST"])
+def speech_save_voice_ng(job_id):
+    """Keep a finished take as a character's saved voice (`<name>.voice.wav` beside the LoRAs), so it can be used as a
+    clone reference. A voice made from a description differs on every generation; this is how one is kept."""
+    job = speech_jobs.get_job_ng(job_id)
+    if job is None:
+        return jsonify({"error": f"no such job {job_id!r}"}), 404
+    if job.finished_at is None or job.error or not job.audio_path or not os.path.isfile(job.audio_path):
+        return jsonify({"error": "that take is not finished"}), 409
+    name = str(request.form.get("name") or "").strip()
+    if not speech._NAME_RE.match(name):
+        return jsonify({"error": "the name must be letters, digits, - or _ (at most 64 characters)"}), 400
+    if any(v["id"].casefold() == name.casefold() for v in speech.list_voice_samples_ng()):
+        return jsonify({"error": f"a saved voice named {name} already exists; pick another name"}), 409
+    dest = speech.SPEECH_VOICES_DIR / f"{name}.voice.wav"
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(job.audio_path, dest)
+    except OSError as e:
+        return jsonify({"error": f"could not save: {e}"}), 500
+    return jsonify({"ok": True, "name": name})
 
 
 @speechNG_bp.route("/api/ng/speech/jobs", methods=["GET"])
