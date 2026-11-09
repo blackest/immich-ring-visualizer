@@ -29,7 +29,7 @@
   var syncTimer = null;
   var dismissed = {};
   var optionsLoaded = false;
-  var options = { loras: [], presets: [], styles: [], voices: [] };
+  var options = { refmods: [], loras: [], presets: [], styles: [], voices: [] };
   var cards = [];                       // one object per character card: { root, el:{...}, looks:[{name,file}], clip }
   var finishOk = false;
 
@@ -95,7 +95,9 @@
     Promise.all([
       fetch("/api/ng/h3/loras").then(function (r) { return r.json(); }),
       fetch(SPEECH_API + "/voices").then(function (r) { return r.json(); }),
+      fetch("/api/ng/h3/refmods").then(function (r) { return r.json(); }).catch(function () { return {}; }),
     ]).then(function (res) {
+      options.refmods = ((res[2] && res[2].refmods) || []).filter(function (m) { return m.ok !== false; });
       options.loras = ((res[0] && res[0].loras) || []).filter(function (l) { return l.ok; });
       options.presets = res[1].presets || [];
       options.styles = res[1].styles || [];
@@ -162,12 +164,17 @@
     loraWrap.appendChild(mk("label", "ng-gen-label", "LoRA (optional)"));
     c.el.lora = mk("select", "ng-gen-input");
     loraWrap.appendChild(c.el.lora);
+    var rmWrap = mk("div");
+    rmWrap.appendChild(mk("label", "ng-gen-label", "RefMod (a whole character, one shot each, no shared frames)"));
+    c.el.refmod = mk("select", "ng-gen-input");
+    rmWrap.appendChild(c.el.refmod);
     var strWrap = mk("div");
     strWrap.appendChild(mk("label", "ng-gen-label", "Strength"));
     c.el.strength = mk("input", "ng-gen-input");
     c.el.strength.type = "number"; c.el.strength.min = "0"; c.el.strength.max = "2"; c.el.strength.step = "0.05"; c.el.strength.value = "1";
     strWrap.appendChild(c.el.strength);
     faceRow.appendChild(loraWrap);
+    faceRow.appendChild(rmWrap);
     faceRow.appendChild(strWrap);
     root.appendChild(faceRow);
 
@@ -395,6 +402,11 @@
       return { name: l.name, label: l.name + (l.size_mb ? " (" + l.size_mb + " MB)" : "") };
     })), "name", function (l) { return l.label; });
     c.el.lora.value = prev || "";
+    var prevRm = c.el.refmod.value;
+    fillSelect(c.el.refmod, [{ name: "", label: "(none)" }].concat(options.refmods.map(function (m) {
+      return { name: m.name, label: m.name };
+    })), "name", function (m) { return m.label; });
+    c.el.refmod.value = prevRm || "";
     if (options.presets.length && !c.el.voice.options.length) {
       fillSelect(c.el.voice, options.presets, "id", function (p) { return p.label + " -- " + p.sub; });
       var def = options.presets.filter(function (p) { return p.id === "aiden"; })[0];
@@ -686,6 +698,10 @@
       if (seen[name.toLowerCase()]) throw new Error(name + " is listed twice.");
       seen[name.toLowerCase()] = true;
       var ch = { name: name, subject: c.el.subject.value.trim(), looks: [] };
+      if (c.el.refmod.value) {
+        if (c.el.lora.value || c.looks.length) throw new Error(name + ": a RefMod is the whole character; clear the LoRA and the pictures.");
+        ch.refmod = c.el.refmod.value;
+      }
       if (c.el.lora.value) { ch.lora = c.el.lora.value; ch.lora_strength = parseFloat(c.el.strength.value || "1"); }
       c.looks.forEach(function (look, li) {
         var lname = look.name.value.trim();
@@ -695,7 +711,7 @@
         ch.looks.push({ name: lname, file: field });
       });
       if (ch.looks.length) ch.default_look = ch.looks[0].name;
-      if (!ch.lora && !ch.looks.length) throw new Error(name + " needs a LoRA or at least one picture.");
+      if (!ch.lora && !ch.refmod && !ch.looks.length) throw new Error(name + " needs a RefMod, a LoRA or at least one picture.");
       var k = voiceKind(c);
       var v = { kind: k, language: "english", speed: 1.0 };
       if (k === "preset") { v.voice = c.el.voice.value; v.style = c.el.style.value || "natural"; }

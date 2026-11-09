@@ -436,6 +436,42 @@ class SharedFrameTests(_Base):
         self.assertEqual(st["clips"][0]["text"], "Where are you now? / Right here, the pot boils.")
 
 
+class RefModCharacterTests(_Base):
+    SCRIPT = "KNIGHT [on the wall]: Come in out of the wind.\nWOMAN [in the hall]: Come in out of the wind."
+
+    def setUp(self):
+        super().setUp()
+        entry = {"path": "/refmods/knight.safetensors", "images": 8, "videos": 0}
+        p = mock.patch.object(scene.h3_refmod_lib, "resolve_h3_refmod_ng", lambda n: entry if n == "knight" else None)
+        p.start()
+        self.addCleanup(p.stop)
+        self.takes["Come in out of the wind."] = [("s", .1, 0), ("v", 1.5, .12), ("s", .1, 0)]
+
+    def chars(self):
+        return [character("Knight", lora="", refmod="knight"),
+                character("Woman", lora="", looks=[{"name": "hall", "bytes": b"PNGW", "ext": ".png"}])]
+
+    def test_a_refmod_character_renders_on_the_ref2va_model_with_no_first_frame(self):
+        job = scene.start_scene_job_ng(self.SCRIPT, self.chars(), seed=3)
+        scene._run_scene(job)
+        knight, woman = self.h3_calls
+        self.assertIsNone(knight["first"])
+        self.assertEqual(knight["model"], "h3ref")
+        self.assertEqual(knight["refmods"], [{"name": "knight", "path": "/refmods/knight.safetensors",
+                                              "strength": 1.0, "images": 8, "videos": 0}])
+        self.assertIn("Setting: on the wall.", knight["prompt"])
+        self.assertEqual((woman["model"], woman["refmods"], woman["first"]), ("h3q8", [], b"PNGW"))
+
+    def test_a_refmod_is_the_whole_character_and_cannot_share_a_frame(self):
+        with self.assertRaisesRegex(scene.SceneRequestError, "unknown or unusable RefMod"):
+            scene.start_scene_job_ng(self.SCRIPT, [character("Knight", lora="", refmod="nobody"), self.chars()[1]])
+        with self.assertRaisesRegex(scene.SceneRequestError, "whole character"):
+            scene.start_scene_job_ng(self.SCRIPT, [character("Knight", refmod="knight"), self.chars()[1]])
+        shared = "KNIGHT [on the wall]: Come in out of the wind.\n& WOMAN [in the hall]: Come in out of the wind."
+        with self.assertRaisesRegex(scene.SceneRequestError, "cannot share a split-screen frame"):
+            scene.start_scene_job_ng(shared, self.chars())
+
+
 class JoinTests(unittest.TestCase):
     def test_parts_are_trimmed_and_joined_in_order_with_audio(self):
         with tempfile.TemporaryDirectory() as d:

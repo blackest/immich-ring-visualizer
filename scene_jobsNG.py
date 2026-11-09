@@ -39,6 +39,7 @@ import finish_engineNG as finish
 import h3_engineNG as h3
 import h3_jobsNG as h3_jobs
 import h3_lora_libraryNG as h3_lora_lib
+import h3_refmod_libraryNG as h3_refmod_lib
 import numpy as np
 
 import scene_ambienceNG as ambience
@@ -70,6 +71,8 @@ class SceneCharacter:
     lora_name: str = ""
     lora_path: str = ""
     lora_strength: float = 1.0
+    refmod_name: str = ""                            # a RefMod is the whole character: no LoRA, no pictures
+    refmod_entry: dict = field(default_factory=dict, repr=False)
     looks: dict = field(default_factory=dict)        # casefolded look name -> (bytes, ext, display name)
     default_look: str = ""                           # casefolded name of the look used when a line names none
     voice: dict = field(default_factory=dict)        # kind, voice, style_id, style_text, character_voice, ref_text,
@@ -148,6 +151,16 @@ def _build_character(raw: dict) -> SceneCharacter:
         raise SceneRequestError("every character needs a name")
     ch = SceneCharacter(name=name, subject=str(raw.get("subject") or "").strip()[: talk.TALK_MAX_SUBJECT])
     lora = str(raw.get("lora") or "").strip()
+    refmod = str(raw.get("refmod") or "").strip()
+    if refmod:
+        if lora or raw.get("looks"):
+            raise SceneRequestError(f"{name}: a RefMod is the whole character; leave the LoRA and the pictures empty")
+        entry = h3_refmod_lib.resolve_h3_refmod_ng(refmod)
+        if entry is None:
+            raise SceneRequestError(f"{name}: unknown or unusable RefMod {refmod!r}")
+        ch.refmod_name = refmod
+        ch.refmod_entry = {"name": refmod, "path": entry["path"], "strength": 1.0,
+                           "images": entry["images"], "videos": entry["videos"]}
     if lora:
         path = h3_lora_lib.resolve_h3_lora_path_ng(lora)
         if not path:
@@ -163,8 +176,8 @@ def _build_character(raw: dict) -> SceneCharacter:
         ch.looks[lname.casefold()] = (look["bytes"], str(look.get("ext") or ".jpg").lower(), lname)
     dl = str(raw.get("default_look") or "").strip().casefold()
     ch.default_look = dl if dl in ch.looks else ""
-    if not (ch.lora_name or ch.looks):
-        raise SceneRequestError(f"{name}: give them a LoRA or at least one picture, otherwise there is no face")
+    if not (ch.lora_name or ch.looks or ch.refmod_name):
+        raise SceneRequestError(f"{name}: give them a RefMod, a LoRA or at least one picture, otherwise there is no face")
     ch.voice = dict(raw.get("voice") or {})
     return ch
 
@@ -216,6 +229,10 @@ def start_scene_job_ng(script: str, characters: list, quality: str = "draft", fa
     for shot in shots:
         if len(shot) == 2:
             for ln in shot:
+                if chars[ln.key].refmod_name:
+                    raise SceneRequestError(
+                        f"{ln.speaker} is a RefMod character, and a RefMod cannot share a split-screen frame: "
+                        f"give each their own shot")
                 if not chars[ln.key].looks:
                     raise SceneRequestError(
                         f"{ln.speaker} shares a frame with {shot[0].speaker if ln is shot[1] else shot[1].speaker}: "
@@ -355,7 +372,9 @@ def _render_stage(job: SceneJobNG, pieces: dict) -> None:
         clip.status = "rendering"
         hj = h3_jobs.start_h3_job_ng(
             first, ext, prompt, CLIP_S,
-            seed=None if job.seed is None else job.seed + clip.index, model="h3q8", width=job.width, height=job.height,
+            seed=None if job.seed is None else job.seed + clip.index, model="h3ref" if not clip.shared and chs[0].refmod_name else "h3q8",
+            refmods=[chs[0].refmod_entry] if not clip.shared and chs[0].refmod_name else [],
+            width=job.width, height=job.height,
             steps=talk.TALK_STEPS, tristep=job.fast, loras=loras,
             timeout_s=job.timeout_s, audio_bytes=wav_path.read_bytes(), audio_ext=".wav")
         clip.h3_job_id = hj.job_id
