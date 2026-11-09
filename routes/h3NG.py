@@ -341,6 +341,7 @@ def h3_generate_ng():
             reference_size=str(request.form.get("reference_size") or "match").strip().lower(),
             adaln_blocks=str(request.form.get("adaln_blocks") or "").strip(),
             fast_vae=str(request.form.get("fast_vae") or "").strip().lower() in ("1", "true", "on"),
+            low_memory=str(request.form.get("low_memory") or "").strip().lower() in ("1", "true", "on"),
             vae_v2=str(request.form.get("vae_v2") or "").strip().lower() in ("1", "true", "on"),
             audio_bytes=audio_file.read() if audio_file else None,
             audio_ext=os.path.splitext(audio_file.filename or "")[1] if audio_file else ".wav")

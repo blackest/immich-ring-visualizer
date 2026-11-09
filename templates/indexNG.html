@@ -2923,6 +2923,12 @@
                       (float16 video decode; try it, untick if a clip looks
                       off)</label
                     >
+                    <label class="ng-checkbox-row" id="ng-h3-lowmem-row"
+                      title="Reads the model from disk one block at a time instead of holding it all in memory. Same picture and sound, much less memory (about 4 GB instead of 22 GB in the denoise); lets other apps keep their RAM while this renders."
+                      ><input type="checkbox" id="ng-h3-lowmem" /> Low memory
+                      (stream the model from disk; same result, far less
+                      RAM)</label
+                    >
                     <label class="ng-checkbox-row" id="ng-h3-vaev2-row"
                       title="Phosphene v5.0-image3's decoder (mixed precision, compiled, pipelined), vendored here. Overrides Fast VAE."
                       ><input type="checkbox" id="ng-h3-vaev2" /> VAE v2

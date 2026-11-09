@@ -92,6 +92,7 @@
     els.tristepRow = document.getElementById("ng-h3-tristep-row");
     els.tristep = document.getElementById("ng-h3-tristep");
     els.fastVae = document.getElementById("ng-h3-fastvae");
+    els.lowMem = document.getElementById("ng-h3-lowmem");
     els.vaeV2 = document.getElementById("ng-h3-vaev2");
     els.flexRow = document.getElementById("ng-h3-flex-row");
     els.flex = document.getElementById("ng-h3-flex");
@@ -520,6 +521,7 @@
     if (v13) form.append("v13", "true");
     if (tristep) form.append("tristep", "true");
     if (els.fastVae && els.fastVae.checked) form.append("fast_vae", "true");
+    if (els.lowMem && els.lowMem.checked) form.append("low_memory", "true");
     if (els.vaeV2 && els.vaeV2.checked) form.append("vae_v2", "true");
     if (flex) form.append("flex", "true");
     if (flexTurbo) form.append("flex_turbo", "true");

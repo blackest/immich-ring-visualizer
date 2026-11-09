@@ -65,6 +65,7 @@ class H3JobNG:
     reference_size: str = "match"  # "max" = upstream's 2048 px picture size (several times slower)
     adaln_blocks: str = ""  # hybrid "clean look" (model h3ref): FL2VA base + Ref2VA AdaLN on these blocks, e.g. "45-49"
     fast_vae: bool = False  # opt-in: decode the video in float16 (H3_VAE_DTYPE) instead of float32; off = the old path
+    low_memory: bool = False  # opt-in: stream the DiT blocks from disk (runner --stream-dit): same output, far less memory
     vae_v2: bool = False  # opt-in: the vendored image3 decoder (H3_VAE_IMPL=v2); wins over fast_vae
     chain_prompts: list = field(default_factory=list)  # one prompt per chained window; empty = `prompt` for every window
     extends: bool = False  # continue extend_src.mp4 in the job dir; duration_s is the new time added
@@ -180,7 +181,7 @@ def _worker_loop() -> None:
                 refmods=job.refmods, chain_prompts=job.chain_prompts,
                 references=[str(job.job_dir / n) for n in job.references],
                 reference_size=job.reference_size, adaln_blocks=job.adaln_blocks,
-                fast_vae=job.fast_vae, vae_v2=job.vae_v2,
+                fast_vae=job.fast_vae, vae_v2=job.vae_v2, low_memory=job.low_memory,
                 extend_from=str(extend_path) if job.extends else None,
                 last_frame_path=str(last_path) if last_path else None,
                 audio_drive_path=str(audio_path) if audio_path else None,
@@ -234,6 +235,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      reference_size: str = "match",
                      adaln_blocks: str = "",
                      fast_vae: bool = False,
+                     low_memory: bool = False,
                      vae_v2: bool = False,
                      audio_bytes: Optional[bytes] = None,
                      audio_ext: str = ".wav",
@@ -378,11 +380,12 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                   tristep=tristep, flex=flex, flex_turbo=flex_turbo, loras=loras, refmods=refmods,
                   timeout_s=timeout_s, chain_prompts=chain_prompts or [], extends=extend_bytes is not None,
                   references=reference_names, reference_size=reference_size, adaln_blocks=adaln_blocks,
-                  fast_vae=bool(fast_vae), vae_v2=bool(vae_v2), reroll=reroll, on_done=on_done)
+                  fast_vae=bool(fast_vae), vae_v2=bool(vae_v2), low_memory=bool(low_memory),
+                  reroll=reroll, on_done=on_done)
     (job_dir / SETTINGS_NAME).write_text(json.dumps({
         "model": model, "width": width, "height": height, "steps": steps, "turbo": turbo, "v13": v13,
         "tristep": tristep, "flex": flex, "flex_turbo": flex_turbo, "has_image": has_image, "timeout_s": timeout_s,
-        "adaln_blocks": adaln_blocks, "fast_vae": bool(fast_vae), "vae_v2": bool(vae_v2),
+        "adaln_blocks": adaln_blocks, "fast_vae": bool(fast_vae), "vae_v2": bool(vae_v2), "low_memory": bool(low_memory),
         "has_audio_drive": audio_bytes is not None,
         "loras": [{"name": l["name"], "path": l["path"], "strength": l["strength"]} for l in loras],
     }, indent=2), encoding="utf-8")
@@ -469,6 +472,7 @@ def job_status_ng(job_id: str) -> dict:
         "flex": job.flex,
         "flex_turbo": job.flex_turbo,
         "fast_vae": job.fast_vae,
+        "low_memory": job.low_memory,
         "vae_v2": job.vae_v2,
         "has_audio_drive": job.has_audio_drive,
         "loras": [{"name": l["name"], "strength": l["strength"]} for l in job.loras],

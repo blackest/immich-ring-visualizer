@@ -186,6 +186,7 @@ _H3_LORA_APPLIED_RE = re.compile(r"LoRA\s+\S+.*?:\s*(\d+)\s+applied")
 # projections are never resident together -- the Q8 DiT load peak drops from 44 to 20 GiB and the
 # output is byte-identical. Used automatically when the runner has it; RINGVIZ_H3_LAZY_ADALN=0 opts out.
 H3_LAZY_ADALN_FLAG = "--lazy-adaln"
+H3_STREAM_DIT_FLAG = "--stream-dit"
 # `--adaln-cache-dir` (minimax-h3-mlx branch adaln-cache): the AdaLN tables are stored once per
 # schedule and reloaded, and a hit never reads the ~24 GiB of AdaLN weights at all (the AdaLN stage
 # drops from 4.5 s to 0.1 s; the output is byte-identical). Used automatically when the runner has
@@ -550,6 +551,8 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         "flex_turbo_supported": bool(runner) and h3_flex.runner_supports_flex_turbo_ng(runner),
         # Informational: this runner will use the lazy AdaLN load on its own.
         "lazy_adaln": bool(runner) and bool(_h3_lazy_adaln_argv_ng(runner, legacy_adaln=False)),
+        # Low memory: this runner can stream the DiT from disk (--stream-dit).
+        "low_memory_supported": bool(runner) and h3_lora.runner_has_flag_ng(runner, H3_STREAM_DIT_FLAG),
         # Informational: this runner will store and reuse the AdaLN tables on its own.
         "adaln_cache": bool(runner) and bool(_h3_adaln_cache_argv_ng(runner, legacy_adaln=False)),
         "v13_ok": H3_V13_LORA_PATH.is_file(),
@@ -578,6 +581,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           reference_size: str = "match",
                           adaln_blocks: str = "",
                           fast_vae: bool = False,
+                          low_memory: bool = False,
                           vae_v2: bool = False,
                           audio_drive_path: Optional[str] = None) -> dict:
     """One subprocess call: prompt + duration in, one mp4 out. image_path
@@ -909,6 +913,13 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     cmd += h3_references.reference_argv_ng(references, reference_size)
     lazy_argv = _h3_lazy_adaln_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
     cmd += lazy_argv
+    if low_memory:
+        # Low-memory mode (runner --stream-dit): the DiT's block weights are read from disk one block at a time,
+        # the next one prefetched while the current one computes, instead of all 50 being held in memory.
+        # Same picture and sound (tested identical on this Mac), the denoise peak about 4 GB instead of 22 GB.
+        if not h3_lora.runner_has_flag_ng(runner, H3_STREAM_DIT_FLAG):
+            raise ValueError("this H3 runner has no --stream-dit -- update the minimax-h3-mlx runner")
+        cmd += [H3_STREAM_DIT_FLAG]
     adaln_cache_argv = _h3_adaln_cache_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
     cmd += adaln_cache_argv
 
@@ -920,6 +931,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                       else " [flex turbo 4-step]" if flex_turbo else "")
         if lazy_argv:
             turbo_note += " [lazy adaln]"
+        if low_memory:
+            turbo_note += " [low memory]"
         if adaln_cache_argv:
             turbo_note += " [adaln cache]"
         if loras:
@@ -1077,6 +1090,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "references": [Path(r).name for r in references],
         "adaln_blocks": adaln_blocks,
         "fast_vae": bool(fast_vae),
+        "low_memory": bool(low_memory),
         "vae_v2": bool(vae_v2),
         "audio_drive": bool(audio_drive_path),
     }

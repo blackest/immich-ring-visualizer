@@ -69,6 +69,14 @@ class CommandTests(_DriveBase):
         self.assertEqual(self._value(cmd, "--audio-drive"), str(self.wav))
         self.assertEqual(self._value(cmd, "--first-frame"), str(pic))
 
+    def test_low_memory_adds_the_stream_flag_and_needs_a_runner_that_has_it(self):
+        self.assertNotIn("--stream-dit", self._cmd(model="h3q8"))
+        with self.assertRaisesRegex(ValueError, "no --stream-dit"):
+            self._cmd(model="h3q8", low_memory=True)
+        self.runner.write_text(DRIVE_RUNNER + "--stream-dit\n")
+        cmd = self._cmd(model="h3q8", low_memory=True)
+        self.assertIn("--stream-dit", cmd)
+
     def test_off_means_no_flag(self):
         self.assertNotIn("--audio-drive", self._cmd(model="h3q8"))
 
