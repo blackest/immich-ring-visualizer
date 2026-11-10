@@ -57,6 +57,32 @@ def _landed(job: dict, job_dir: Path, r: dict) -> None:
                            "height": r["height"], "seconds": r["elapsed_seconds"]})
 
 
+def _capped_refs_ng(refs, job_dir: Path) -> list:
+    """The reference paths to hand to Klein. A picture longer than engine.REF_MAX_SIDE on its long side is shrunk into
+    a copy under <job>/refs_capped (rotation tag applied, so a phone photo stays upright); the upload itself is kept as
+    it came. A picture that is small enough, or that cannot be read here, is passed through unchanged."""
+    out = []
+    for r in refs:
+        path = Path(r["path"])
+        try:
+            from PIL import Image, ImageOps
+            with Image.open(path) as im:
+                im = ImageOps.exif_transpose(im)
+                if max(im.size) <= engine.REF_MAX_SIDE:
+                    out.append(str(path))
+                    continue
+                scale = engine.REF_MAX_SIDE / max(im.size)
+                small = im.convert("RGB").resize((max(1, round(im.size[0] * scale)), max(1, round(im.size[1] * scale))),
+                                                 Image.LANCZOS)
+            dest = job_dir / "refs_capped" / f"{path.stem}.png"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            small.save(dest)
+            out.append(str(dest))
+        except Exception:  # noqa: BLE001 -- not a picture Pillow can read: let Klein report it as before
+            out.append(str(path))
+    return out
+
+
 def _run(job: dict) -> None:
     job_dir = Path(KLEIN_DIR) / job["id"]
     try:
@@ -70,7 +96,7 @@ def _run(job: dict) -> None:
             job["started_at"] = time.time()
             engine.generate_klein_ng(
                 job["prompt"], job["n"], job["width"], job["height"], job_dir / "out", job["seed"],
-                refs=[r["path"] for r in job["refs"]], model=job["model"], options=job.get("options"),
+                refs=_capped_refs_ng(job["refs"], job_dir), model=job["model"], options=job.get("options"),
                 on_log=lambda line: job.__setitem__("log", (job["log"] + [line])[-30:]),
                 should_stop=lambda: job["cancel"],
                 on_result=lambda r: _landed(job, job_dir, r))

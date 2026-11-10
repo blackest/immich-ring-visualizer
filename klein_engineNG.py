@@ -18,7 +18,10 @@ from pathlib import Path
 
 WORKER = Path(__file__).resolve().parent / "klein_workerNG.py"
 MAX_REFS = 10
-MAX_PIXELS = 1024 * 1024
+MAX_PIXELS = int(os.environ.get("KLEIN_MAX_PIXELS", 1024 * 1024))   # one megapixel unless raised for a test
+# A reference picture is shrunk to this long side before Klein sees it. Measured 2026-11-10: a 4032x3024 phone photo
+# made a 1024x576 render 4.9x slower (41 s/step vs 8.3) and used 22 GB instead of 8 GB, with no sign it helps the likeness.
+REF_MAX_SIDE = int(os.environ.get("KLEIN_REF_MAX_SIDE", 1024))
 RESULT_PREFIX = "KLEIN_RESULT "
 # "<variant>-q<bits>" -> the Hugging Face repo the weights come from
 REPOS = {f"{variant}-q{bits}": f"mflux-community/flux-3-image-klein{'-base' if variant == 'base' else ''}-mflux-q{bits}"
