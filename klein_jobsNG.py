@@ -57,11 +57,12 @@ def _landed(job: dict, job_dir: Path, r: dict) -> None:
                            "height": r["height"], "seconds": r["elapsed_seconds"]})
 
 
-def _capped_refs_ng(refs, job_dir: Path) -> list:
+def _capped_refs_ng(refs, job_dir: Path) -> tuple:
     """The reference paths to hand to Klein. A picture longer than engine.REF_MAX_SIDE on its long side is shrunk into
     a copy under <job>/refs_capped (rotation tag applied, so a phone photo stays upright); the upload itself is kept as
-    it came. A picture that is small enough, or that cannot be read here, is passed through unchanged."""
-    out = []
+    it came. A picture that is small enough, or that cannot be read here, is passed through unchanged. Returns
+    (paths, notes): one note per shrunk picture, for the job card."""
+    out, notes = [], []
     for r in refs:
         path = Path(r["path"])
         try:
@@ -72,15 +73,17 @@ def _capped_refs_ng(refs, job_dir: Path) -> list:
                     out.append(str(path))
                     continue
                 scale = engine.REF_MAX_SIDE / max(im.size)
+                before = im.size
                 small = im.convert("RGB").resize((max(1, round(im.size[0] * scale)), max(1, round(im.size[1] * scale))),
                                                  Image.LANCZOS)
             dest = job_dir / "refs_capped" / f"{path.stem}.png"
             dest.parent.mkdir(parents=True, exist_ok=True)
             small.save(dest)
             out.append(str(dest))
+            notes.append(f"{r.get('slot', path.stem)} shrunk from {before[0]}x{before[1]} to {small.size[0]}x{small.size[1]}")
         except Exception:  # noqa: BLE001 -- not a picture Pillow can read: let Klein report it as before
             out.append(str(path))
-    return out
+    return out, notes
 
 
 def _run(job: dict) -> None:
@@ -94,9 +97,10 @@ def _run(job: dict) -> None:
         with _SHEET_LOCK_NG:
             job["status"] = "running"
             job["started_at"] = time.time()
+            ref_paths, job["ref_notes"] = _capped_refs_ng(job["refs"], job_dir)
             engine.generate_klein_ng(
                 job["prompt"], job["n"], job["width"], job["height"], job_dir / "out", job["seed"],
-                refs=_capped_refs_ng(job["refs"], job_dir), model=job["model"], options=job.get("options"),
+                refs=ref_paths, model=job["model"], options=job.get("options"),
                 on_log=lambda line: job.__setitem__("log", (job["log"] + [line])[-30:]),
                 should_stop=lambda: job["cancel"],
                 on_result=lambda r: _landed(job, job_dir, r))

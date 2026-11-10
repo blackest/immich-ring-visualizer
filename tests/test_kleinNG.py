@@ -77,7 +77,8 @@ class WorkerArgs(unittest.TestCase):
 class EngineChecks(unittest.TestCase):
     def test_size_rules(self):
         engine.validate_ng(1024, 576, [], 1)
-        for w, h in ((1000, 576), (2048, 1024), (128, 128)):
+        engine.validate_ng(2048, 1152, [], 1)               # the largest size
+        for w, h in ((1000, 576), (2048, 1280), (3840, 2160), (128, 128)):
             with self.subTest(size=(w, h)), self.assertRaises(ValueError):
                 engine.validate_ng(w, h, [], 1)
 

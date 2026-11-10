@@ -19,7 +19,8 @@
   for (var n = 4; n <= 10; n++) SLOTS.push({ key: "ref" + n, label: "Reference " + n, hint: "anything else to include", more: true });
   var shown = 3; // how many slots are on screen: the named three, plus any added or filled
   var SIZES = [["1024x576", "16:9 wide"], ["1024x1024", "square"], ["1024x768", "4:3"], ["768x1024", "portrait 3:4"],
-    ["576x1024", "tall 9:16"], ["768x432", "16:9 small (fast)"]];
+    ["576x1024", "tall 9:16"], ["768x432", "16:9 small (fast)"],
+    ["1536x864", "16:9 larger (about 3.5 min)"], ["2048x1152", "16:9 large (about 6 min, 31 GB)"]];
   var VARIATIONS = [1, 2, 4, 6, 8, 10];
 
   var built = false;
@@ -472,6 +473,7 @@
       if (job.status === "waiting") info += " (waiting for the video render to finish)";
     }
     if (job.error) info += " · " + job.error;
+    if (job.ref_notes && job.ref_notes.length) info += " · " + job.ref_notes.join("; ");
     card.appendChild(el("div", "ng-gen-status", info));
     var grid = el("div", "ng-klein-grid");
     job.results.forEach(function (r) { grid.appendChild(pictureCell(job, r)); });

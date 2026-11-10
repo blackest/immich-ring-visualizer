@@ -25,7 +25,7 @@ kleinNG_bp = Blueprint("kleinNG", __name__)
 
 def _public(job: dict) -> dict:
     return {k: job.get(k) for k in ("id", "prompt", "n", "width", "height", "seed", "model", "status", "error",
-                                    "results", "log", "created_at", "started_at", "finished_at", "options", "outpaint")} | {
+                                    "results", "log", "created_at", "started_at", "finished_at", "options", "outpaint", "ref_notes")} | {
         "refs": [r["slot"] for r in job["refs"]], "ref_files": [Path(r["path"]).name for r in job["refs"]]}
 
 

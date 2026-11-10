@@ -37,35 +37,36 @@ class RefCap(unittest.TestCase):
 
     def test_big_picture_is_shrunk_to_the_long_side(self):
         big = self._pic("subject.jpeg", (4032, 3024), "JPEG")
-        out = klein._capped_refs_ng([{"slot": "subject", "path": str(big)}], self.dir)
+        out, notes = klein._capped_refs_ng([{"slot": "subject", "path": str(big)}], self.dir)
         self.assertNotEqual(out[0], str(big))
+        self.assertEqual(notes, ["subject shrunk from 4032x3024 to 1024x768"])
         with Image.open(out[0]) as im:
             self.assertEqual(im.size, (engine.REF_MAX_SIDE, 768))
         self.assertTrue(big.exists())                       # the upload is kept as it came
 
     def test_small_picture_passes_through(self):
         small = self._pic("location.png", (800, 600))
-        out = klein._capped_refs_ng([{"slot": "location", "path": str(small)}], self.dir)
-        self.assertEqual(out, [str(small)])
+        out, notes = klein._capped_refs_ng([{"slot": "location", "path": str(small)}], self.dir)
+        self.assertEqual((out, notes), ([str(small)], []))
         self.assertFalse((self.dir / "refs_capped").exists())
 
     def test_rotation_tag_is_applied(self):
         # stored landscape, tagged "rotate 90": upright it is 3000 wide by 4000 tall
         tall = self._pic("subject.jpeg", (4000, 3000), "JPEG", exif_orientation=6)
-        out = klein._capped_refs_ng([{"slot": "subject", "path": str(tall)}], self.dir)
+        out, _ = klein._capped_refs_ng([{"slot": "subject", "path": str(tall)}], self.dir)
         with Image.open(out[0]) as im:
             self.assertEqual(im.size, (768, engine.REF_MAX_SIDE))
 
     def test_unreadable_file_passes_through(self):
         junk = self.dir / "extra.png"
         junk.write_bytes(b"not a picture")
-        out = klein._capped_refs_ng([{"slot": "extra", "path": str(junk)}], self.dir)
-        self.assertEqual(out, [str(junk)])
+        out, notes = klein._capped_refs_ng([{"slot": "extra", "path": str(junk)}], self.dir)
+        self.assertEqual((out, notes), ([str(junk)], []))
 
     def test_order_is_kept(self):
         a = self._pic("subject.jpeg", (3000, 2000), "JPEG")
         b = self._pic("location.png", (500, 500))
-        out = klein._capped_refs_ng([{"slot": "subject", "path": str(a)}, {"slot": "location", "path": str(b)}], self.dir)
+        out, _ = klein._capped_refs_ng([{"slot": "subject", "path": str(a)}, {"slot": "location", "path": str(b)}], self.dir)
         self.assertTrue(out[0].endswith("subject.png"))
         self.assertEqual(out[1], str(b))
 

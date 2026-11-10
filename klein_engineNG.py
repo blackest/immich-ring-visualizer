@@ -18,7 +18,9 @@ from pathlib import Path
 
 WORKER = Path(__file__).resolve().parent / "klein_workerNG.py"
 MAX_REFS = 10
-MAX_PIXELS = int(os.environ.get("KLEIN_MAX_PIXELS", 1024 * 1024))   # one megapixel unless raised for a test
+# Output size limit. Measured 2026-11-10 with a 1024 px reference: peak memory is ~13 GB per output megapixel
+# (1024x576 7.8 GB / 137 s, 1536x864 17.4 GB / 216 s, 2048x1152 30.8 GB / 367 s), so 2048x1152 is a comfortable top on a 96 GB Mac.
+MAX_PIXELS = int(os.environ.get("KLEIN_MAX_PIXELS", 2048 * 1152))
 # A reference picture is shrunk to this long side before Klein sees it. Measured 2026-11-10: a 4032x3024 phone photo
 # made a 1024x576 render 4.9x slower (41 s/step vs 8.3) and used 22 GB instead of 8 GB, with no sign it helps the likeness.
 REF_MAX_SIDE = int(os.environ.get("KLEIN_REF_MAX_SIDE", 1024))
@@ -129,7 +131,7 @@ def validate_ng(width: int, height: int, refs, n: int, match_ref: bool = False) 
     if match_ref and refs:
         pass  # the first reference sets the size
     elif width < 256 or height < 256 or width % 16 or height % 16 or width * height > MAX_PIXELS:
-        raise ValueError("Klein sizes are multiples of 16, at least 256, and at most 1024 x 1024 pixels")
+        raise ValueError(f"Klein sizes are multiples of 16, at least 256, and at most {MAX_PIXELS / 1e6:.1f} megapixels (2048 x 1152 at most)")
     if len(refs) > MAX_REFS:
         raise ValueError(f"Klein takes at most {MAX_REFS} reference pictures")
     if not 1 <= n <= 16:
