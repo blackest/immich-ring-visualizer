@@ -23,6 +23,7 @@
   const updateBtn = document.getElementById("ng-settings-update-ytdlp");
   const outputEl = document.getElementById("ng-settings-ytdlp-output");
   const launchSunoBtn = document.getElementById("ng-settings-launch-suno");
+  const stopSunoBtn = document.getElementById("ng-settings-stop-suno");
   const sunoOutputEl = document.getElementById("ng-settings-suno-output");
   const launchComfyBtn = document.getElementById("ng-settings-launch-comfyui");
   const comfyOutputEl = document.getElementById("ng-settings-comfyui-output");
@@ -309,6 +310,23 @@
     } finally {
       launchSunoBtn.disabled = false;
       launchSunoBtn.textContent = "Launch";
+    }
+  });
+
+  stopSunoBtn.addEventListener("click", async () => {
+    stopSunoBtn.disabled = true;
+    sunoOutputEl.style.display = "block";
+    sunoOutputEl.textContent = "Stopping Suno Vault server...";
+    try {
+      const res = await fetch("/api/ng/settings/stop-suno", { method: "POST" });
+      const data = await res.json();
+      sunoOutputEl.textContent = data.ok
+        ? (data.was_running ? "Stopped." : "It wasn't running.")
+        : "Failed: " + (data.error || "unknown error");
+    } catch (e) {
+      sunoOutputEl.textContent = "Failed: " + e.message;
+    } finally {
+      stopSunoBtn.disabled = false;
     }
   });
 

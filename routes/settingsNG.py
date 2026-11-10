@@ -302,6 +302,52 @@ def launch_suno_ng():
     }), 500
 
 
+@settingsNG_bp.route("/api/ng/settings/stop-suno", methods=["POST"])
+def stop_suno_ng():
+    """Stop the Suno Vault server. Only a process that is listening on
+    SUNO_PORT AND is running from SUNO_DIR is signalled, so a stranger on
+    that port is left alone."""
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{SUNO_PORT}", "-sTCP:LISTEN", "-t"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.split()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    if not out:
+        return jsonify({"ok": True, "was_running": False})
+
+    mine = []
+    for pid in out:
+        try:
+            cwd_out = subprocess.run(
+                ["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout
+        except Exception:
+            continue
+        cwd = next((l[1:] for l in cwd_out.splitlines() if l.startswith("n")), "")
+        if os.path.realpath(cwd) == os.path.realpath(SUNO_DIR):
+            mine.append(int(pid))
+    if not mine:
+        return jsonify({
+            "ok": False,
+            "error": f"Something is on port {SUNO_PORT} but it isn't the Suno Vault; left alone.",
+        }), 409
+
+    import signal
+    for pid in mine:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    for _ in range(20):
+        if not _port_open("127.0.0.1", SUNO_PORT):
+            return jsonify({"ok": True, "was_running": True})
+        time.sleep(0.25)
+    return jsonify({"ok": False, "error": "Asked it to stop but the port is still open."}), 500
+
+
 @settingsNG_bp.route("/api/ng/settings/launch-comfyui", methods=["POST"])
 def launch_comfyui_ng():
     """Start the local ComfyUI server (/Volumes/AI/ComfyUI, its own venv)
