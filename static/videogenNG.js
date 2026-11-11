@@ -1628,6 +1628,8 @@
       item.status, item.prompt, item.durationS, item.seed,
       item.width, item.height, item.fps,
       item.error, item.videoUrl, item.jobId, item.refPreviewUrl,
+      item.verticalRatio, item.vertical && [item.vertical.status, item.vertical.error, item.vertical.videoUrl,
+        (item.vertical.logTail || []).slice(-1)[0]],
     ]);
   }
 
@@ -1720,9 +1722,103 @@
         sendJobToVideoNG(item, toVideo);
       });
       row.appendChild(toVideo);
+
+      row.appendChild(buildVerticalBox(item));
     }
 
     return row;
+  }
+
+  // "Make vertical": this finished clip made 9:16, 4:5 or square, the bands above and below painted by the AI fill
+  // (routes/outpaintNG.py). One job per clip at a time; the state lives on item.vertical and is polled like a render.
+  var VERTICAL_API = "/api/ng/outpaint";
+  var VERTICAL_SHAPES = [["9:16", "Vertical 9:16"], ["4:5", "Portrait 4:5"], ["1:1", "Square 1:1"]];
+
+  function buildVerticalBox(item) {
+    var box = document.createElement("div");
+    box.className = "ng-vg-vertical";
+    box.style.gridColumn = "1 / -1";
+    box.style.marginTop = "6px";
+    var v = item.vertical;
+    var note = function (text, danger) {
+      var d = document.createElement("div");
+      d.className = "log";
+      if (danger) d.style.color = "var(--ng-danger)";
+      d.textContent = text;
+      box.appendChild(d);
+    };
+    if (v && (v.status === "queued" || v.status === "running")) {
+      note(v.status === "queued" ? "Make vertical: waiting for the GPU" :
+        "Make vertical: painting the bands" + (v.logTail && v.logTail.length ? " - " + v.logTail[v.logTail.length - 1] : ""));
+      var stop = document.createElement("button");
+      stop.type = "button"; stop.className = "ng-btn"; stop.textContent = "Stop";
+      stop.addEventListener("click", function () {
+        fetch(VERTICAL_API + "/jobs/" + v.jobId, { method: "DELETE" }).catch(function () {});
+      });
+      box.appendChild(stop);
+      return box;
+    }
+    if (v && v.status === "done" && v.videoUrl) {
+      var video = document.createElement("video");
+      video.src = v.videoUrl; video.controls = true;
+      video.style.maxWidth = "100%"; video.style.maxHeight = "70vh"; video.style.borderRadius = "4px";
+      box.appendChild(video);
+      var dl = document.createElement("a");
+      dl.className = "ng-btn"; dl.href = VERTICAL_API + "/jobs/" + v.jobId + "/download";
+      dl.download = "vertical-" + v.jobId + ".mp4"; dl.textContent = "Download vertical video";
+      dl.style.display = "block"; dl.style.marginTop = "4px";
+      box.appendChild(dl);
+      return box;
+    }
+    if (v && v.error) note("Make vertical: " + v.error, true);
+    var pick = document.createElement("select");
+    pick.className = "ng-gen-input";
+    VERTICAL_SHAPES.forEach(function (s) {
+      var o = document.createElement("option"); o.value = s[0]; o.textContent = s[1]; pick.appendChild(o);
+    });
+    pick.value = item.verticalRatio || "9:16";
+    pick.addEventListener("change", function () { item.verticalRatio = pick.value; });
+    var go = document.createElement("button");
+    go.type = "button"; go.className = "ng-btn"; go.textContent = "Make vertical (AI fill)";
+    go.title = "Paints real picture above and below the clip instead of a blur. Takes a few minutes for each second of video.";
+    go.addEventListener("click", function () { startVertical(item, pick.value); });
+    box.appendChild(pick); box.appendChild(go);
+    return box;
+  }
+
+  function startVertical(item, ratio) {
+    item.verticalRatio = ratio;
+    item.vertical = { status: "queued", jobId: null, error: null, logTail: [] };
+    renderQueue();
+    fetch(VERTICAL_API + "/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: item.jobId, ratio: ratio }),
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { item.vertical = { status: "failed", error: res.body.error || "could not start", logTail: [] }; renderQueue(); return; }
+        item.vertical.jobId = res.body.id;
+        renderQueue();
+        pollVertical(item);
+      })
+      .catch(function (e) { item.vertical = { status: "failed", error: e.message, logTail: [] }; renderQueue(); });
+  }
+
+  function pollVertical(item) {
+    var timer = setInterval(function () {
+      var v = item.vertical;
+      if (!v || !v.jobId) { clearInterval(timer); return; }
+      fetch(VERTICAL_API + "/jobs/" + v.jobId)
+        .then(function (r) { return r.json(); })
+        .then(function (job) {
+          if (!job || !job.status) return;
+          v.status = job.status; v.logTail = job.log_tail || []; v.error = job.error;
+          if (job.status === "done") v.videoUrl = job.video_url + "?v=" + Date.now();
+          if (job.status === "done" || job.status === "failed" || job.status === "cancelled") clearInterval(timer);
+          renderQueue();
+        })
+        .catch(function () { /* transient: try again next tick */ });
+    }, 5000);
   }
 
   function renderQueue() {

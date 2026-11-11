@@ -205,6 +205,12 @@ def start_video_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str
     return job
 
 
+def busy_ng() -> bool:
+    """An Animate render is on the GPU right now (the Make vertical queue waits for this)."""
+    with _JOBS_LOCK:
+        return any(j.dispatched_at is not None and j.finished_at is None for j in _JOBS.values())
+
+
 def get_job_ng(job_id: str) -> Optional[VideoJobNG]:
     with _JOBS_LOCK:
         return _JOBS.get(job_id)
