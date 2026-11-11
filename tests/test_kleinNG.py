@@ -77,10 +77,25 @@ class WorkerArgs(unittest.TestCase):
 class EngineChecks(unittest.TestCase):
     def test_size_rules(self):
         engine.validate_ng(1024, 576, [], 1)
-        engine.validate_ng(2048, 1152, [], 1)               # the largest size
-        for w, h in ((1000, 576), (2048, 1280), (3840, 2160), (128, 128)):
+        engine.validate_ng(3840, 2160, [], 1)               # the largest size (4K)
+        for w, h in ((1000, 576), (4096, 2304), (128, 128)):
             with self.subTest(size=(w, h)), self.assertRaises(ValueError):
                 engine.validate_ng(w, h, [], 1)
+
+    def test_large_sizes_are_always_tiled(self):
+        self.assertEqual(engine._large_settings_ng(2048, 1152, {}), {})                   # at the line: untouched
+        self.assertEqual(engine._large_settings_ng(1024, 576, {"steps": 8}), {"steps": 8})
+        big = engine._large_settings_ng(3840, 2160, {"steps": 8})
+        self.assertEqual(big, {"steps": 8, "low_ram": False, "vae_tile": 512})
+        self.assertEqual(engine._large_settings_ng(2560, 1440, {"vae_tile": 256})["vae_tile"], 256)  # user's tile kept
+
+    def test_gpu_watchdog_settings_only_for_large_renders(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for k in ("MLX_DISABLE_COMPILE", "MLX_METAL_FAST_SYNCH"):
+                os.environ.pop(k, None)
+            small, large = engine._clean_env(False), engine._clean_env(True)
+        self.assertNotIn("MLX_DISABLE_COMPILE", small)
+        self.assertEqual((large["MLX_DISABLE_COMPILE"], large["MLX_METAL_FAST_SYNCH"]), ("1", "1"))
 
     def test_reference_and_count_limits(self):
         with self.assertRaises(ValueError):

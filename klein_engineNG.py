@@ -18,9 +18,12 @@ from pathlib import Path
 
 WORKER = Path(__file__).resolve().parent / "klein_workerNG.py"
 MAX_REFS = 10
-# Output size limit. Measured 2026-11-10 with a 1024 px reference: peak memory is ~13 GB per output megapixel
-# (1024x576 7.8 GB / 137 s, 1536x864 17.4 GB / 216 s, 2048x1152 30.8 GB / 367 s), so 2048x1152 is a comfortable top on a 96 GB Mac.
-MAX_PIXELS = int(os.environ.get("KLEIN_MAX_PIXELS", 2048 * 1152))
+# Output size limit. Measured 2026-11-10 with a 1024 px reference and the default low-memory decode, peak memory is ~13 GB per
+# output megapixel (1024x576 7.8 GB / 137 s, 1536x864 17.4 GB / 216 s, 2048x1152 30.8 GB / 367 s). Above LARGE_PIXELS the render
+# is always tiled (see _large_settings_ng): 2048x1152 10.2 GB / 380 s, 2560x1440 10.2 GB / 593 s, 3840x2160 12.3 GB / 29 min.
+LARGE_PIXELS = 2048 * 1152
+LARGE_TILE = 512
+MAX_PIXELS = int(os.environ.get("KLEIN_MAX_PIXELS", 3840 * 2160))
 # A reference picture is shrunk to this long side before Klein sees it. Measured 2026-11-10: a 4032x3024 phone photo
 # made a 1024x576 render 4.9x slower (41 s/step vs 8.3) and used 22 GB instead of 8 GB, with no sign it helps the likeness.
 REF_MAX_SIDE = int(os.environ.get("KLEIN_REF_MAX_SIDE", 1024))
@@ -131,17 +134,30 @@ def validate_ng(width: int, height: int, refs, n: int, match_ref: bool = False) 
     if match_ref and refs:
         pass  # the first reference sets the size
     elif width < 256 or height < 256 or width % 16 or height % 16 or width * height > MAX_PIXELS:
-        raise ValueError(f"Klein sizes are multiples of 16, at least 256, and at most {MAX_PIXELS / 1e6:.1f} megapixels (2048 x 1152 at most)")
+        raise ValueError(f"Klein sizes are multiples of 16, at least 256, and at most {MAX_PIXELS / 1e6:.1f} megapixels (3840 x 2160 at most)")
     if len(refs) > MAX_REFS:
         raise ValueError(f"Klein takes at most {MAX_REFS} reference pictures")
     if not 1 <= n <= 16:
         raise ValueError("make 1 to 16 pictures at a time")
 
 
-def _clean_env() -> dict:
+def _large_settings_ng(width: int, height: int, options: dict) -> dict:
+    """Above LARGE_PIXELS the picture is always decoded in tiles (peak memory stays about 10-12 GB instead of
+    growing with the size); an explicit tile size from the user is kept."""
+    if width * height <= LARGE_PIXELS:
+        return options
+    return {**options, "low_ram": False, "vae_tile": options.get("vae_tile") or LARGE_TILE}
+
+
+def _clean_env(large: bool = False) -> dict:
     drop = {"VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "__PYVENV_LAUNCHER__"}
     env = {k: v for k, v in os.environ.items() if k not in drop and not k.startswith(("Malloc", "MFLUX_"))}
     env.update(PYTHONUNBUFFERED="1", HF_HUB_DISABLE_TELEMETRY="1", HF_HUB_OFFLINE="1", MLX_ENABLE_TF32="0")
+    if large:
+        # Phosphene's own fix for the macOS GPU watchdog ("Impacting Interactivity", ml-explore/mlx#3267): shorter
+        # command buffers. Two 3840x2160 renders died without it; the third finished (29 min, 108 s/step).
+        env.setdefault("MLX_DISABLE_COMPILE", "1")
+        env.setdefault("MLX_METAL_FAST_SYNCH", "1")
     return env
 
 
@@ -154,6 +170,7 @@ def generate_klein_ng(prompt: str, n: int, width: int, height: int, output_dir, 
     refs = [str(r) for r in refs]
     options = validate_options_ng(options, model.split("-")[0], refs)
     validate_ng(width, height, refs, n, options.get("match_ref", False))
+    options = _large_settings_ng(width, height, options)
     py = worker_python()
     if not py.is_file():
         raise RuntimeError(f"the FLUX 3 worker is not installed ({py} not found): install FLUX 3 from Phosphene")
@@ -168,7 +185,7 @@ def generate_klein_ng(prompt: str, n: int, width: int, height: int, output_dir, 
         import klein_lorasNG
         request["loras"] = [[klein_lorasNG.find_lora_ng(l["name"])["path"], l["scale"]] for l in options["loras"]]
     proc = subprocess.Popen([str(py), str(WORKER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, errors="replace", env=_clean_env(),
+                            stderr=subprocess.STDOUT, text=True, errors="replace", env=_clean_env(width * height > LARGE_PIXELS),
                             start_new_session=True)
     lines = queue.Queue()
     threading.Thread(target=lambda: ([lines.put(l.rstrip()) for l in proc.stdout], lines.put(None)),

@@ -20,8 +20,14 @@
   var shown = 3; // how many slots are on screen: the named three, plus any added or filled
   var SIZES = [["1024x576", "16:9 wide"], ["1024x1024", "square"], ["1024x768", "4:3"], ["768x1024", "portrait 3:4"],
     ["576x1024", "tall 9:16"], ["768x432", "16:9 small (fast)"],
-    ["1536x864", "16:9 larger (about 3.5 min)"], ["2048x1152", "16:9 large (about 6 min, 31 GB)"]];
+    ["1536x864", "16:9 larger (about 3.5 min)"], ["2048x1152", "16:9 large (about 6 min)"],
+    ["3840x2160", "16:9 4K (about 30 min)"]];
+  var LARGE_NOTE = "Pictures over 2048 × 1152 are decoded in tiles, which can leave faint colour patches. 4K takes about 30 minutes.";
   var VARIATIONS = [1, 2, 4, 6, 8, 10];
+  function sizeNote() {
+    var wh = els.size.value.split("x").map(Number);
+    els.sizeNote.hidden = !(wh[0] * wh[1] > 2048 * 1152);
+  }
 
   var built = false;
   var els = {};
@@ -435,7 +441,7 @@
   function reuse(job, seed) {
     var o = job.options || {};
     els.prompt.value = job.prompt;
-    if ([].some.call(els.size.options, function (x) { return x.value === job.width + "x" + job.height; })) els.size.value = job.width + "x" + job.height;
+    if ([].some.call(els.size.options, function (x) { return x.value === job.width + "x" + job.height; })) { els.size.value = job.width + "x" + job.height; sizeNote(); }
     if ([].some.call(els.model.options, function (x) { return x.value === job.model; })) els.model.value = job.model;
     els.seed.value = seed != null ? seed : job.seed;
     els.steps.value = o.steps || "";
@@ -598,7 +604,10 @@
     els.size = el("select", "ng-gen-input");
     SIZES.forEach(function (s) { var o = el("option", "", s[0].replace("x", " × ") + " · " + s[1]); o.value = s[0]; els.size.appendChild(o); });
     field("Size", els.size);
-    els.size.addEventListener("change", function () { if (els.layout) els.layout.refresh(); });
+    els.sizeNote = el("span", "ng-gen-status", LARGE_NOTE);
+    els.size.parentNode.appendChild(els.sizeNote);
+    els.size.addEventListener("change", function () { sizeNote(); if (els.layout) els.layout.refresh(); });
+    sizeNote();
     els.count = el("select", "ng-gen-input");
     VARIATIONS.forEach(function (n) { var o = el("option", "", n + (n === 1 ? " picture" : " variations")); o.value = n; els.count.appendChild(o); });
     els.count.value = "4";
