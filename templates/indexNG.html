@@ -1136,6 +1136,27 @@
             <div id="ng-h3-queue"></div>
           </div>
 
+          <!-- Prompt Library rail pane -- filters. See static/h3libraryNG.js. -->
+          <div id="ng-h3library-pane" style="display: none">
+            <label class="ng-gen-label" for="ng-h3lib-q" style="margin-top: 0">Search</label>
+            <input type="text" id="ng-h3lib-q" class="ng-gen-input" placeholder="words in the prompt, e.g. rooftop rain" />
+            <label class="ng-gen-label" for="ng-h3lib-look">Look</label>
+            <select id="ng-h3lib-look" class="ng-gen-input"><option value="">any</option></select>
+            <label class="ng-gen-label" for="ng-h3lib-shots">Shots</label>
+            <select id="ng-h3lib-shots" class="ng-gen-input">
+              <option value="0">any</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+            <label class="ng-gen-label" for="ng-h3lib-dialogue">Spoken dialogue</label>
+            <select id="ng-h3lib-dialogue" class="ng-gen-input">
+              <option value="">any</option><option value="1">has dialogue</option><option value="0">no dialogue</option>
+            </select>
+            <label class="ng-gen-label" for="ng-h3lib-music">Music</label>
+            <select id="ng-h3lib-music" class="ng-gen-input">
+              <option value="">any</option><option value="1">has a score</option><option value="0">no score</option>
+            </select>
+            <div id="ng-h3lib-status" class="ng-gen-status"></div>
+          </div>
+
           <!-- Enhanced H3 view's rail pane -- compiler status and notes.
                See static/enhancedh3NG.js. The render itself goes through
                the H3 view's queue (POST /api/ng/h3/generate). -->
@@ -3064,6 +3085,15 @@
               </div>
             </div>
 
+            <!-- Prompt Library main region -- clip grid and a detail card. See static/h3libraryNG.js,
+                 routes/h3libraryNG.py. -->
+            <div id="ng-h3library-main" style="display: none">
+              <div id="ng-h3lib-detail" class="ng-h3lib-detail" hidden></div>
+              <div id="ng-h3lib-count" class="ng-gen-label" style="margin: 0 0 8px"></div>
+              <div id="ng-h3lib-grid" class="ng-h3lib-grid"></div>
+              <button type="button" id="ng-h3lib-more" class="ng-gen-btn" style="width: auto; margin-top: 12px" hidden>Show more</button>
+            </div>
+
             <!-- Enhanced H3 view's main region -- sentence + media tray +
                  compiler controls in, editable per-window prompts out.
                  See static/enhancedh3NG.js / routes/enhancedh3NG.py. -->
@@ -4433,6 +4463,7 @@
         <button class="ng-task-btn" data-task="videogen">Animate</button>
         <button class="ng-task-btn" data-task="h3">H3</button>
         <button class="ng-task-btn" data-task="enhancedh3">Enhanced H3</button>
+        <button class="ng-task-btn" data-task="h3library">Prompt Library</button>
         <button class="ng-task-btn" data-task="music">Music</button>
         <button class="ng-task-btn" data-task="musicedit">Music Edit</button>
         <button class="ng-task-btn" data-task="speech">Speech</button>
@@ -4501,6 +4532,7 @@
     <script src="{{ url_for('static', filename='enhancedh3NG.js') }}"></script>
     <script src="{{ url_for('static', filename='h3EnhancedPopoutNG.js') }}"></script>
     <script src="{{ url_for('static', filename='h3BatchNG.js') }}"></script>
+    <script src="{{ url_for('static', filename='h3libraryNG.js') }}"></script>
     <!-- Vendored (not CDN, same convention as every other static file
          here), MIT-licensed -- renders a cover job's transcribed ABC
          score to an inline SVG staff. See static/musicNG.js. -->

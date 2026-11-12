@@ -37,6 +37,7 @@ from routes.outpaintNG import outpaintNG_bp  # NG: new blueprint, Make vertical 
 from routes.comfyNG import comfyNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.h3NG import h3NG_bp  # NG: new blueprint, no changes to existing ones
 from routes.enhancedh3NG import enhancedh3NG_bp  # NG: new blueprint, no changes to existing ones
+from routes.h3libraryNG import h3libraryNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.h3_rerollNG import h3RerollNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.h3BatchNG import h3BatchNG_bp  # NG: new blueprint, no changes to existing ones
 from routes.h3_toolsNG import h3ToolsNG_bp  # NG: new blueprint, no changes to existing ones
@@ -73,6 +74,7 @@ app.register_blueprint(h3ToolsNG_bp)  # NG: /api/ng/h3/loras/<name>/convert and 
 app.register_blueprint(h3RerollNG_bp)  # NG: /api/ng/h3/jobs/<id>/windows|reroll|restitch (re-roll one window of a chain), additive only
 app.register_blueprint(h3BatchNG_bp)  # NG: /api/ng/h3/batch* (a scene of 5 s windows, each with its own reference pictures), additive only
 app.register_blueprint(enhancedh3NG_bp)  # NG: /api/ng/enhanced-h3/* (OpenH3-IR brief compiler, split per chained window), additive only
+app.register_blueprint(h3libraryNG_bp)  # NG: /api/ng/h3-library/* (browse the 1,000-clip H3 prompt dataset), additive only
 app.register_blueprint(musicNG_bp)  # NG: /api/ng/music/* (YuE2 style+lyrics-to-song job queue), additive only
 app.register_blueprint(speechNG_bp)  # NG: /api/ng/speech/* (text-to-speech job queue: preset, character voice or clip), additive only
 app.register_blueprint(talkNG_bp)  # NG: /api/ng/talk/* (speak a script on a character's face: Speech then an H3 audio-drive render), additive only

@@ -3794,3 +3794,30 @@ textarea.ng-gen-input.ng-textarea-expanded {
 .ng-scene-pics { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .ng-scene-pick { width: 150px; border-radius: 4px; border: 1px solid var(--ng-border); cursor: pointer; }
 
+
+/* ---- Prompt Library (static/h3libraryNG.js) ---- */
+#ng-h3library-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 16px 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+#ng-h3library-main > * { width: 100%; max-width: 1200px; }
+.ng-h3lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.ng-h3lib-card { background: var(--ng-panel-raised); border: 1px solid var(--ng-border); border-radius: 8px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; }
+.ng-h3lib-card:hover, .ng-h3lib-card:focus { border-color: var(--ng-accent); outline: none; }
+.ng-h3lib-thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; display: block; }
+.ng-h3lib-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px 0; }
+.ng-h3lib-tag { font-size: 0.7143rem; color: var(--ng-text-dim); border: 1px solid var(--ng-border); border-radius: 10px; padding: 1px 7px; }
+.ng-h3lib-sum { font-size: 0.8571rem; color: var(--ng-text); padding: 6px 8px 10px; line-height: 1.35; }
+.ng-h3lib-detail { background: var(--ng-panel); border: 1px solid var(--ng-border); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+.ng-h3lib-dhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--ng-text); }
+.ng-h3lib-dbody { display: flex; gap: 14px; flex-wrap: wrap; }
+.ng-h3lib-dvideo { flex: 1 1 320px; max-width: 480px; max-height: 70vh; background: #000; border-radius: 6px; }
+.ng-h3lib-dtext { flex: 2 1 320px; min-width: 0; }
+.ng-h3lib-field { margin-bottom: 8px; }
+.ng-h3lib-text { font-size: 0.9286rem; color: var(--ng-text); line-height: 1.45; white-space: pre-wrap; user-select: text; }
+.ng-h3lib-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }

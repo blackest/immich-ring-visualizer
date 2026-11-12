@@ -207,6 +207,13 @@ NG_ADDRESS_SETTINGS = [
         "description": "A second `h3ir serve` on a Qwen model (`h3ir_serveNG.sh qwen`). The Enhanced H3 view sends a brief here when a video is attached; Gemma's compiler crashes on real clips.",
     },
     {
+        "key": "h3_library_dir",
+        "env": "RINGVIZ_H3_LIBRARY_DIR",
+        "default": "/Users/john/immich-app/repo/minimax_h3_1k",
+        "label": "H3 prompt library folder",
+        "description": "Folder of NNNNNN.mp4 + NNNNNN.txt pairs (the ostris/minimax_h3_1k dataset) that the Prompt Library view browses. Read in place; nothing is copied.",
+    },
+    {
         "key": "gemma_review_base_url",
         "env": "RINGVIZ_GEMMA_REVIEW_URL",
         "default": "http://127.0.0.1:8080",
@@ -486,6 +493,10 @@ def get_comfyui_base_url():
 
 def get_h3ir_base_url():
     return _ng_setting("h3ir_base_url").rstrip("/")
+
+
+def get_h3_library_dir():
+    return os.path.expanduser(_ng_setting("h3_library_dir"))
 
 
 def get_gemma_review_base_url():
