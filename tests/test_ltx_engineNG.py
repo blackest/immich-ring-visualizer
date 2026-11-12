@@ -201,6 +201,14 @@ class GenerateTests(unittest.TestCase):
         with mock.patch("subprocess.Popen", popen):
             return ltx.generate_ltx_video_ng(on_log=self.logs.append, **args)
 
+    def test_the_install_command_runs_through_the_capped_wrapper_and_a_custom_one_does_not(self):
+        with mock.patch.object(ltx, "_resolve_ltx_binary_ng", return_value=str(ltx.LTX_DEFAULT_BIN)), \
+                mock.patch.object(Path, "is_file", return_value=True):
+            self._run()
+        self.assertEqual(self.cmds[0][:3], [str(ltx.LTX_DEFAULT_PYTHON), str(ltx.LTX_CAPPED_CLI), "generate"])
+        self._run()                                              # the setUp binary is /bin/ltx: used as given
+        self.assertEqual(self.cmds[1][:2], ["/bin/ltx", "generate"])
+
     def test_image_to_video_argv_and_result(self):
         res = self._run()
         cmd = self.cmds[0]
@@ -275,6 +283,60 @@ class GenerateTests(unittest.TestCase):
         for rc in (-9, -15, 137, 143):
             with self.assertRaises(ltx.VideoJobCancelled):
                 self._run(proc=_Proc(rc=rc))
+
+    def _run_seq(self, procs, **kw):
+        """Like _run, but each launch gets the next process from `procs` (to test a restart after the GPU watchdog)."""
+        queue = list(procs)
+        args = dict(prompt="a cat", image_path=None, duration_s=2.0, output_dir=self.out / "o", seed=7,
+                    config=ltx.LtxConfig())
+        args.update(kw)
+
+        def popen(cmd, **kwargs):
+            self.cmds.append(cmd)
+            self.envs.append(kwargs["env"])
+            out = Path(cmd[cmd.index("--output") + 1])
+            p = queue.pop(0)
+            if p.rc == 0 and p._write is None:
+                p._write = lambda: out.write_bytes(b"mp4data")
+            return p
+        with mock.patch("subprocess.Popen", popen):
+            return ltx.generate_ltx_video_ng(on_log=self.logs.append, **args)
+
+    def test_gpu_watchdog_settings_are_set_and_can_be_overridden(self):
+        keys = tuple(ltx.LTX_GPU_STEP_ENV_NG)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for k in keys:
+                os.environ.pop(k, None)
+            self._run()
+            os.environ["MLX_MAX_OPS_PER_BUFFER"] = "1"
+            self._run()
+        self.assertEqual({k: self.envs[0][k] for k in keys}, ltx.LTX_GPU_STEP_ENV_NG)
+        self.assertEqual(self.envs[1]["MLX_MAX_OPS_PER_BUFFER"], "1")
+
+    def test_a_render_stopped_by_macos_is_started_again(self):
+        started = []
+        res = self._run_seq([_Proc(rc=-6), _Proc(rc=-6), _Proc(rc=0)], on_proc_start=started.append)
+        self.assertEqual(len(self.cmds), 3)
+        self.assertEqual(len(started), 3)                       # the job always tracks the live process (for Stop)
+        self.offload.assert_called_once()                       # models are freed once, not per attempt
+        self.assertTrue(any("attempt 1/3" in l for l in self.logs) and any("attempt 2/3" in l for l in self.logs))
+        self.assertTrue(Path(res["mp4_path"]).is_file())
+
+    def test_the_watchdog_text_also_counts_and_three_failures_give_up_with_the_reason(self):
+        procs = [_Proc(rc=1, lines=["Metal: kIOGPUCommandBufferCallbackErrorImpactingInteractivity\n"]) for _ in range(3)]
+        with self.assertRaisesRegex(RuntimeError, r"failed with rc=1: .*kIOGPU"):
+            self._run_seq(procs)
+        self.assertEqual(len(self.cmds), 3)
+
+    def test_other_failures_are_not_retried(self):
+        with self.assertRaisesRegex(RuntimeError, "failed with rc=2: .*out of disk"):
+            self._run_seq([_Proc(rc=2, lines=["out of disk\n"]), _Proc(rc=0)])
+        self.assertEqual(len(self.cmds), 1)
+
+    def test_a_cancel_during_a_restart_chain_stops_it(self):
+        with self.assertRaises(ltx.VideoJobCancelled):
+            self._run_seq([_Proc(rc=-6), _Proc(rc=-15), _Proc(rc=0)])
+        self.assertEqual(len(self.cmds), 2)
 
     def test_watchdog_timeout(self):
         proc = _Proc(delay=0.3)

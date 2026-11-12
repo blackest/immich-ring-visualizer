@@ -71,6 +71,7 @@ LTX_REPO_DIR = _resolve_ltx_repo_dir_ng()
 LTX_WEIGHTS_ROOT = _resolve_ltx_weights_root_ng()
 LTX_DEFAULT_BIN = LTX_REPO_DIR / "env" / "bin" / "ltx-2-mlx"
 LTX_DEFAULT_PYTHON = LTX_REPO_DIR / "env" / "bin" / "python"
+LTX_CAPPED_CLI = Path(__file__).resolve().parent / "ltx_cli_capNG.py"   # the same command with Gemma's 1024-token pad capped
 LTX_SCENE_TIMING_HELPER = Path(__file__).resolve().parent / "ltx_scene_timing_helperNG.py"
 LTX_SCENE_DISCUSS_HELPER = Path(__file__).resolve().parent / "ltx_scene_discuss_helperNG.py"
 LTX_SCENE_CHAT_HELPER = Path(__file__).resolve().parent / "ltx_scene_chat_helperNG.py"
@@ -179,6 +180,20 @@ def _clean_subprocess_env_ng() -> dict:
         if key.startswith("Malloc"):
             del env[key]
     return env
+
+
+# macOS cuts off a GPU job that holds the GPU too long ("Impacting Interactivity", ml-explore/mlx#3267) and the render
+# dies with SIGABRT (rc=-6), usually while it reads the prompt, and not every time. These make MLX hand the GPU smaller
+# pieces of work (Phosphene's own settings); every one can still be overridden from the app's environment.
+LTX_GPU_STEP_ENV_NG = {"MLX_DISABLE_COMPILE": "1", "MLX_METAL_FAST_SYNCH": "1",
+                       "MLX_MAX_OPS_PER_BUFFER": "10", "MLX_MAX_MB_PER_BUFFER": "10"}
+LTX_ATTEMPTS_NG = 3
+
+
+def _watchdog_death_ng(rc: int, tail: list) -> bool:
+    """Did the macOS GPU watchdog (not a real error in the render) end this attempt."""
+    text = "\n".join(tail)
+    return rc == -6 or "Impacting Interactivity" in text or "kIOGPU" in text
 
 
 @dataclass
@@ -305,8 +320,13 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
     ts = int(time.time() * 1000)
     out_mp4 = output_dir / f"ltx_{ts}.mp4"
 
+    # The stock command pads the prompt to 1024 tokens, the step macOS's GPU watchdog keeps killing; run it through the
+    # capped wrapper when we are using the install's own command (a custom binary_path is run as given).
+    launcher = [binary]
+    if Path(binary) == LTX_DEFAULT_BIN and LTX_DEFAULT_PYTHON.is_file() and LTX_CAPPED_CLI.is_file():
+        launcher = [str(LTX_DEFAULT_PYTHON), str(LTX_CAPPED_CLI)]
     cmd = [
-        binary, "generate",
+        *launcher, "generate",
         "--prompt", prompt,
         "--output", str(out_mp4),
         "--model", model,
@@ -338,59 +358,71 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
                f"clips will be encoded at upstream's large crf-18 default")
     env = _clean_subprocess_env_ng()
     env.update(ltx_codecNG.codec_env_ng(configNG.get_ltx_output_preset()))
+    for key, value in LTX_GPU_STEP_ENV_NG.items():
+        env.setdefault(key, value)
 
+    timeout_s = float(os.environ.get("RINGVIZ_LTX_TIMEOUT_S", config.timeout_s))
     with _LTX_SUBPROCESS_LOCK:
         from model_offloadNG import offload_resident_models_ng
         offload_resident_models_ng(on_log=on_log)
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=env,
-            cwd=str(LTX_REPO_DIR),
-            start_new_session=True,
-        )
-        if on_proc_start:
-            on_proc_start(proc)
+        for attempt in range(1, LTX_ATTEMPTS_NG + 1):
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                cwd=str(LTX_REPO_DIR),
+                start_new_session=True,
+            )
+            if on_proc_start:
+                on_proc_start(proc)
 
-        timeout_s = float(os.environ.get("RINGVIZ_LTX_TIMEOUT_S", config.timeout_s))
-        timed_out = {"v": False}
+            timed_out = {"v": False}
 
-        def _kill_on_timeout():
-            timed_out["v"] = True
-            try:
-                os.killpg(os.getpgid(proc.pid), 9)
-            except Exception:
+            def _kill_on_timeout(proc=proc, timed_out=timed_out):
+                timed_out["v"] = True
                 try:
-                    proc.kill()
+                    os.killpg(os.getpgid(proc.pid), 9)
                 except Exception:
-                    pass
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
 
-        watchdog = threading.Timer(timeout_s, _kill_on_timeout)
-        watchdog.daemon = True
-        watchdog.start()
-        try:
-            if proc.stdout is not None:
-                for line in proc.stdout:
-                    line = line.rstrip()
-                    if not line:
-                        continue
-                    if on_log:
-                        on_log(f"[ltx] {line}")
-            rc = proc.wait()
-        finally:
-            watchdog.cancel()
+            watchdog = threading.Timer(timeout_s, _kill_on_timeout)
+            watchdog.daemon = True
+            watchdog.start()
+            tail: list = []
+            try:
+                if proc.stdout is not None:
+                    for line in proc.stdout:
+                        line = line.rstrip()
+                        if not line:
+                            continue
+                        tail = (tail + [line])[-8:]
+                        if on_log:
+                            on_log(f"[ltx] {line}")
+                rc = proc.wait()
+            finally:
+                watchdog.cancel()
 
-    if timed_out["v"]:
-        raise VideoJobCancelled(
-            f"LTX gen exceeded its {timeout_s:.0f}s deadline and was "
-            f"killed (likely a hung render). Raise RINGVIZ_LTX_TIMEOUT_S "
-            f"if this machine legitimately needs longer.")
-    if rc != 0:
-        if rc in (-15, 143, -9, 137):
-            raise VideoJobCancelled(f"LTX gen cancelled (rc={rc})")
-        raise RuntimeError(f"LTX gen failed with rc={rc}")
+            if timed_out["v"]:
+                raise VideoJobCancelled(
+                    f"LTX gen exceeded its {timeout_s:.0f}s deadline and was "
+                    f"killed (likely a hung render). Raise RINGVIZ_LTX_TIMEOUT_S "
+                    f"if this machine legitimately needs longer.")
+            if rc == 0:
+                break
+            if rc in (-15, 143, -9, 137):
+                raise VideoJobCancelled(f"LTX gen cancelled (rc={rc})")
+            if attempt < LTX_ATTEMPTS_NG and _watchdog_death_ng(rc, tail):
+                if on_log:
+                    on_log(f"[ltx] macOS stopped the render (rc={rc}, attempt {attempt}/{LTX_ATTEMPTS_NG}); "
+                           f"starting it again")
+                continue
+            last = " | ".join(t for t in tail if t.strip())[-300:]
+            raise RuntimeError(f"LTX gen failed with rc={rc}" + (f": {last}" if last else ""))
 
     if not out_mp4.exists() or out_mp4.stat().st_size == 0:
         raise RuntimeError(f"LTX gen finished but no/empty mp4 at {out_mp4}")
