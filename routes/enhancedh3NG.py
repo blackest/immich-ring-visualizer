@@ -14,7 +14,13 @@ brief names the hash), so it never needs to read this machine's disk.
 
 import hashlib
 import json
+import os
 import re
+import subprocess
+import tempfile
+import threading
+import time
+from urllib.parse import urlparse
 
 import requests
 from flask import Blueprint, jsonify, request
@@ -49,18 +55,55 @@ class _ServiceError(Exception):
 _brief_base = {}
 
 
+_SERVE_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "h3ir_serveNG.sh")
+_START_WAIT_S = 90
+_start_lock = threading.Lock()
+
+
+def _autostart(base, which):
+    """Start h3ir_serveNG.sh for a compiler that is down, when its address is this machine.
+    True once it answers. Detached, so a server reload doesn't take it down."""
+    host = urlparse(base).hostname
+    if host not in ("127.0.0.1", "localhost") or not os.path.exists(_SERVE_SCRIPT):
+        return False
+    with _start_lock:
+        if _answering(base):
+            return True
+        log = open(os.path.join(tempfile.gettempdir(), f"h3ir-serve-{which}.log"), "ab")
+        subprocess.Popen(["/bin/bash", _SERVE_SCRIPT, which], stdout=log, stderr=log,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+        deadline = time.time() + _START_WAIT_S
+        while time.time() < deadline:
+            if _answering(base):
+                return True
+            time.sleep(2)
+    return False
+
+
+def _answering(base):
+    try:
+        requests.get(base + "/", timeout=2)
+        return True
+    except requests.exceptions.RequestException:
+        return False
+
+
 def _h3ir(method, path, timeout=_QUICK_TIMEOUT_S, base=None, **kwargs):
     base = base or configNG.get_h3ir_base_url()
-    try:
-        return requests.request(method, base + path, timeout=timeout, **kwargs)
-    except requests.exceptions.ConnectionError:
-        video = base == configNG.get_h3ir_video_base_url()
-        raise _ServiceError(
-            f"The H3 compiler isn't running at {base} -- start it with "
-            f"`./h3ir_serveNG.sh {'qwen' if video else 'gemma'}` (or change its address in Settings).",
-            503) from None
-    except requests.exceptions.Timeout:
-        raise _ServiceError("The H3 compiler took too long to answer.", 504) from None
+    video = base == configNG.get_h3ir_video_base_url()
+    which = "qwen" if video else "gemma"
+    for attempt in (0, 1):
+        try:
+            return requests.request(method, base + path, timeout=timeout, **kwargs)
+        except requests.exceptions.ConnectionError:
+            if attempt == 0 and _autostart(base, which):
+                continue
+            raise _ServiceError(
+                f"The H3 compiler isn't running at {base} and could not be started -- run "
+                f"`./h3ir_serveNG.sh {which}` to see why (or change its address in Settings).",
+                503) from None
+        except requests.exceptions.Timeout:
+            raise _ServiceError("The H3 compiler took too long to answer.", 504) from None
 
 
 def _error_text(res):
@@ -299,6 +342,15 @@ def enhanced_h3_brief_ng():
             payload["assets"] = assets
         res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, base=base, json=payload)
         fallback = None
+        # The compiler's draft planner crashes (500) when the shot count is near the most the
+        # clip can hold (4 shots in 5.2 s: "shot numbers must be contiguous", "cut inside the
+        # floor"). Fewer shots compile, so step down rather than fail.
+        asked = payload.get("shots")
+        while res.status_code == 500 and payload.get("shots", 0) > 1 and not payload.get("dialogue"):
+            payload["shots"] -= 1
+            res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, base=base, json=payload)
+        if asked and res.ok and payload.get("shots") != asked:
+            fallback = f"The compiler couldn't plan {asked} shots in {seconds:g} s, so it used {payload['shots']}."
         if res.status_code == 500 and payload.get("dialogue"):
             # open-h3-ir 0.4.1 crashes on a first-frame picture plus a dialogue
             # entry ("<Subject 1> is used but never defined"). The same line
