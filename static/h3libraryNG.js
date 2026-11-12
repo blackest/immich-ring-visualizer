@@ -57,13 +57,53 @@
     els.look.value = keep;
   }
 
+  // Previews are ~5 MB each, so only a few first-frames load at a time and only for cards that are on
+  // (or near) the screen. Slow links (the iPad over a Tailscale relay) then fill in gradually.
+  var MAX_LOADING = 4, pending = [], loading = 0, observer = null;
+
+  function pump() {
+    while (loading < MAX_LOADING && pending.length) {
+      var v = pending.shift();
+      if (!v.isConnected || v.src) continue;
+      loading++;
+      var done = function () {
+        v.removeEventListener("loadeddata", done);
+        v.removeEventListener("error", done);
+        loading--;
+        pump();
+      };
+      v.addEventListener("loadeddata", done);
+      v.addEventListener("error", done);
+      v.src = v.dataset.src;
+    }
+  }
+
+  function watch(v) {
+    if (!("IntersectionObserver" in window)) { pending.push(v); pump(); return; }
+    if (!observer) {
+      observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          observer.unobserve(e.target);
+          pending.push(e.target);
+        });
+        pump();
+      }, { root: els && els.main, rootMargin: "300px" });
+    }
+    observer.observe(v);
+  }
+
   function card(item) {
     var c = node("div", "ng-h3lib-card");
     c.tabIndex = 0;
     var v = node("video", "ng-h3lib-thumb");
     v.muted = true; v.loop = true; v.playsInline = true; v.preload = "metadata";
-    v.src = API + "/video/" + item.id + ".mp4#t=0.1";
-    c.addEventListener("mouseenter", function () { v.play().catch(function () {}); });
+    v.dataset.src = API + "/video/" + item.id + ".mp4#t=0.1";
+    watch(v);
+    c.addEventListener("mouseenter", function () {
+      if (!v.src) { v.src = v.dataset.src; }  // hovered before its turn in the queue: load it now
+      v.play().catch(function () {});
+    });
     c.addEventListener("mouseleave", function () { v.pause(); });
     c.appendChild(v);
     var tags = node("div", "ng-h3lib-tags");
@@ -79,7 +119,7 @@
 
   function load(reset) {
     var seq = ++reqSeq;
-    if (reset) { offset = 0; els.grid.innerHTML = ""; }
+    if (reset) { offset = 0; els.grid.innerHTML = ""; pending = []; }
     els.status.textContent = "Loading…";
     fetch(API + "/list?" + query(offset)).then(function (r) {
       return r.json().then(function (j) { return { ok: r.ok, j: j }; });
