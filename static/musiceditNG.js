@@ -103,6 +103,7 @@
     els.durationVal = document.getElementById("ng-musicedit-duration-val");
     els.seed = document.getElementById("ng-musicedit-seed");
     els.precision = document.getElementById("ng-musicedit-precision");
+    els.odeSteps = document.getElementById("ng-musicedit-ode-steps");
     els.temperature = document.getElementById("ng-musicedit-temperature");
     els.temperatureVal = document.getElementById("ng-musicedit-temperature-val");
     els.renderBtn = document.getElementById("ng-musicedit-render-btn");
@@ -531,6 +532,7 @@
     var body = { abc: abc, style: style, lyrics: lyrics, duration_s: durationS, precision: precision };
     if (seed !== null && !isNaN(seed)) body.seed = seed;
     if (temperature !== null && !isNaN(temperature)) body.temperature = temperature;
+    if (els.odeSteps) body.ode_steps = parseInt(els.odeSteps.value, 10);
 
     els.renderBtn.disabled = true;
     if (els.audio) els.audio.style.display = "none";
@@ -786,6 +788,7 @@
     if (els.lyrics) els.lyrics.value = entry.lyrics || "";
     if (els.seed) els.seed.value = entry.seed != null ? entry.seed : "";
     if (els.precision && entry.precision) els.precision.value = entry.precision;
+    if (els.odeSteps) els.odeSteps.value = String(entry.ode_steps || 32); // older entries have none: standard
     if (els.temperature && els.temperatureVal && entry.temperature != null) {
       els.temperature.value = entry.temperature;
       els.temperatureVal.textContent = parseFloat(entry.temperature).toFixed(2);
@@ -877,6 +880,7 @@
       (entry.duration_s != null ? ", " + Math.round(entry.audio_seconds || entry.duration_s) + "s" : "") +
       (entry.resolved_seed != null ? ", seed " + entry.resolved_seed : "") +
       (entry.precision ? ", " + entry.precision : "") +
+      (entry.ode_steps && entry.ode_steps !== 32 ? ", fast (" + entry.ode_steps + " steps)" : "") +
       (entry.temperature != null ? ", temp " + entry.temperature : "") +
       (when ? ", " + when : "");
     card.appendChild(meta);

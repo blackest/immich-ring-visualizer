@@ -87,7 +87,8 @@ def music_generate_ng():
     generate_music_ng's docstring; counts as "something to work with"
     on its own, so style/lyrics may both be empty when it's given),
     precision (optional, "bf16"|"8bit", default "8bit" -- see
-    music_engineNG.MUSIC_DEFAULT_PRECISION)."""
+    music_engineNG.MUSIC_DEFAULT_PRECISION), ode_steps (optional int, 32 =
+    standard (the default), 8 = fast -- see music_engineNG.MUSIC_ODE_STEPS_CHOICES)."""
     body = request.get_json(silent=True) or {}
     style = str(body.get("style") or "")
     lyrics = str(body.get("lyrics") or "")
@@ -109,12 +110,16 @@ def music_generate_ng():
     precision = str(body.get("precision") or music_engineNG.MUSIC_DEFAULT_PRECISION)
     if precision not in ("bf16", "8bit"):
         return jsonify({"error": f"precision must be 'bf16' or '8bit' (got {precision!r})"}), 400
+    ode_steps = body.get("ode_steps")
+    if ode_steps is not None and (isinstance(ode_steps, bool) or not isinstance(ode_steps, int)):
+        return jsonify({"error": f"ode_steps must be one of {music_engineNG.MUSIC_ODE_STEPS_CHOICES} "
+                                 f"(got {ode_steps!r})"}), 400
 
     try:
         job = music_jobs.start_music_job_ng(
             style, lyrics, duration_s, seed=seed, mode=mode,
             instrumental=instrumental, cfg_scale=cfg_scale, temperature=temperature,
-            abc_text=abc_text, precision=precision)
+            abc_text=abc_text, precision=precision, ode_steps=ode_steps)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({

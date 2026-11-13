@@ -48,6 +48,9 @@ class MusicJobNG:
     instrumental: bool = False
     cfg_scale: Optional[float] = None
     temperature: Optional[float] = None
+    # Plain-generate-only: acoustic solver steps (music.MUSIC_ODE_STEPS_CHOICES);
+    # None = the engine's own default (32).
+    ode_steps: Optional[int] = None
     # Plain-generate-only, like mode/instrumental above -- a caller-
     # supplied ABC score (Music Edit's "render from this score"),
     # passed to generate_music_ng's own abc_text param.
@@ -134,6 +137,7 @@ def _worker_loop() -> None:
                     config=music.MusicConfig(precision=job.precision),
                     mode=job.mode, instrumental=job.instrumental, cfg_scale=job.cfg_scale,
                     temperature=job.temperature, abc_text=job.abc_text,
+                    ode_steps=job.ode_steps,
                     on_log=job.append_log,
                     on_proc_start=lambda p: setattr(job, "_proc", p))
             job.score_path = result.get("score_path")
@@ -172,7 +176,8 @@ def start_music_job_ng(style: str, lyrics: str, duration_s: Optional[float] = No
                         abc_text: Optional[str] = None,
                         precision: music.MusicPrecision = music.MUSIC_DEFAULT_PRECISION,
                         audio_bytes: Optional[bytes] = None, audio_ext: str = "",
-                        task: str = music.MUSIC_DEFAULT_COVER_TASK) -> MusicJobNG:
+                        task: str = music.MUSIC_DEFAULT_COVER_TASK,
+                        ode_steps: Optional[int] = None) -> MusicJobNG:
     """Validates and enqueues -- the actual style/lyrics text lives on
     the job object itself (see MusicJobNG), not written to disk until
     the worker calls generate_music_ng/generate_cover_ng, which writes
@@ -208,6 +213,10 @@ def start_music_job_ng(style: str, lyrics: str, duration_s: Optional[float] = No
         music._validate_music_duration_ng(duration_s)
     if temperature is not None:
         music._validate_music_temperature_ng(temperature)
+    if ode_steps is not None:
+        music._validate_music_ode_steps_ng(ode_steps)
+        if is_cover:
+            raise ValueError("ode_steps isn't supported for cover jobs yet")
 
     _ensure_worker_started()
     job_id = uuid.uuid4().hex[:12]
@@ -224,7 +233,7 @@ def start_music_job_ng(style: str, lyrics: str, duration_s: Optional[float] = No
     job = MusicJobNG(job_id=job_id, style=style, lyrics=lyrics, duration_s=duration_s,
                       seed=seed, job_dir=job_dir, mode=mode, instrumental=instrumental,
                       cfg_scale=cfg_scale, temperature=temperature, abc_text=abc_text,
-                      precision=precision,
+                      precision=precision, ode_steps=ode_steps,
                       source_audio_path=source_audio_path, task=task)
     with _JOBS_LOCK:
         _JOBS[job_id] = job
@@ -283,6 +292,7 @@ def job_status_ng(job_id: str) -> dict:
         "cfg_scale": job.cfg_scale,
         "temperature": job.temperature,
         "precision": job.precision,
+        "ode_steps": job.ode_steps,
         "is_cover": is_cover,
         "task": job.task if is_cover else None,
         "audio_seconds": job.audio_seconds,

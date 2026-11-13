@@ -144,6 +144,7 @@ def record_job_ng(job, result: Optional[dict]) -> None:
             "cfg_scale": job.cfg_scale,
             "temperature": job.temperature,
             "precision": job.precision,
+            "ode_steps": job.ode_steps,
             "is_cover": is_cover,
             "task": job.task if is_cover else None,
             "audio_seconds": job.audio_seconds,

@@ -69,10 +69,14 @@ class MusicJobCancelled(RuntimeError):
 
 def _resolve_music_repo_dir_ng() -> Path:
     """LTX_MUSIC_ROOT env var (same name phosphene's own mlx_ltx_panel.py
-    reads), then conventional install locations."""
+    reads), then this repository's own vendored copy (vendor/yue2_mlx, once its
+    .venv is built: see its VENDORED.md), then conventional install locations."""
     env_p = os.environ.get("LTX_MUSIC_ROOT")
     if env_p:
         return Path(env_p).expanduser()
+    vendored = Path(__file__).resolve().parent / "vendor" / "yue2_mlx"
+    if (vendored / ".venv" / "bin" / "lyra").exists():
+        return vendored
     home = Path.home()
     for cand in (home / "yue2-mlx",
                  home / "AI" / "yue2-mlx",
@@ -134,6 +138,16 @@ MUSIC_MAX_SECONDS = 900.0
 MUSIC_MIN_TEMPERATURE = 0.0
 MUSIC_MAX_TEMPERATURE = 5.0
 MUSIC_DEFAULT_TEMPERATURE = 1.0
+
+# How many solver steps the acoustic (NAR) stage takes -- the request's
+# generation_config.ode_steps (yue2-mlx protocol.py: default 32). 8 is the
+# engine's own "fast" setting (its README/showcase): the notes, words and
+# structure come from the earlier stages and stay identical, only the fine
+# acoustic detail changes. Measured here 2026-11-13 on an M2 Max, 60 s vocal
+# clip: acoustic stage 48.6 s -> 13.4 s (3.6x), whole clip 83.5 s -> 48.5 s.
+# Only these two are offered; they are the two that were listened to.
+MUSIC_ODE_STEPS_CHOICES: tuple = (8, 32)
+MUSIC_DEFAULT_ODE_STEPS = 32
 # YuE2 has no instrumental switch of its own; its lyrics protocol reads
 # bare section tags with nothing under them as instrumental passages.
 # Validated by ear in phosphene's own bake-off (yue2_run.py's comment).
@@ -180,6 +194,14 @@ def _validate_music_temperature_ng(temperature: float) -> None:
         raise ValueError(
             f"temperature must be between {MUSIC_MIN_TEMPERATURE} and "
             f"{MUSIC_MAX_TEMPERATURE} (got {temperature})")
+
+
+def _validate_music_ode_steps_ng(ode_steps: int) -> None:
+    # exactly an int: bool is an int subclass and 8.0 == 8, so a plain `in` check lets both through,
+    # and yue2's own GenerationConfig refuses anything but a real int
+    if type(ode_steps) is not int or ode_steps not in MUSIC_ODE_STEPS_CHOICES:
+        raise ValueError(
+            f"ode_steps must be one of {MUSIC_ODE_STEPS_CHOICES} (got {ode_steps!r})")
 
 
 def _clean_subprocess_env_ng() -> dict:
@@ -356,7 +378,8 @@ def _run_lyra_subprocess_ng(cmd: list, timeout_s: float, timeout_env_var: str,
 
 def _build_request_ng(style: str, lyrics: str, duration_s: float, seed: int,
                        mode: MusicMode, cfg_scale: Optional[float],
-                       temperature: Optional[float] = None) -> dict:
+                       temperature: Optional[float] = None,
+                       ode_steps: Optional[int] = None) -> dict:
     """seconds -> semantic_sampling.max_tokens, TOKENS_PER_SECOND per
     second of audio (yue2_run.py's own conversion -- the codec's frame
     rate, not a phosphene-specific choice). min_tokens mirrors
@@ -378,6 +401,10 @@ def _build_request_ng(style: str, lyrics: str, duration_s: float, seed: int,
     }
     if cfg_scale is not None:
         request["cfg_scale"] = float(cfg_scale)
+    # Only a non-default step count is written: the standard setting leaves the
+    # request exactly as it was before this option existed.
+    if ode_steps is not None and ode_steps != MUSIC_DEFAULT_ODE_STEPS:
+        request["generation_config"] = {"ode_steps": int(ode_steps)}
     return request
 
 
@@ -389,7 +416,8 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
                        temperature: Optional[float] = None,
                        abc_text: Optional[str] = None,
                        on_log: Optional[Callable[[str], None]] = None,
-                       on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None) -> dict:
+                       on_proc_start: Optional[Callable[[subprocess.Popen], None]] = None,
+                       ode_steps: Optional[int] = None) -> dict:
     """One subprocess call: style + lyrics + duration in, one .flac out.
     style and/or lyrics may be empty but not both (same rule
     yue2_run.py enforces -- "give it something to work with"), unless
@@ -436,7 +464,10 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
             f"YuE2 VAE not found at {config.vae_dir or MUSIC_VAE_DIR}")
 
     seed = seed if seed is not None else random.randint(0, 2**63 - 1)
-    request = _build_request_ng(style, lyrics, duration_s, seed, mode, cfg_scale, temperature)
+    if ode_steps is not None:
+        _validate_music_ode_steps_ng(ode_steps)
+    request = _build_request_ng(style, lyrics, duration_s, seed, mode, cfg_scale, temperature,
+                                ode_steps)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -465,6 +496,7 @@ def generate_music_ng(style: str, lyrics: str, duration_s: float,
     if on_log:
         on_log(f"[music] launching {duration_s:.0f}s cap, mode={mode}, "
                f"precision={config.precision}, seed={seed}"
+               + (f", ode_steps={ode_steps}" if ode_steps is not None else "")
                + (" (instrumental)" if instrumental else ""))
 
     tail_lines = _run_lyra_subprocess_ng(

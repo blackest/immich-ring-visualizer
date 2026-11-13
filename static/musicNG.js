@@ -94,6 +94,7 @@
     els.durationVal = document.getElementById("ng-music-duration-val");
     els.seed = document.getElementById("ng-music-seed");
     els.precision = document.getElementById("ng-music-precision");
+    els.odeSteps = document.getElementById("ng-music-ode-steps");
     els.temperature = document.getElementById("ng-music-temperature");
     els.temperatureVal = document.getElementById("ng-music-temperature-val");
 
@@ -354,6 +355,7 @@
     };
     if (seed !== null && !isNaN(seed)) body.seed = seed;
     if (els.temperature) body.temperature = parseFloat(els.temperature.value);
+    if (els.odeSteps) body.ode_steps = parseInt(els.odeSteps.value, 10);
     if (pendingAbc) body.abc = pendingAbc;
 
     fetch(API + "/generate", {
@@ -1337,6 +1339,7 @@
     els.lyrics.value = entry.lyrics || "";
     if (els.seed) els.seed.value = entry.seed != null ? entry.seed : "";
     if (els.precision && entry.precision) els.precision.value = entry.precision;
+    if (els.odeSteps) els.odeSteps.value = String(entry.ode_steps || 32); // older entries have none: standard
     if (els.temperature && els.temperatureVal && entry.temperature != null) {
       els.temperature.value = entry.temperature;
       els.temperatureVal.textContent = parseFloat(entry.temperature).toFixed(2);

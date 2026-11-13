@@ -1,0 +1,101 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mlx-yue"
+version = "0.1.0"
+description = "Native Apple Silicon MLX Port for YuE2 Music Generation and Transcription"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["apple-silicon", "mlx", "music-generation", "yue2"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Multimedia :: Sound/Audio :: Sound Synthesis",
+]
+dependencies = [
+  "mlx==0.32.2",
+  "mlx-lm==0.31.3",
+  "transformers==5.10.4",
+  "safetensors==0.7.0",
+  "tiktoken==0.12.0",
+  "numpy==2.2.6",
+  "soundfile==0.13.1",
+  "psutil==7.2.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/vanch007/mlx-Yue"
+Source = "https://github.com/vanch007/mlx-Yue"
+Issues = "https://github.com/vanch007/mlx-Yue/issues"
+Models = "https://huggingface.co/vanch007/mlx-Yue2-3B"
+
+[dependency-groups]
+dev = ["pytest==9.0.3", "ruff==0.15.7", "torch==2.13.0", "setuptools==83.0.0"]
+
+[project.scripts]
+mlx-yue = "lyra.cli:main"
+lyra = "lyra.cli:main"
+yue2-mlx = "lyra.cli:main"
+
+[project.optional-dependencies]
+transcription = [
+    "mido==1.3.3",
+    "mir-eval==0.8.2",
+    "pretty-midi==0.2.11.post0",
+    "scipy>=1.13,<2",
+]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+  ".gitignore",
+  "LICENSE",
+  "PORTING.md",
+  "README.md",
+  "docs",
+  "examples",
+  "oracle/requirements.in",
+  "oracle/requirements.txt",
+  "pyproject.toml",
+  "src/lyra",
+  "skills",
+  "tests",
+  "tools",
+  "uv.lock",
+  "validation",
+  "vendor/yue/LICENSE",
+  "vendor/yue/MODEL_LICENSE",
+  "vendor/yue/THIRD_PARTY_NOTICES.md",
+  "vendor/yue/licenses",
+  "vendor/yue/src/yue2",
+]
+exclude = [
+  "**/__pycache__",
+  "**/*.py[cod]",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lyra", "vendor/yue/src/yue2"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"vendor/yue/LICENSE" = "lyra/licenses/UPSTREAM_APACHE.txt"
+"vendor/yue/MODEL_LICENSE" = "lyra/licenses/MODEL_LICENSE.txt"
+"vendor/yue/THIRD_PARTY_NOTICES.md" = "lyra/licenses/THIRD_PARTY_NOTICES.md"
+"vendor/yue/licenses" = "lyra/licenses/third-party"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = ["vendor", "src/lyra/transcription/upstream"]
