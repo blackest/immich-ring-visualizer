@@ -146,6 +146,24 @@ class UpdateYtdlpTests(unittest.TestCase):
         r = self._post(side_effect=OSError("nope"))
         self.assertEqual(r.status_code, 500)
 
+    def test_uses_uv_when_it_is_there_because_the_venv_has_no_pip(self):
+        with mock.patch.object(settings.shutil, "which", return_value="/x/uv"), \
+                mock.patch.object(settings.subprocess, "run",
+                                  return_value=mock.Mock(returncode=0, stdout="ok", stderr="")) as run:
+            body = _client().post("/api/ng/settings/update-ytdlp").get_json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(run.call_args[0][0], ["/x/uv", "pip", "install", "--python", sys.executable,
+                                               "--upgrade", "yt-dlp"])
+
+    def test_falls_back_to_pip_without_uv_and_names_the_tool_in_the_error(self):
+        with mock.patch.object(settings.shutil, "which", return_value=None), \
+                mock.patch.object(settings.Path, "is_file", return_value=False), \
+                mock.patch.object(settings.subprocess, "run",
+                                  return_value=mock.Mock(returncode=1, stdout="", stderr="no pip")) as run:
+            r = _client().post("/api/ng/settings/update-ytdlp")
+        self.assertEqual(run.call_args[0][0][:3], [sys.executable, "-m", "pip"])
+        self.assertIn("pip exited with code 1", r.get_json()["error"])
+
 
 class PortOpenTests(unittest.TestCase):
     def test_open_and_closed(self):

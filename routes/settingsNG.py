@@ -6,12 +6,14 @@ grow with a reviewed list of specific actions, not become a shell.
 """
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from urllib.parse import urlparse
 
 from flask import Blueprint, jsonify, request
@@ -219,22 +221,29 @@ def check_addresses_ng():
     return jsonify({"results": results})
 
 
+def _ytdlp_upgrade_command():
+    """The command that upgrades yt-dlp in the interpreter running this app, and what to call it in messages.
+    The venv is uv-made (no pip inside it), so use uv when it can be found; a venv that does have pip keeps using pip.
+    The app's PATH often lacks ~/.local/bin, so look there too."""
+    uv = shutil.which("uv") or next((str(c) for c in (Path.home() / ".local" / "bin" / "uv",
+                                                       Path("/opt/homebrew/bin/uv"), Path("/usr/local/bin/uv"))
+                                     if c.is_file()), None)
+    if uv:
+        return [uv, "pip", "install", "--python", sys.executable, "--upgrade", "yt-dlp"], "uv"
+    return [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"], "pip"
+
+
 @settingsNG_bp.route("/api/ng/settings/update-ytdlp", methods=["POST"])
 def update_ytdlp_ng():
-    """Run `pip install --upgrade yt-dlp` in the current venv (the same
-    interpreter running this Flask process) and report back pass/fail
-    plus the tail of pip's output for visibility."""
+    """Upgrade yt-dlp in the current venv (the same interpreter running this Flask process) with uv, or pip when
+    there is no uv, and report back pass/fail plus the tail of its output for visibility."""
+    cmd, tool = _ytdlp_upgrade_command()
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:
         return jsonify({
             "ok": False,
-            "error": "Timed out after 120s waiting for pip.",
+            "error": f"Timed out after 120s waiting for {tool}.",
         }), 504
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -245,7 +254,7 @@ def update_ytdlp_ng():
     if result.returncode != 0:
         return jsonify({
             "ok": False,
-            "error": f"pip exited with code {result.returncode}",
+            "error": f"{tool} exited with code {result.returncode}",
             "output": tail,
         }), 500
 
