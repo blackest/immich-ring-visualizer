@@ -17,6 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
+import h3_image_engineNG as h3image
 import h3_jobsNG
 import klein_engineNG as engine
 import klein_outpaintNG as outpaint
@@ -30,6 +31,9 @@ _ORDER: list = []
 _LOCK = threading.Lock()
 _QUEUE: "queue.Queue" = queue.Queue()
 _WORKER = None
+# A "model" value beside Klein's own: the job is made by MiniMax-H3-Image instead (text to picture, or an edit of the
+# reference pictures). Its shape and quality ride in job["options"]; width and height stay 0 and the results carry the real size.
+H3_IMAGE_MODEL = "h3image"
 
 
 def running_ng() -> bool:
@@ -97,15 +101,23 @@ def _run(job: dict) -> None:
         with _SHEET_LOCK_NG:
             job["status"] = "running"
             job["started_at"] = time.time()
-            ref_paths, job["ref_notes"] = _capped_refs_ng(job["refs"], job_dir)
-            engine.generate_klein_ng(
-                job["prompt"], job["n"], job["width"], job["height"], job_dir / "out", job["seed"],
-                refs=ref_paths, model=job["model"], options=job.get("options"),
-                on_log=lambda line: job.__setitem__("log", (job["log"] + [line])[-30:]),
-                should_stop=lambda: job["cancel"],
-                on_result=lambda r: _landed(job, job_dir, r))
+            ref_paths, job["ref_notes"] = (([], []) if job["model"] == H3_IMAGE_MODEL
+                                           else _capped_refs_ng(job["refs"], job_dir))
+            on_log = lambda line: job.__setitem__("log", (job["log"] + [line])[-30:])  # noqa: E731
+            if job["model"] == H3_IMAGE_MODEL:
+                opts = job.get("options") or {}
+                h3image.generate_h3_image_ng(
+                    job["prompt"], job["n"], opts["shape"], opts["tier"], job_dir / "out", job["seed"],
+                    refs=[r["path"] for r in job["refs"]], on_log=on_log, should_stop=lambda: job["cancel"],
+                    on_result=lambda r: _landed(job, job_dir, r))
+            else:
+                engine.generate_klein_ng(
+                    job["prompt"], job["n"], job["width"], job["height"], job_dir / "out", job["seed"],
+                    refs=ref_paths, model=job["model"], options=job.get("options"),
+                    on_log=on_log, should_stop=lambda: job["cancel"],
+                    on_result=lambda r: _landed(job, job_dir, r))
         job["status"] = "done"
-    except engine.KleinCancelled:
+    except (engine.KleinCancelled, h3image.H3ImageCancelled):
         job["status"] = "cancelled"
     except Exception as exc:
         job["status"], job["error"] = "error", str(exc)
@@ -151,6 +163,15 @@ def new_job_dir_ng() -> tuple:
 
 def start_ng(job_id: str, prompt, n, width, height, seed, model, refs, options=None, outpaint_plan=None) -> dict:
     """submit_ng for a job whose folder new_job_dir_ng already made."""
+    if model == H3_IMAGE_MODEL:
+        opts = options or {}
+        paths = [r["path"] for r in refs]
+        shape, tier = opts.get("shape") or ("match" if paths else "16:9"), opts.get("tier") or "draft"
+        h3image.validate_ng(prompt, n, shape, tier, paths)
+        health = h3image.h3_image_health_ng()
+        if not health["ok"]:
+            raise RuntimeError("MiniMax-H3-Image is not ready: " + "; ".join(health["problems"]))
+        return _enqueue(prompt, n, 0, 0, seed, model, refs, job_id=job_id, options={"shape": shape, "tier": tier})
     options = engine.validate_options_ng(options, model.split("-")[0], refs)
     engine.validate_ng(width, height, refs, n, options.get("match_ref", False))
     if not prompt.strip():

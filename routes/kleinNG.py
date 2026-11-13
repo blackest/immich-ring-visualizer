@@ -13,6 +13,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
 
+import h3_image_engineNG
 import klein_engineNG
 import klein_lorasNG
 import klein_outpaintNG
@@ -40,6 +41,10 @@ def _options(form) -> dict:
         out["match_ref"] = True
     if (form.get("loras") or "").strip():
         out["loras"] = json.loads(form["loras"])
+    if (form.get("shape") or "").strip():       # MiniMax-H3-Image only
+        out["shape"] = form["shape"].strip()
+    if (form.get("tier") or "").strip():
+        out["tier"] = form["tier"].strip()
     if form.get("low_ram") == "0":
         out["low_ram"] = False
         if (form.get("vae_tile") or "").strip():
@@ -68,7 +73,8 @@ def _picture_path(ref: str):
 @kleinNG_bp.route("/api/ng/klein/health")
 def klein_health_ng():
     loras = [{k: v for k, v in e.items() if k != "path"} for e in klein_lorasNG.list_loras_ng()]
-    return jsonify(klein_engineNG.klein_health_ng() | {"slots": list(jobs.SLOT_NAMES), "loras": loras})
+    return jsonify(klein_engineNG.klein_health_ng() | {"slots": list(jobs.SLOT_NAMES), "loras": loras,
+                                                       "h3image": h3_image_engineNG.h3_image_health_ng()})
 
 
 @kleinNG_bp.route("/api/ng/klein/generate", methods=["POST"])

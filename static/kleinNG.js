@@ -24,6 +24,14 @@
     ["3840x2160", "16:9 4K (about 30 min)"]];
   var LARGE_NOTE = "Pictures over 2048 × 1152 are decoded in tiles, which can leave faint colour patches. 4K takes about 30 minutes.";
   var VARIATIONS = [1, 2, 4, 6, 8, 10];
+  // MiniMax-H3-Image is one more "model" value beside Klein's own (klein_jobsNG.H3_IMAGE_MODEL): a text-to-picture or an
+  // edit of up to 6 references, Picture 1 being the one that is edited. It has its own Shape and Quality instead of Size.
+  var H3 = "h3image", H3_LABEL = "MiniMax-H3-Image";
+  var H3_SHAPES = [["match", "Same as the first reference"], ["16:9", "16:9 wide"], ["3:2", "3:2"], ["4:3", "4:3"],
+    ["1:1", "square"], ["3:4", "3:4 portrait"], ["2:3", "2:3 portrait"], ["9:16", "9:16 tall"]];
+  var H3_TIERS = [["draft", "Draft · 4 MP (about 8 minutes with a picture)"], ["standard", "Standard · 8 MP (about twice as long)"],
+    ["high", "High · 16 MP (much longer)"]];
+  var kleinOk = true, kleinMsg = "", h3ok = false, h3problems = [], lastH3 = false;
   function sizeNote() {
     var wh = els.size.value.split("x").map(Number);
     els.sizeNote.hidden = !(wh[0] * wh[1] > 2048 * 1152);
@@ -128,6 +136,13 @@
 
   function updateHint() {
     var w = wording();
+    if (isH3()) {
+      els.hint.textContent = filledSlots().length
+        ? "Picture 1 (the first reference you filled) is the one that is edited. Name the others in the words, like \"the hat from Picture 2 on the person in Picture 1\"."
+        : "No references: MiniMax-H3-Image makes the picture from your words alone. Add a reference to edit it.";
+      els.insert.style.display = "none";
+      return;
+    }
     els.hint.textContent = w
       ? "Name each picture or the model blends them. Starting words: \"" + w + "...\""
       : "No references: Klein makes the picture from your words alone.";
@@ -135,10 +150,27 @@
   }
 
   function isBase() { return /^base-/.test(els.model.value); }
+  function isH3() { return !!els.model && els.model.value === H3; }
 
   // Fields that do nothing in the current state are greyed out, not hidden, so they stay discoverable.
   function updateAdvanced() {
-    var base = isBase(), refs = filledSlots().length > 0;
+    var h3 = isH3(), base = isBase(), refs = filledSlots().length > 0;
+    [els.sizeField, els.adv, els.layoutHost].forEach(function (x) { if (x) x.style.display = h3 ? "none" : ""; });
+    [els.shapeField, els.tierField].forEach(function (x) { if (x) x.style.display = h3 ? "" : "none"; });
+    if (h3) {
+      var matchOpt = [].filter.call(els.shape.options, function (o) { return o.value === "match"; })[0];
+      matchOpt.disabled = !refs;
+      if (!els.shape.dataset.touched) els.shape.value = refs ? "match" : "16:9";   // the default follows the references
+      else if (!refs && els.shape.value === "match") els.shape.value = "16:9";
+    }
+    if (h3 !== lastH3) {                      // switching engine: a picture takes minutes, so one is the default for H3
+      lastH3 = h3;
+      if (!els.count.dataset.touched) els.count.value = h3 ? "1" : "4";
+    }
+    var ready = h3 ? h3ok : kleinOk;
+    els.go.disabled = !ready;
+    if (!ready) setStatus(h3 ? "MiniMax-H3-Image is not ready: " + (h3problems.join("; ") || "check Phosphene") : kleinMsg);
+    updateHint();
     els.steps.placeholder = base ? "50 (default)" : "16 (default)";
     els.guidance.disabled = !base;
     els.guidance.placeholder = base ? "3.5 (default)" : "base model only";
@@ -248,7 +280,7 @@
     form.append("keep_original", els.outKeep.checked ? "1" : "0");
     form.append("n", els.outCount.value);
     if (els.outSeed.value) form.append("seed", els.outSeed.value);
-    if (els.model.value && !/^base-/.test(els.model.value)) form.append("model", els.model.value);
+    if (els.model.value && !isH3() && !/^base-/.test(els.model.value)) form.append("model", els.model.value);
     els.outGo.disabled = true;
     outSetStatus("Sending...");
     fetch(API + "outpaint", { method: "POST", body: form }).then(function (r) {
@@ -335,20 +367,25 @@
 
   function generate() {
     var form = new FormData();
-    form.append("prompt", els.layout ? els.layout.apply(els.prompt.value) : els.prompt.value);
-    var wh = els.size.value.split("x");
-    form.append("width", wh[0]); form.append("height", wh[1]);
+    var h3 = isH3();
+    form.append("prompt", els.layout && !h3 ? els.layout.apply(els.prompt.value) : els.prompt.value);
     form.append("n", els.count.value);
     if (els.seed.value) form.append("seed", els.seed.value);
     if (els.model.value) form.append("model", els.model.value);
-    if (els.steps.value) form.append("steps", els.steps.value);
-    if (els.guidance.value && isBase()) form.append("guidance", els.guidance.value);
-    if (els.matchRef.checked && filledSlots().length) form.append("match_ref", "1");
-    var picked = chosenLoras();
-    if (picked.length) form.append("loras", JSON.stringify(picked));
-    if (els.memory.value === "fast") {
-      form.append("low_ram", "0");
-      if (els.tile.value) form.append("vae_tile", els.tile.value);
+    if (h3) {
+      form.append("shape", els.shape.value); form.append("tier", els.tier.value);
+    } else {
+      var wh = els.size.value.split("x");
+      form.append("width", wh[0]); form.append("height", wh[1]);
+      if (els.steps.value) form.append("steps", els.steps.value);
+      if (els.guidance.value && isBase()) form.append("guidance", els.guidance.value);
+      if (els.matchRef.checked && filledSlots().length) form.append("match_ref", "1");
+      var picked = chosenLoras();
+      if (picked.length) form.append("loras", JSON.stringify(picked));
+      if (els.memory.value === "fast") {
+        form.append("low_ram", "0");
+        if (els.tile.value) form.append("vae_tile", els.tile.value);
+      }
     }
     slots.forEach(function (s, i) {
       if (s.file) form.append("ref" + i, s.file, s.file.name || "ref.png");
@@ -380,7 +417,10 @@
   function settingsPanel(job, r) {
     var o = job.options || {}, det = el("details", "ng-klein-adv");
     det.appendChild(el("summary", "ng-gen-status", "Settings"));
-    var rows = [
+    var rows = job.model === H3 ? [
+      ["Seed", r.seed], ["Size", r.width + " × " + r.height], ["Model", H3_LABEL],
+      ["Shape", o.shape === "match" ? "same as the first reference" : o.shape], ["Quality", o.tier], ["Made in", r.seconds + " s"],
+    ] : [
       ["Seed", r.seed], ["Size", r.width + " × " + r.height], ["Model", job.model],
       ["Steps", o.steps || "default"], ["Guidance", job.model.indexOf("base-") === 0 ? (o.guidance || "3.5 (default)") : "not used"],
       ["Memory", o.low_ram === false ? "faster, tile " + (o.vae_tile || "default") : "low"],
@@ -441,8 +481,12 @@
   function reuse(job, seed) {
     var o = job.options || {};
     els.prompt.value = job.prompt;
-    if ([].some.call(els.size.options, function (x) { return x.value === job.width + "x" + job.height; })) { els.size.value = job.width + "x" + job.height; sizeNote(); }
+    if (job.width && [].some.call(els.size.options, function (x) { return x.value === job.width + "x" + job.height; })) { els.size.value = job.width + "x" + job.height; sizeNote(); }
     if ([].some.call(els.model.options, function (x) { return x.value === job.model; })) els.model.value = job.model;
+    if (job.model === H3) {
+      if (o.tier) els.tier.value = o.tier;
+      if (o.shape) { els.shape.value = o.shape; els.shape.dataset.touched = "1"; }
+    }
     els.seed.value = seed != null ? seed : job.seed;
     els.steps.value = o.steps || "";
     els.guidance.value = o.guidance || "";
@@ -473,7 +517,7 @@
     var title = job.outpaint ? (job.prompt.replace(/^Outpaint the image:[^.]*\.\s*/, "").replace(/^Scene:\s*/, "") || "(no scene description)") : job.prompt;
     var head = el("div", "ng-gen-label", title.length > 160 ? title.slice(0, 160) + "..." : title);
     card.appendChild(head);
-    var info = job.status + (job.outpaint ? " · outpaint" : job.refs.length ? " · refs: " + job.refs.join(", ") : " · text only") + " · " + job.model;
+    var info = job.status + (job.outpaint ? " · outpaint" : job.refs.length ? " · refs: " + job.refs.join(", ") : " · text only") + " · " + (job.model === H3 ? H3_LABEL : job.model);
     if (job.status === "running" || job.status === "queued" || job.status === "waiting") {
       info += " · " + job.results.length + " of " + job.n;
       if (job.status === "waiting") info += " (waiting for the video render to finish)";
@@ -596,14 +640,15 @@
     root.appendChild(els.insert);
     buildImprove(root);
     var layoutHost = el("div");
+    els.layoutHost = layoutHost;
     root.appendChild(layoutHost);
     els.layout = window.KleinLayoutNG ? window.KleinLayoutNG.build(layoutHost, function () { return els.size.value.split("x").map(Number); }) : null;
 
     var opts = el("div", "ng-klein-opts");
-    var field = function (label, node) { var w = el("label", "ng-klein-field"); w.appendChild(el("span", "ng-gen-status", label)); w.appendChild(node); opts.appendChild(w); };
+    var field = function (label, node) { var w = el("label", "ng-klein-field"); w.appendChild(el("span", "ng-gen-status", label)); w.appendChild(node); opts.appendChild(w); return w; };
     els.size = el("select", "ng-gen-input");
     SIZES.forEach(function (s) { var o = el("option", "", s[0].replace("x", " × ") + " · " + s[1]); o.value = s[0]; els.size.appendChild(o); });
-    field("Size", els.size);
+    els.sizeField = field("Size", els.size);
     els.sizeNote = el("span", "ng-gen-status", LARGE_NOTE);
     els.size.parentNode.appendChild(els.sizeNote);
     els.size.addEventListener("change", function () { sizeNote(); if (els.layout) els.layout.refresh(); });
@@ -611,14 +656,23 @@
     els.count = el("select", "ng-gen-input");
     VARIATIONS.forEach(function (n) { var o = el("option", "", n + (n === 1 ? " picture" : " variations")); o.value = n; els.count.appendChild(o); });
     els.count.value = "4";
+    els.count.addEventListener("change", function () { els.count.dataset.touched = "1"; });
     field("How many", els.count);
     els.seed = el("input", "ng-gen-input"); els.seed.type = "number"; els.seed.placeholder = "random";
     field("Seed", els.seed);
     els.model = el("select", "ng-gen-input");
     field("Model", els.model);
+    els.shape = el("select", "ng-gen-input");
+    H3_SHAPES.forEach(function (x) { var o = el("option", "", x[1]); o.value = x[0]; els.shape.appendChild(o); });
+    els.shape.addEventListener("change", function () { els.shape.dataset.touched = "1"; });
+    els.shapeField = field("Shape", els.shape);
+    els.tier = el("select", "ng-gen-input");
+    H3_TIERS.forEach(function (x) { var o = el("option", "", x[1]); o.value = x[0]; els.tier.appendChild(o); });
+    els.tierField = field("Quality", els.tier);
     root.appendChild(opts);
 
     var adv = el("details", "ng-klein-adv");
+    els.adv = adv;
     adv.appendChild(el("summary", "ng-gen-status", "Advanced"));
     var advBox = el("div", "ng-klein-opts");
     var advField = function (label, node, title) {
@@ -677,13 +731,17 @@
     fetch(API + "health").then(function (r) { return r.json(); }).then(function (h) {
       els.model.textContent = "";
       (h.models || []).forEach(function (m) { var o = el("option", "", m); o.value = m; els.model.appendChild(o); });
+      if (h.h3image) { var ho = el("option", "", H3_LABEL); ho.value = H3; els.model.appendChild(ho); }
       if (h.default) els.model.value = h.default;
+      else if (!(h.models || []).length && h.h3image) els.model.value = H3;
+      h3ok = !!(h.h3image && h.h3image.ok); h3problems = (h.h3image && h.h3image.problems) || [];
+      kleinOk = !!h.ready;
+      kleinMsg = h.ready ? "" : (h.worker_found ? "The Klein weights are not downloaded (do that in Phosphene)." : "The FLUX 3 worker is not installed (do that in Phosphene).");
       loraList = h.loras || [];
       drawLoras();
       els.outGo.disabled = !h.ready || !loraList.some(function (l) { return l.name === "flux-3-image-klein-outpaint"; });
       if (els.outGo.disabled && h.ready) outSetStatus("The Outpaint LoRA is not installed in the shared loras folder (flux3).");
-      els.go.disabled = !h.ready;
-      if (!h.ready) setStatus(h.worker_found ? "The Klein weights are not downloaded (do that in Phosphene)." : "The FLUX 3 worker is not installed (do that in Phosphene).");
+      updateAdvanced();
     }).catch(function () { setStatus("Could not reach the server."); });
   }
 

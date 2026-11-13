@@ -25,6 +25,17 @@ identical with `H3_VAE_DTYPE=float32`; `--stream-dit` output identical with the 
 The image-generation modules of that pin (`ph3_image*.py`, `generate_image.py`, ...) are not vendored; `video_vae_v2.py` is
 kept but no longer the default decoder.
 
+**Updated 2026-11-13 with MiniMax-H3-Image (Phosphene v5.0.19's pin, `953ec46` "H3-Image: edit with up to 16 reference pictures"):**
+the picture runner `scripts/generate_h3_image.py` and `minimax_h3_mlx/{h3_image,h3_image_vae,ph3_image_vae}.py` (new files, copied as they are), and the
+pin's small changes to `adaln.py` (the precomputed AdaLN table), `config.py`, `dit.py` (no audio rows, per-step output heads), `load.py`
+and `text_encoder.py`, three-way merged against the v5.0.7 pin (`59da1474b3`). Only `text_encoder.py` conflicted: the pin's
+`label_format` ("Picture n: " for the edit, "<Picture n>: " for video) sits beside our `references`; `encode` passes either only when given, so the
+stream tests' stubs still fit. Not vendored: `fetch_h3_image.py` (the downloader and converter: Phosphene's Images page does that and the app reads
+its 22 GB pack in place), and the pin's `ph3_image_text.py` change (P-H3-Image, which this app does not use). Checked: the logic tests pass, and a real
+edit rendered through this copy (seed 1627537518, 4 MP, one reference, shape of the reference) is **pixel-identical** to Phosphene's own render of the same job.
+`h3_image_engineNG.py` runs it. **Licence:** the runner code is Apache-2.0 like the rest of this folder; the *model's* community licence is separate
+and excludes the European Union, United Kingdom, Republic of Korea and United States (and asks for "MiniMax-H3-Image" to be shown in commercial products): read the LICENSE in the pack folder before using it.
+
 **Ours on top of that:** `--refmod` / `--ref2va-reference` now compose with `--audio-drive` (one entry removed from the
 refusal list in `generate_staged.py`). Tested: a RefMod-only render with a driven speech line, the mouth followed the words,
 the identity held, output audio equal to the driven file. A first frame, keyframes, extend and chained windows are still refused.

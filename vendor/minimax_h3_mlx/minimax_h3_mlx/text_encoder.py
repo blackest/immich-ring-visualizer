@@ -369,12 +369,14 @@ class MiniMaxH3TextEncoder:
         pa, pb = np.asarray(a["pixel_values"]).reshape(shape), np.asarray(b["pixel_values"]).reshape(shape)
         return np.stack([pa[:, :, 0], pb[:, :, 1]], axis=2).reshape(pa.shape[0], -1), grid
 
-    def build_request(self, prompt: str, images: list | None = None, references: list | None = None):
+    def build_request(self, prompt: str, images: list | None = None, references: list | None = None,
+                      label_format: str = "<Picture {n}>: "):
         """Build H3's token sequence and its per-row modality tags.
 
         ``references`` is an ordered ``[("image", PIL) | ("video", [(seconds, first, second), ...])]``
         list, numbered per kind, a clip shown as ``<Video k>: `` then a ``<T.T seconds>`` label and a
-        vision block per 2-frame pair. Without it ``images`` are keyframes, ``<Picture N>: `` each.
+        vision block per 2-frame pair. Without it ``images`` are keyframes, ``label_format`` each (``<Picture N>: `` for the video lane; the
+        MiniMax-H3-Image edit uses ``Picture N: `` without the angle brackets).
 
         Returns ``(input_ids, token_tags, vision_inputs)``; ``vision_inputs`` is ``None`` for a
         text-only request, otherwise the processor's ``pixel_values`` / ``image_grid_thw``.
@@ -407,7 +409,7 @@ class MiniMaxH3TextEncoder:
             offset = 0
             for index, grid in enumerate(np.asarray(vision["image_grid_thw"])):
                 rows = int(grid.prod())
-                blocks.append((f"<Picture {index + 1}>: ", np.asarray(vision["pixel_values"])[offset:offset + rows], grid[None]))
+                blocks.append((label_format.format(n=index + 1), np.asarray(vision["pixel_values"])[offset:offset + rows], grid[None]))
                 offset += rows
 
         if blocks:
@@ -477,12 +479,15 @@ class MiniMaxH3TextEncoder:
         # No `model.norm(h)`: H3 conditions on the unnormalized state.
         return h
 
-    def encode(self, prompt: str, images: list | None = None, references: list | None = None) -> tuple[mx.array, np.ndarray]:
+    def encode(self, prompt: str, images: list | None = None, references: list | None = None,
+               label_format: str = "<Picture {n}>: ") -> tuple[mx.array, np.ndarray]:
         """Encode a request into ``((1, num_text_tokens, 5120), (num_text_tokens,))``."""
         from mlx_vlm.models.qwen3_vl.language import LanguageModel
 
-        input_ids, token_tags, vision_inputs = (
-            self.build_request(prompt, images, references) if references else self.build_request(prompt, images))
+        input_ids, token_tags, vision_inputs = self.build_request(
+            prompt, images, **{k: v for k, v in (("references", references),
+                                                 ("label_format", label_format if label_format != "<Picture {n}>: " else None))
+                               if v})
 
         inputs_embeds = None
         visual_pos_masks = None

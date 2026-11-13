@@ -189,6 +189,60 @@ class Routes(unittest.TestCase):
         self.assertEqual(self.wait(r.get_json()["jobId"])["options"], {})
         self.assertEqual(self.post(prompt="x", n="1", steps="500").status_code, 400)
 
+    def _h3_image(self, ok=True):
+        """Replace the MiniMax-H3-Image engine; records what the job asked it for."""
+        import h3_image_engineNG as h3i
+        self.h3_calls = []
+
+        def fake(prompt, n, shape, tier, output_dir, seed=None, refs=(), on_log=None, should_stop=None, on_result=None):
+            self.h3_calls.append({"prompt": prompt, "n": n, "shape": shape, "tier": tier, "seed": seed,
+                                  "refs": [Path(r).name for r in refs]})
+            os.makedirs(output_dir, exist_ok=True)
+            path = Path(output_dir) / "h3_0.png"
+            path.write_bytes(PNG)
+            on_result({"png_path": str(path), "seed": seed, "width": 1696, "height": 2496, "elapsed_seconds": 2.0})
+        for target, value in (("generate_h3_image_ng", fake),
+                              ("h3_image_health_ng", lambda: {"ok": ok, "problems": [] if ok else ["not downloaded"]})):
+            patcher = mock.patch.object(h3i, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_a_minimax_h3_image_edit_runs_that_engine_in_the_shape_of_picture_one(self):
+        self._h3_image()
+        r = self.post(prompt="sharpen it", n="1", model="h3image", seed="9", ref0=(io.BytesIO(PNG), "me.jpg"))
+        self.assertEqual(r.status_code, 200)
+        body = self.wait(r.get_json()["jobId"])
+        self.assertEqual(body["status"], "done")
+        self.assertEqual(self.h3_calls, [{"prompt": "sharpen it", "n": 1, "shape": "match", "tier": "draft", "seed": 9,
+                                          "refs": ["subject.jpg"]}])
+        self.assertEqual(self.calls, [])                                   # Klein itself was not run
+        self.assertEqual(body["options"], {"shape": "match", "tier": "draft"})
+        self.assertEqual((body["results"][0]["width"], body["results"][0]["height"]), (1696, 2496))
+        self.assertEqual(body["ref_notes"], [])
+
+    def test_minimax_h3_image_takes_a_shape_and_a_quality(self):
+        self._h3_image()
+        r = self.post(prompt="a field at dusk", n="1", model="h3image", shape="3:2", tier="standard")
+        body = self.wait(r.get_json()["jobId"])
+        self.assertEqual((self.h3_calls[0]["shape"], self.h3_calls[0]["tier"], self.h3_calls[0]["refs"]),
+                         ("3:2", "standard", []))
+        self.assertEqual(body["options"], {"shape": "3:2", "tier": "standard"})
+
+    def test_minimax_h3_image_refusals(self):
+        self._h3_image()
+        self.assertEqual(self.post(prompt="x", n="1", model="h3image", shape="5:7").status_code, 400)
+        self.assertEqual(self.post(prompt="x", n="1", model="h3image", tier="ultra").status_code, 400)
+        self.assertEqual(self.post(prompt="x", n="1", model="h3image", shape="match").status_code, 400)  # needs a picture
+        self.assertEqual(self.post(prompt="", n="1", model="h3image").status_code, 400)
+        self._h3_image(ok=False)
+        refused = self.post(prompt="x", n="1", model="h3image")
+        self.assertEqual(refused.status_code, 503)
+        self.assertIn("not downloaded", refused.get_json()["error"])
+
+    def test_health_reports_minimax_h3_image(self):
+        self._h3_image()
+        self.assertTrue(self.client.get("/api/ng/klein/health").get_json()["h3image"]["ok"])
+
     def test_slots_keep_their_order_and_skip_empty_ones(self):
         r = self.post(prompt="x", n="1", ref0=(io.BytesIO(PNG), "a.png"), ref2=(io.BytesIO(PNG), "c.jpg"))
         body = self.wait(r.get_json()["jobId"])
