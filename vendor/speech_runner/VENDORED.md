@@ -21,3 +21,11 @@ helpers (script splitting, silence trimming, WAV writing, speed change, the `[sp
 the other kinds, and calls `model.generate_voice_design(text, language, instruct)` from the mlx-audio already in the speech
 venv. Checked 2026-11-08 through the app: "a deep, gravelly older man, slow and weary" came out at a median 90 Hz over 5.5 s,
 "a bright, quick, cheerful young woman" at 308 Hz over 3.1 s, and Whisper read back the words of both.
+
+## The env (2026-11-13)
+
+`.venv/` here is git-ignored. Build it with `./build_venv.sh`: Python 3.12 and the 35 exact packages in `requirements.lock`
+(installed with `--no-deps`; the lock is the complete list). `speech_engineNG` prefers this folder once `.venv/bin/python`
+exists, so the runners and their interpreter are both in this repository; only the weights (`mlx_models/speech`) are still read
+from Pinokio. The env was diffed file by file against a clean build of the same pins when it was taken from `PhospheneNative`:
+no patches.

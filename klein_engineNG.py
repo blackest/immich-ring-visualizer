@@ -44,8 +44,14 @@ def _phosphene_root() -> Path:
 
 
 def worker_python() -> Path:
+    """PHOSPHENE_FLUX3_ROOT, then this repository's own env (vendor/flux3_worker, once built: see its
+    VENDORED.md), then Phosphene's FLUX 3 install."""
     env = os.environ.get("PHOSPHENE_FLUX3_ROOT")
-    root = Path(env).expanduser() if env else _phosphene_root() / "flux3-worker"
+    if env:
+        root = Path(env).expanduser()
+    else:
+        vendored = Path(__file__).resolve().parent / "vendor" / "flux3_worker"
+        root = vendored if (vendored / "env" / "bin" / "python").is_file() else _phosphene_root() / "flux3-worker"
     return root / "env" / "bin" / "python"
 
 

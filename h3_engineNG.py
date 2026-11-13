@@ -95,6 +95,10 @@ def _resolve_h3_repo_dir_ng() -> Path:
     env_p = os.environ.get("LTX_H3_ROOT")
     if env_p:
         return Path(env_p).expanduser()
+    # This repository's own copy (vendor/minimax_h3_mlx) once its .venv is built: see its VENDORED.md.
+    vendored = Path(__file__).resolve().parent / "vendor" / "minimax_h3_mlx"
+    if (vendored / ".venv" / "bin" / "python").is_file():
+        return vendored
     home = Path.home()
     # Phosphene's own vendored checkout comes first: it sits on the pinned
     # engine commit with a venv held to its locked package set, and sharing

@@ -41,11 +41,13 @@ class SpeechRequestError(ValueError):
 # --- where things live -------------------------------------------------------------------------
 
 def _resolve_speech_repo_dir_ng() -> Path:
-    """LTX_SPEECH_ROOT, then the clone on the AI drive, then Phosphene's own install."""
+    """LTX_SPEECH_ROOT, then this repository's own env (vendor/speech_runner/.venv, once built: see its
+    VENDORED.md), then the clone on the AI drive, then Phosphene's own install."""
     env_p = os.environ.get("LTX_SPEECH_ROOT")
     if env_p:
         return Path(env_p).expanduser()
-    for cand in (Path("/Volumes/AI/PhospheneNative/speech-mlx"),
+    for cand in (Path(__file__).resolve().parent / "vendor" / "speech_runner",
+                 Path("/Volumes/AI/PhospheneNative/speech-mlx"),
                  Path("/Volumes/AI/Pinkio/api/phosphene.git/speech-mlx"),
                  Path.home() / "speech-mlx"):
         if (cand / ".venv" / "bin" / "python").exists():

@@ -78,3 +78,13 @@ from Phosphene's engine pin `cd07c3c` (`phosphene/v5.0-image3`, Apache-2.0): mix
 `decode_chunks`. It is OPT-IN (`H3_VAE_IMPL=v2`, the "VAE v2" checkbox); the default decoder is still `video_vae.py`.
 Changed to select it: `load.py` (`_video_vae_classes`) and `scripts/generate_staged.py` (module pick at import,
 `decode_video` uses `decode_chunks` when the model has it).
+
+## The env (2026-11-13)
+
+`.venv/` here is git-ignored. Build it with `./build_venv.sh`: Python 3.11 and the 80 exact packages in `requirements.lock`
+(installed with `--no-deps`; the lock is the complete list). `h3_engineNG` prefers this folder as `H3_REPO_DIR` once
+`.venv/bin/python` exists, so the interpreter, the runner and the package all come from this repository; only the model weights
+(`mlx_models/hailuo-h3`) are still read from Pinokio. The env was diffed file by file against a clean build of the same pins
+when it was taken from Pinokio's: no patches. `h3_installNG`'s clone, venv and deps steps do nothing here
+(`engine_installNG.app_vendored`). This folder does not carry `scripts/download_selected.py` or `scripts/quantize_stream.py`,
+which the installer's weights and Q8-build steps call, so "Install H3" on a machine without the weights would need Phosphene's checkout.

@@ -41,7 +41,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from engine_installNG import InstallStep, phosphene_owned, run_logged
+from engine_installNG import InstallStep, app_vendored, phosphene_owned, run_logged
 from h3_engineNG import H3_DIT_BF16, H3_DIT_Q8_DIR, H3_MODELS_ROOT, H3_REPO_DIR
 
 H3_URL = "https://github.com/mrbizarro/minimax-h3-mlx.git"
@@ -82,6 +82,9 @@ def _git_head(repo_dir: Path) -> str:
 
 def _step_clone(on_log: Callable[[str], None]) -> None:
     dest = H3_REPO_DIR
+    if app_vendored(dest):
+        on_log(f"{dest} is vendored with this app (see its VENDORED.md) -- nothing to clone.")
+        return
     if (dest / ".git").is_dir() and phosphene_owned(dest):
         # Phosphene's own checkout: its Update owns the pin. Leave it exactly where it is.
         if not (dest / "scripts" / "quantize_stream.py").is_file():
@@ -125,6 +128,9 @@ def _venv_python(repo_dir: Path) -> Path:
 
 def _step_venv(on_log: Callable[[str], None]) -> None:
     dest = H3_REPO_DIR
+    if app_vendored(dest):
+        on_log("the vendored env is built by vendor/minimax_h3_mlx/build_venv.sh -- leaving it alone.")
+        return
     py = _venv_python(dest)
     healthy = py.is_file() and subprocess.run([str(py), "-c", "import sys"]).returncode == 0
     if healthy:
@@ -138,6 +144,9 @@ def _step_venv(on_log: Callable[[str], None]) -> None:
 
 def _step_deps(on_log: Callable[[str], None]) -> None:
     dest = H3_REPO_DIR
+    if app_vendored(dest):
+        on_log("the vendored env's packages are pinned in vendor/minimax_h3_mlx/requirements.lock -- not touching them.")
+        return
     py = str(_venv_python(dest))
     if phosphene_owned(dest) and Path(py).is_file():
         on_log("Phosphene's venv already exists -- not touching its packages.")
