@@ -1,4 +1,4 @@
-# Exact package set of the LTX engine's env (Python 3.11.15) as run on 2026-11-13, taken from the Phosphene/Pinokio env it replaces.
+# Exact package set of the LTX engine's env (first on Python 3.11.15, moved to 3.14.6 on 2026-11-13 with the same pins and identical renders), taken from the Phosphene/Pinokio env it replaces.
 # The three ltx packages (ltx-core-mlx, ltx-pipelines-mlx, ltx-trainer-mlx) are installed editable from packages/ by build_env.sh.
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.4

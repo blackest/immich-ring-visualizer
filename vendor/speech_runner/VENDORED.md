@@ -24,7 +24,7 @@ venv. Checked 2026-11-08 through the app: "a deep, gravelly older man, slow and 
 
 ## The env (2026-11-13)
 
-`.venv/` here is git-ignored. Build it with `./build_venv.sh`: Python 3.12 and the 35 exact packages in `requirements.lock`
+`.venv/` here is git-ignored. Build it with `./build_venv.sh`: Python 3.14.6 (first on 3.12, moved on 2026-11-13 with the same pins and a byte-identical WAV) and the 35 exact packages in `requirements.lock`
 (installed with `--no-deps`; the lock is the complete list). `speech_engineNG` prefers this folder once `.venv/bin/python`
 exists, so the runners and their interpreter are both in this repository; only the weights (`mlx_models/speech`) are still read
 from Pinokio. The env was diffed file by file against a clean build of the same pins when it was taken from `PhospheneNative`:

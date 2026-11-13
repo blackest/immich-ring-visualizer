@@ -4,7 +4,7 @@ Klein (the pane that makes pictures with FLUX.2 klein) runs `klein_workerNG.py` 
 interpreter. There is no Phosphene code in it: the script imports `mflux`, `mlx` and Pillow from here and reads the weights
 from the Hugging Face cache. Only the **env** used to live inside Pinokio.
 
-**What is here:** `requirements.lock` (57 exact packages, Python 3.12: `mflux` 0.23.0, `mlx` 0.32.4, `torch` 2.13.0,
+**What is here:** `requirements.lock` (57 exact packages, Python 3.14.6 since 2026-11-13, first on 3.12, same pins and a pixel-identical picture: `mflux` 0.23.0, `mlx` 0.32.4, `torch` 2.13.0,
 `transformers` 5.19.0 ...) and `build_env.sh`, which builds the git-ignored `env/` from it with `--no-deps` (the lock is the
 complete list). `klein_engineNG.worker_python()` prefers `vendor/flux3_worker/env` once it exists, then Phosphene's install.
 

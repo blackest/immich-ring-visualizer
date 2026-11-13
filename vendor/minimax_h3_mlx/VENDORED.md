@@ -81,7 +81,7 @@ Changed to select it: `load.py` (`_video_vae_classes`) and `scripts/generate_sta
 
 ## The env (2026-11-13)
 
-`.venv/` here is git-ignored. Build it with `./build_venv.sh`: Python 3.11 and the 80 exact packages in `requirements.lock`
+`.venv/` here is git-ignored. Build it with `./build_venv.sh`: Python 3.14.6 (first on 3.11, moved on 2026-11-13 with the same pins and an identical H3 clip) and the 80 exact packages in `requirements.lock`
 (installed with `--no-deps`; the lock is the complete list). `h3_engineNG` prefers this folder as `H3_REPO_DIR` once
 `.venv/bin/python` exists, so the interpreter, the runner and the package all come from this repository; only the model weights
 (`mlx_models/hailuo-h3`) are still read from Pinokio. The env was diffed file by file against a clean build of the same pins

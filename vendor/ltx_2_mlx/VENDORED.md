@@ -32,7 +32,7 @@ the Qwen image model, a no-op unless `MFLUX_FB_CACHE=1`. immichring does not use
 
 ## The env
 
-`env/` here is git-ignored. Build it with `./build_env.sh`: Python 3.11, the 136 exact packages in `requirements.lock`
+`env/` here is git-ignored. Build it with `./build_env.sh`: Python 3.14.6 (first built on 3.11.15 and moved on 2026-11-13 with the same pins: every frame and the audio of the text-to-video and image-to-video tests stayed identical), the 136 exact packages in `requirements.lock`
 (installed with `--no-deps`, because Phosphene installed `mlx-vlm` that way and the freeze is the complete list), and the three
 packages editable from `packages/`. `build-constraints.txt` pins `hatchling<1.32`, as Phosphene does: the package
 `pyproject.toml` files point their readme outside the package folder, which hatchling 1.32 refuses.

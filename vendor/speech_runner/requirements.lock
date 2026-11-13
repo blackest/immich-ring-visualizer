@@ -1,4 +1,4 @@
-# Exact package set of the speech runner env (Python 3.12) as run on 2026-11-13, taken from the Phosphene/Pinokio env it replaces.
+# Exact package set of the speech runner env, taken on 2026-11-13 from the Phosphene/Pinokio env it replaces (Python 3.12 then; moved to Python 3.14.6 the same day with the same pins and identical renders).
 # Rebuild with ./build_venv.sh. Nothing in this env was patched (diffed file by file against a clean build of these pins).
 annotated-doc==0.0.5
 anyio==4.15.1
