@@ -1,0 +1,929 @@
+"""IC-LoRA pipeline — reference video conditioning with two-stage generation.
+
+Ported from ltx-pipelines/src/ltx_pipelines/ic_lora.py
+
+Two-stage video generation pipeline with In-Context (IC) LoRA support.
+Allows conditioning the generated video on control signals such as depth maps,
+human pose, or image edges via the video_conditioning parameter.
+The specific IC-LoRA model should be provided via the loras parameter.
+Stage 1 generates video at half of the target resolution, then Stage 2 upsamples
+by 2x and refines with additional denoising steps for higher quality output.
+Both stages use distilled models for efficiency.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import mlx.core as mx
+
+from ltx_core_mlx.components.patchifiers import (
+    compute_video_latent_shape,
+    snap_output_dimensions,
+)
+from ltx_core_mlx.loader import (
+    LTXV_LORA_BLOCK_PREFIX,
+    LTXV_LORA_COMFY_RENAMING_MAP,
+    LoraStateDictWithStrength,
+    SafetensorsStateDictLoader,
+    StateDict,
+    apply_loras,
+)
+from ltx_core_mlx.model.transformer.model import X0Model
+from ltx_core_mlx.model.upsampler import LatentUpsampler
+from ltx_core_mlx.utils.memory import aggressive_cleanup
+from ltx_core_mlx.utils.positions import compute_audio_positions, compute_audio_token_count, compute_video_positions
+from ltx_core_mlx.utils.video import load_video_frames_normalized
+from ltx_core_mlx.utils.weights import apply_quantization, load_split_safetensors
+from ltx_pipelines_mlx._base import BasePipeline
+from ltx_pipelines_mlx.iclora_utils import (
+    append_ic_lora_reference_video_conditionings,
+    read_lora_reference_downscale_factor,
+)
+from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS, STAGE_2_SIGMAS, thin_sigmas
+from ltx_pipelines_mlx.utils.helpers import create_noised_state
+from ltx_pipelines_mlx.utils.samplers import denoise_loop
+
+logger = logging.getLogger(__name__)
+
+
+def _warn_if_ic_lora_on_a_25_dev_checkpoint(dit, n_loras: int) -> None:
+    """Warn when IC-LoRAs are fused into an LTX-2.5 DEV transformer.
+
+    Lightricks' 2.5 guidance is explicit that the IC-LoRAs are **distilled-only**
+    ("do not use with the dev checkpoint"). Our dev-mode path exists because the
+    ComfyUI Union-Control recipe for **2.3** is dev + IC-LoRA @1.0 +
+    distilled-lora @0.5 fused into the same model, and that recipe is validated
+    here. 2.5 changes the advice, not the mechanics.
+
+    This WARNS rather than raises, deliberately. Refusing would silently remove
+    a working feature from anyone whose panel routes an IC-LoRA through the High
+    tier (the HDR IC-LoRA does exactly that), and whether to make that trade is
+    a product decision, not a loader's. The failure mode the vendor is warning
+    about is degraded output, not a crash — so the honest thing is to make it
+    attributable rather than invisible.
+
+    Costs one config read and fires only on the dev path with LoRAs attached.
+    """
+    try:
+        from ltx_pipelines_mlx.utils.sampler_choice import model_version_of
+
+        if model_version_of(dit) >= (2, 5):
+            logger.warning(
+                "%d IC-LoRA(s) are being fused into an LTX-2.5 DEV transformer. "
+                "Lightricks documents the 2.5 IC-LoRAs as distilled-only ('do not use "
+                "with the dev checkpoint'); this is the 2.3 Union-Control recipe applied "
+                "to a generation the vendor did not sanction it for. It will render — "
+                "judge the result rather than assuming it is correct.",
+                n_loras,
+            )
+    except Exception:  # noqa: BLE001 — a warning must never break a render
+        pass
+
+
+class ICLoraPipeline(BasePipeline):
+    """Two-stage video generation pipeline with IC-LoRA reference conditioning.
+
+    Conditions the generated video on a reference video (e.g., depth, pose, edges)
+    via VideoConditionByReferenceLatent. Stage 1 generates at half resolution with
+    the IC-LoRA fused into the transformer, then Stage 2 upscales and refines
+    without the LoRA (clean distilled model).
+
+    Args:
+        model_dir: Path to model weights or HuggingFace repo ID.
+        lora_paths: List of (lora_path, strength) tuples for IC-LoRA weights.
+        low_memory: Aggressive memory management.
+    """
+
+    def __init__(
+        self,
+        model_dir: str,
+        lora_paths: list[tuple[str, float]] | None = None,
+        gemma_model_id: str = "mlx-community/gemma-3-12b-it-4bit",
+        low_memory: bool = True,
+        low_ram_streaming: bool = False,
+        dev_transformer: str | None = None,
+        distilled_lora: str | None = None,
+        distilled_lora_strength: float = 0.5,
+    ):
+        super().__init__(
+            model_dir,
+            gemma_model_id=gemma_model_id,
+            low_memory=low_memory,
+            low_ram_streaming=low_ram_streaming,
+        )
+        # `vae_encoder` is provided as a property by BasePipeline (proxies
+        # to the ImageConditioner block). Only `upsampler` is unique here.
+        self.upsampler: LatentUpsampler | None = None
+
+        # Resolve LoRA paths (download from HuggingFace if needed)
+        self._lora_paths = [(_resolve_lora_path(p), s) for p, s in (lora_paths or [])]
+
+        # Read reference downscale factor from LoRA metadata.
+        # IC-LoRAs trained with low-resolution reference videos store this factor
+        # so inference can resize reference videos to match training conditions.
+        self.reference_downscale_factor = 1
+        for lora_path, _ in self._lora_paths:
+            scale = read_lora_reference_downscale_factor(lora_path)
+            if scale != 1:
+                if self.reference_downscale_factor not in (1, scale):
+                    raise ValueError(
+                        f"Conflicting reference_downscale_factor values in LoRAs: "
+                        f"already have {self.reference_downscale_factor}, but {lora_path} "
+                        f"specifies {scale}. Cannot combine LoRAs with different reference scales."
+                    )
+                self.reference_downscale_factor = scale
+
+        # Dev mode detection. If --dev-transformer is given the file MUST exist:
+        # the model dir ships both dev and distilled transformers, so a missing
+        # dev transformer means a typo, not a legitimate fallback. Silently
+        # reverting to distilled mode here would also drop the distilled LoRA and
+        # reproduce the exact bad-output config dev mode is meant to fix.
+        self.dev_transformer_name = dev_transformer
+        self.dev_mode = False
+        if dev_transformer:
+            dev_path = self.model_dir / dev_transformer
+            if not dev_path.exists():
+                raise FileNotFoundError(f"--dev-transformer '{dev_transformer}' not found in model dir: {dev_path}")
+            self.dev_mode = True
+            logger.info(f"Dev mode enabled: using {dev_transformer}")
+
+        self.distilled_lora_path = distilled_lora
+        self.distilled_lora_strength = distilled_lora_strength
+
+    def _checkpoint_version(self) -> tuple[int, ...]:
+        """The loaded checkpoint's generation, (2, 3) when unknown."""
+        try:
+            from ltx_pipelines_mlx.utils.sampler_choice import model_version_of
+            v = model_version_of(self.dit)
+            return tuple(v) if v else (2, 3)
+        except Exception:                                      # noqa: BLE001
+            return (2, 3)
+
+    def load(self) -> None:
+        """Load generation components: DiT, VAE encoder, upsampler.
+
+        Does NOT load decoders (VAE decoder, audio decoder, vocoder) to save
+        memory. Those are loaded on-demand in generate_and_save().
+        """
+        if self._loaded:
+            return
+
+        model_dir = self.model_dir
+
+        # DiT (largest component)
+        if self.dit is None:
+            if self.dev_mode and self.dev_transformer_name:
+                transformer_path = model_dir / self.dev_transformer_name
+            else:
+                transformer_path = model_dir / "transformer.safetensors"
+                if not transformer_path.exists():
+                    transformer_path = self._resolve_safetensors(model_dir, "transformer-distilled")
+            self.dit = self._load_transformer_with_optional_streaming(transformer_path)
+
+        # VAE encoder (for encoding control videos and I2V images)
+        self._load_vae_encoder()
+
+        # Upsampler (for Stage 2)
+        if self.upsampler is None:
+            import json
+
+            name = "spatial_upscaler_x2_v1_1"
+            config_path = model_dir / f"{name}_config.json"
+            weights_path = model_dir / f"{name}.safetensors"
+            if config_path.exists():
+                config = json.loads(config_path.read_text()).get("config", {})
+                self.upsampler = LatentUpsampler.from_config(config)
+            else:
+                self.upsampler = LatentUpsampler()
+            if weights_path.exists():
+                weights = load_split_safetensors(weights_path, prefix=f"{name}.")
+                self.upsampler.load_weights(list(weights.items()))
+            aggressive_cleanup()
+
+        self._loaded = True
+
+    def _effective_lora_paths(self) -> list[tuple[str, float]]:
+        """LoRA (path, strength) list fused into the transformer for generation.
+
+        In dev mode this is the task IC-LoRA(s) plus the distilled LoRA @0.5,
+        matching the Comfy IC-LoRA recipe: dev checkpoint + IC-LoRA @1.0 +
+        distilled-lora @0.5 fused into the *same* model. In distilled mode it is
+        just the task IC-LoRA(s).
+        """
+        paths = list(self._lora_paths)
+        if self.dev_mode and self.distilled_lora_path:
+            distilled_file = Path(self.distilled_lora_path)
+            if not distilled_file.is_absolute():
+                distilled_file = self.model_dir / self.distilled_lora_path
+            if not distilled_file.exists():
+                raise FileNotFoundError(f"Distilled LoRA not found: {distilled_file}")
+            paths.append((str(distilled_file), self.distilled_lora_strength))
+        return paths
+
+    def _fuse_loras(self) -> None:
+        """Fuse all LoRA weights into the transformer.
+
+        Reads LoRA files, applies ComfyUI key remapping, fuses deltas into
+        model weights, and re-quantizes. In ``low_ram_streaming`` mode
+        the LoRAs are attached as ``BlockLoraSource`` to the streaming
+        wrapper instead of being fused in-place — fusion happens at
+        each block bind.
+
+        In dev mode the distilled LoRA is fused alongside the task IC-LoRA
+        (see :meth:`_effective_lora_paths`); LoRA deltas are additive, so
+        fusing them together in one pass is order-independent.
+        """
+        lora_paths = self._effective_lora_paths()
+        if not lora_paths:
+            return
+
+        assert self.dit is not None
+
+        # The adapters are wired HERE, and here the DiT exists — so this is the
+        # only place that can ask what generation they are being fused into.
+        # (_effective_lora_paths is a pure accessor and is called bare in tests.)
+        if self.dev_mode:
+            _warn_if_ic_lora_on_a_25_dev_checkpoint(self.dit, len(self._lora_paths))
+
+        if self.low_ram_streaming:
+            from ltx_core_mlx.loader.block_streaming import BlockLoraSource
+
+            sources: list = list(object.__getattribute__(self.dit, "_lora_sources"))
+            for lora_path, strength in lora_paths:
+                sources.append(
+                    BlockLoraSource(
+                        lora_path,
+                        block_prefix=LTXV_LORA_BLOCK_PREFIX,
+                        strength=strength,
+                        sd_ops=LTXV_LORA_COMFY_RENAMING_MAP,
+                    )
+                )
+                logger.info(f"Attached LoRA streamer: {lora_path} (strength={strength})")
+            object.__setattr__(self.dit, "_lora_sources", sources)
+            return
+
+        import mlx.utils
+
+        model_weights = dict(mlx.utils.tree_flatten(self.dit.parameters()))
+        model_sd = StateDict(sd=model_weights, size=0, dtype=set())
+
+        loader = SafetensorsStateDictLoader()
+        lora_sds = []
+        for lora_path, strength in lora_paths:
+            lora_sd = loader.load(lora_path, sd_ops=LTXV_LORA_COMFY_RENAMING_MAP)
+            lora_sds.append(LoraStateDictWithStrength(state_dict=lora_sd, strength=strength))
+            logger.info(f"Loaded LoRA: {lora_path} (strength={strength})")
+
+        fused_sd = apply_loras(model_sd=model_sd, lora_sd_and_strengths=lora_sds)
+
+        apply_quantization(self.dit, fused_sd.sd)
+        self.dit.load_weights(list(fused_sd.sd.items()))
+        aggressive_cleanup()
+
+        logger.info(f"Fused {len(lora_paths)} LoRA(s) into transformer")
+
+    def _reload_clean_transformer(self) -> None:
+        """Reload the transformer without LoRA for Stage 2.
+
+        The reference implementation uses separate ModelLedgers for Stage 1
+        (with LoRA) and Stage 2 (clean distilled). We achieve the same by
+        discarding the fused transformer and reloading from disk.
+
+        In ``low_ram_streaming`` mode we just clear the LoraSources from
+        the streaming wrapper instead of full reload — the underlying
+        block weights are streamed fresh from the safetensors.
+
+        Only used in the legacy distilled (non-dev) path. In dev mode both
+        LoRAs are retained across stages, so this is not called.
+        """
+        if self.low_ram_streaming and self.dit is not None:
+            old_sources = list(object.__getattribute__(self.dit, "_lora_sources"))
+            object.__setattr__(self.dit, "_lora_sources", [])
+            for src in old_sources:
+                src.close()
+            aggressive_cleanup()
+            logger.info("Cleared streaming LoRA sources for Stage 2")
+            return
+
+        self.dit = None
+        aggressive_cleanup()
+
+        transformer_path = self.model_dir / "transformer.safetensors"
+        if not transformer_path.exists():
+            transformer_path = self._resolve_safetensors(self.model_dir, "transformer-distilled")
+        self.dit = self._load_transformer_with_optional_streaming(transformer_path)
+        logger.info("Reloaded clean transformer for Stage 2")
+
+    def _create_conditionings(
+        self,
+        images,
+        video_conditioning: list[tuple[str, float]],
+        height: int,
+        width: int,
+        num_frames: int,
+        *,
+        frame_rate: float,
+        video_encoder=None,
+        conditioning_attention_strength: float = 1.0,
+        conditioning_attention_mask: mx.array | None = None,
+    ) -> list[object]:
+        """Create conditioning items for video generation.
+
+        Builds image conditionings (I2V) and IC-LoRA reference video conditionings.
+        Mirrors upstream ``ltx_pipelines.ic_lora.ICLoraPipeline._create_conditionings``.
+
+        Args:
+            images: Optional list of :class:`ImageConditioningInput` (upstream-iso
+                multi-anchor) for I2V. Legacy ``list[tuple[str, int, float]]``
+                tuples are accepted and normalized.
+            video_conditioning: List of (video_path, strength) for IC-LoRA reference.
+            height: Stage output height (pixels).
+            width: Stage output width (pixels).
+            num_frames: Number of pixel frames.
+            video_encoder: VAE encoder to use for image encoding (defaults to
+                ``self.vae_encoder``). Upstream takes this as explicit arg so
+                callers can pass an offloaded/streamed instance.
+            conditioning_attention_strength: Scalar attention weight in [0, 1].
+            conditioning_attention_mask: Optional pixel-space mask (1, 1, F, H, W).
+
+        Returns:
+            List of conditioning items. IC-LoRA conditionings are appended last.
+        """
+        if video_encoder is None:
+            video_encoder = self.vae_encoder
+        assert video_encoder is not None
+
+        conditionings: list[object] = []
+
+        # Image conditionings (I2V) — upstream-iso multi-anchor pattern.
+        # frame_idx==0 → VideoConditionByLatentIndex (replace);
+        # frame_idx>0 → VideoConditionByKeyframeIndex (guide).
+        if images:
+            from ltx_pipelines_mlx.utils._orchestration import combined_image_conditionings
+            from ltx_pipelines_mlx.utils.args import ImageConditioningInput
+
+            normalized = [
+                img if isinstance(img, ImageConditioningInput) else ImageConditioningInput(*img) for img in images
+            ]
+            # Stage spatial latent dims (F, H, W) for keyframe positions
+            F_lat, H_lat, W_lat = compute_video_latent_shape(num_frames, height, width)
+            conditionings.extend(
+                combined_image_conditionings(
+                    normalized,
+                    enc_h=height,
+                    enc_w=width,
+                    spatial_dims=(F_lat, H_lat, W_lat),
+                    video_encoder=video_encoder,
+                    frame_rate=frame_rate,
+                )
+            )
+
+        # IC-LoRA reference video conditionings (delegated to iclora_utils for parity
+        # with upstream `ltx_pipelines.ic_lora.ICLoraPipeline._create_conditionings`).
+        append_ic_lora_reference_video_conditionings(
+            conditionings,
+            video_conditioning,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            video_encoder=video_encoder,
+            reference_downscale_factor=self.reference_downscale_factor,
+            conditioning_attention_strength=conditioning_attention_strength,
+            conditioning_attention_mask=conditioning_attention_mask,
+        )
+
+        if video_conditioning:
+            logger.info(f"Added {len(video_conditioning)} video conditioning(s)")
+
+        return conditionings
+
+    def generate(
+        self,
+        prompt: str,
+        video_conditioning: list[tuple[str, float]],
+        height: int = 480,
+        width: int = 704,
+        num_frames: int = 97,
+        *,
+        frame_rate: float,
+        seed: int = 42,
+        stage1_steps: int | None = None,
+        stage2_steps: int | None = None,
+        images: list[tuple[str, int, float]] | None = None,
+        conditioning_attention_strength: float = 1.0,
+        conditioning_attention_mask: mx.array | None = None,
+        skip_stage_2: bool = False,
+        single_stage: bool = False,
+        upsample_only: bool = False,
+        refine_steps: int | None = None,
+        source_video: str | None = None,
+    ) -> tuple[mx.array, mx.array]:
+        """Generate video with IC-LoRA reference conditioning.
+
+        ``source_video`` (Phosphene, Upscale ×2): skip Stage 1 entirely. The
+        clip is VAE-encoded at the half-res canvas, latent-upsampled ×2 with
+        the pack's spatial upscaler, and the control-aware refine (``refine_steps``
+        of the distilled tail, default 3) runs with the IC-LoRA and the clip
+        re-appended as reference at full res. Identity and motion come from the
+        clip's own latent instead of being re-generated from noise; the adapter
+        only invents the fine detail. Two-stage layout (dims snap to 64).
+
+        Args:
+            prompt: Text prompt.
+            video_conditioning: List of (video_path, strength) tuples for IC-LoRA
+                reference video conditioning (e.g., depth maps, poses, edges).
+            height: Output video height.
+            width: Output video width.
+            num_frames: Number of frames.
+            seed: Random seed.
+            stage1_steps: Denoising steps for stage 1.
+            stage2_steps: Denoising steps for stage 2.
+            images: Optional list of (image_path, frame_index, strength) for I2V.
+            conditioning_attention_strength: Scale factor for IC-LoRA conditioning
+                attention. 0.0 = ignore, 1.0 = full conditioning. Default 1.0.
+            conditioning_attention_mask: Optional pixel-space mask (1, 1, F, H, W)
+                matching reference video dimensions. Values in [0, 1].
+            skip_stage_2: Skip upscale + refine, output at half resolution.
+            single_stage: Generate in one pass at full target resolution with the
+                pose/reference conditioning applied throughout (matches the Comfy
+                single-stage IC-LoRA workflows, e.g. Union Control). No upsampler,
+                no Stage 2 refine. Takes precedence over ``skip_stage_2``.
+            upsample_only: Run the half-res generative stage (conditioning applied
+                throughout, same as Stage 1), upscale the latent 2x with the
+                LatentUpsampler, and decode directly — skipping the Stage 2 refine
+                that drops control adherence. Output is at full target resolution.
+                Cheaper than ``single_stage`` (gen runs at half res) but the control
+                is encoded at half res, so fine-detail adherence sits between
+                two-stage and native single-stage. Ignored if ``single_stage`` or
+                ``skip_stage_2`` is set.
+            refine_steps: Only meaningful with ``upsample_only``. When > 0, run a
+                *control-aware* refine after the upsample instead of decoding raw:
+                the control reference is re-encoded at full resolution and re-appended
+                with the IC-LoRA kept fused, then a short denoise cleans the upsampler
+                artifacts while the (now full-res) control sharpens adherence. Unlike
+                the legacy two-stage Stage 2, this does NOT reload a clean model and
+                does NOT drop the control. Steps map onto the distilled sigma tail:
+                more steps start from a higher sigma (more cleanup, more drift from the
+                draft). Capped at ``len(DISTILLED_SIGMAS) - 1``. ``refine_steps=3``
+                matches the STAGE_2_SIGMAS schedule.
+
+        Returns:
+            Tuple of (video_latent, audio_latent).
+        """
+        if not (0.0 <= conditioning_attention_strength <= 1.0):
+            raise ValueError(
+                f"conditioning_attention_strength must be in [0.0, 1.0], got {conditioning_attention_strength}"
+            )
+
+        # Load text encoder, encode, free, then load generation components.
+        # Done manually instead of _encode_text_and_load() to avoid loading
+        # decoders (which we don't need until generate_and_save).
+        self._load_text_encoder()
+        video_embeds, audio_embeds = self._encode_text(prompt)
+        # NOTE: mx.eval is MLX graph evaluation, NOT Python eval()
+        mx.eval(video_embeds, audio_embeds)
+        if self.low_memory:
+            self.prompt_encoder.free()
+            aggressive_cleanup()
+
+        # Load DiT + VAE encoder + upsampler (no decoders)
+        self.load()
+
+        assert self.dit is not None
+        assert self.vae_encoder is not None
+
+        # Fuse LoRA into transformer for Stage 1
+        self._fuse_loras()
+
+        # --- Stage 1: generation with IC-LoRA ---
+        # Two-stage generates at half res (Stage 2 upscales 2x, so full dims must
+        # be multiples of 64); single-stage generates directly at full target res
+        # (Comfy Union Control topology, multiples of 32). Snap up front and report
+        # if the requested dims changed; downstream derivations stay consistent.
+        source_mode = bool(source_video)
+        if source_mode:
+            single_stage = False
+            skip_stage_2 = False
+            upsample_only = False
+            if not refine_steps:
+                refine_steps = 3
+        height, width = snap_output_dimensions(height, width, two_stage=not single_stage)
+        if single_stage:
+            gen_h, gen_w = height, width
+        else:
+            # Stage 1 encodes image conditioning at these exact half-res pixel dims;
+            # the snap above guarantees height/width are multiples of 64, so half is
+            # already a multiple of 32 (the VAE space_to_depth grid).
+            gen_h, gen_w = height // 2, width // 2
+        F, H_half, W_half = compute_video_latent_shape(num_frames, gen_h, gen_w)
+        video_shape = (1, F * H_half * W_half, 128)
+        audio_T = compute_audio_token_count(num_frames, frame_rate=frame_rate)
+        audio_shape = (1, audio_T, 128)
+
+        video_positions_1 = compute_video_positions(F, H_half, W_half, frame_rate=frame_rate)
+        audio_positions = compute_audio_positions(audio_T)
+
+        # Encode conditionings before denoising (reduce peak memory)
+        stage_1_conditionings = self._create_conditionings(
+            images=images,
+            video_conditioning=video_conditioning,
+            height=gen_h,
+            width=gen_w,
+            num_frames=num_frames,
+            frame_rate=frame_rate,
+            conditioning_attention_strength=conditioning_attention_strength,
+            conditioning_attention_mask=conditioning_attention_mask,
+        )
+
+        # Build noised state via canonical upstream order:
+        #     init (zeros) -> apply conditionings (image replace + ref append) -> noise.
+        # For pipelines without reference conditionings (image-only), this is
+        # bit-equivalent to the previous code path. With reference appends,
+        # the noise is generated for the FULL post-condition shape (including
+        # appended ref tokens, masked out), shifting the gen-token noise
+        # pattern slightly.
+        video_state = create_noised_state(
+            base_shape=video_shape,
+            conditionings=stage_1_conditionings,
+            spatial_dims=(F, H_half, W_half),
+            positions=video_positions_1,
+            seed=seed,
+            sigma=1.0,
+            initial_latent=None,
+        )
+        audio_state = create_noised_state(
+            base_shape=audio_shape,
+            conditionings=[],
+            spatial_dims=(F, H_half, W_half),  # unused
+            positions=audio_positions,
+            seed=seed + 1,
+            sigma=1.0,
+            initial_latent=None,
+        )
+
+        # Denoise stage 1. Dev and distilled share the fixed 8-step DISTILLED_SIGMAS
+        # (the Comfy IC-LoRA workflows use these exact ManualSigmas for stage 1).
+        # LTX-2.5 checkpoints carry their own tables (vendor stage 1, the
+        # 3-step stage 2); the 2.3 constants below are wrong for them. Keyed
+        # off the loaded checkpoint, so 2.3 renders are byte-identical.
+        _mv = self._checkpoint_version()
+        if _mv >= (2, 5):
+            from ltx_pipelines_mlx.scheduler import resolve_distilled_schedule
+            sigmas_1, _sigmas_2_25 = resolve_distilled_schedule(
+                _mv, stage1_steps=stage1_steps, stage2_steps=stage2_steps)
+        else:
+            sigmas_1 = thin_sigmas(DISTILLED_SIGMAS, stage1_steps, name="stage 1")
+        x0_model = X0Model(self.dit)
+
+        if source_mode:
+            # Stage 1 replaced by the clip itself: its frames at the half-res
+            # canvas, VAE-encoded into the same model-space latent Stage 1
+            # would have produced. The VAE wants 1+8k frames; the caller's
+            # num_frames already is (the reference loader rounds the same way).
+            k = max(1, (num_frames - 1) // 8)
+            src_frames = load_video_frames_normalized(str(source_video), gen_h, gen_w, 1 + k * 8)
+            src_frames = (src_frames * 2.0 - 1.0).astype(mx.bfloat16)
+            video_half = self.vae_encoder.encode(src_frames)
+            mx.eval(video_half)
+            if video_half.shape[2] != F:
+                raise ValueError(
+                    f"source clip encodes to {video_half.shape[2]} latent frames, "
+                    f"target needs {F} — pass num_frames = 1 + 8k with k*8+1 <= clip frames")
+            # No generated audio to refine: the audio lane starts from noise and
+            # its output is discarded by the caller (the source soundtrack is
+            # muxed back in). It only has to be shaped like a Stage 1 result.
+            audio_latent_1 = audio_state.latent
+            logger.info("Upscale from source: Stage 1 skipped, %s latent from %s", tuple(video_half.shape), source_video)
+        else:
+            self._pre_denoise_flush(video_state, audio_state)
+            output_1 = denoise_loop(
+                model=x0_model,
+                video_state=video_state,
+                audio_state=audio_state,
+                video_text_embeds=video_embeds,
+                audio_text_embeds=audio_embeds,
+                sigmas=sigmas_1,
+            )
+            if self.low_memory:
+                aggressive_cleanup()
+
+            # Extract only generation tokens (exclude appended reference tokens)
+            gen_tokens = output_1.video_latent[:, : F * H_half * W_half, :]
+            video_half = self.video_patchifier.unpatchify(gen_tokens, (F, H_half, W_half))
+            audio_latent_1 = output_1.audio_latent
+
+            # single_stage: full-res one-pass output (Union Control topology).
+            # skip_stage_2: half-res preview. Either way, return after Stage 1.
+            if single_stage or skip_stage_2:
+                audio_latent = self.audio_patchifier.unpatchify(output_1.audio_latent)
+                return video_half, audio_latent
+
+        # --- Stage 2: Upscale + refine (no IC-LoRA, clean distilled model) ---
+        # Upscale with denormalize/renormalize wrapping (matching reference).
+        # Reference: un_normalize -> upsampler -> normalize using VAE encoder stats.
+        # Without this, the upsampler produces garbage for Stage 2.
+        assert self.upsampler is not None
+        assert self.vae_encoder is not None
+        video_mlx = video_half.transpose(0, 2, 3, 4, 1)  # (B,C,F,H,W) -> (B,F,H,W,C)
+        video_denorm = self.vae_encoder.denormalize_latent(video_mlx)
+        video_denorm = video_denorm.transpose(0, 4, 1, 2, 3)  # back to (B,C,F,H,W)
+        video_upscaled = self.upsampler(video_denorm)
+        video_up_mlx = video_upscaled.transpose(0, 2, 3, 4, 1)  # (B,C,F,H,W) -> (B,F,H,W,C)
+        video_up_mlx = self.vae_encoder.normalize_latent(video_up_mlx)
+        video_upscaled = video_up_mlx.transpose(0, 4, 1, 2, 3)  # back to (B,C,F,H,W)
+        mx.eval(video_upscaled)
+
+        # upsample_only without refine: decode the upscaled latent directly,
+        # skipping any Stage 2 denoise. The upsampler output is already a
+        # normalized model-space latent, so it decodes like any other.
+        # With refine_steps > 0 we instead fall through to a control-aware refine
+        # (below) that keeps the IC-LoRA fused and re-applies the control at full
+        # res — cleaning upsampler artifacts without the adherence drift of the
+        # legacy two-stage Stage 2.
+        control_aware_refine = (upsample_only or source_mode) and bool(refine_steps)
+        if upsample_only and not control_aware_refine:
+            audio_latent = self.audio_patchifier.unpatchify(audio_latent_1)
+            if self.low_memory:
+                self.image_conditioner.free()
+                self.upsampler = None
+                aggressive_cleanup()
+            return video_upscaled, audio_latent
+
+        # Derive full-resolution latent dims from the ACTUAL upscaled shape,
+        # not the target height/width (which may round differently).
+        # The upsampler doubles H_half and W_half, so H_full = H_half * 2.
+        H_full = H_half * 2
+        W_full = W_half * 2
+        enc_h_full = H_full * 32
+        enc_w_full = W_full * 32
+
+        # Encode I2V images at upscaled resolution (if any) before freeing encoder.
+        # Upstream-iso multi-anchor pattern: frame_idx==0 → LatentIndex, else → KeyframeIndex.
+        conditionings_2 = []
+        if images:
+            from ltx_pipelines_mlx.utils._orchestration import combined_image_conditionings
+            from ltx_pipelines_mlx.utils.args import ImageConditioningInput
+
+            normalized = [
+                img if isinstance(img, ImageConditioningInput) else ImageConditioningInput(*img) for img in images
+            ]
+
+            F_full, H_full_lat, W_full_lat = compute_video_latent_shape(num_frames, enc_h_full, enc_w_full)
+            conditionings_2.extend(
+                combined_image_conditionings(
+                    normalized,
+                    enc_h=enc_h_full,
+                    enc_w=enc_w_full,
+                    spatial_dims=(F_full, H_full_lat, W_full_lat),
+                    video_encoder=self.vae_encoder,
+                    frame_rate=frame_rate,
+                )
+            )
+
+        # Control-aware refine: re-encode the control reference at full resolution
+        # and append it (with the IC-LoRA still fused, below) so the refine tracks
+        # the control — the whole point of this path. Stage 1 only saw the control
+        # at half res; here it gets the full-res signal to recover fine detail
+        # (e.g. fast-moving limbs). Legacy two-stage skips this, which is why its
+        # Stage 2 drifts off the conditioning.
+        if control_aware_refine:
+            append_ic_lora_reference_video_conditionings(
+                conditionings_2,
+                video_conditioning,
+                height=enc_h_full,
+                width=enc_w_full,
+                num_frames=num_frames,
+                video_encoder=self.vae_encoder,
+                reference_downscale_factor=self.reference_downscale_factor,
+                conditioning_attention_strength=conditioning_attention_strength,
+                conditioning_attention_mask=conditioning_attention_mask,
+            )
+
+        # Free VAE encoder + upsampler before Stage 2.
+        if self.low_memory:
+            self.image_conditioner.free()
+            self.upsampler = None
+        # Dev mode keeps both LoRAs fused across stages (matches Comfy two-stage
+        # IC-LoRA workflows, which never reload a clean model). Legacy distilled
+        # mode reloads the clean transformer (separate model ledgers). The
+        # control-aware refine also keeps the fused model — the IC-LoRA must stay
+        # present to consume the re-appended reference tokens.
+        if not self.dev_mode and not control_aware_refine:
+            self._reload_clean_transformer()
+
+        video_tokens_up, _ = self.video_patchifier.patchify(video_upscaled)
+
+        if control_aware_refine:
+            # Refine depth maps onto the distilled sigma tail: N steps ending at
+            # 0.0, starting from a higher sigma for larger N (more cleanup, more
+            # drift from the upscaled draft). refine_steps=3 == STAGE_2_SIGMAS.
+            n = max(1, min(int(refine_steps), len(DISTILLED_SIGMAS) - 1))
+            sigmas_2 = DISTILLED_SIGMAS[len(DISTILLED_SIGMAS) - 1 - n :]
+        else:
+            sigmas_2 = (_sigmas_2_25 if _mv >= (2, 5)
+                        else thin_sigmas(STAGE_2_SIGMAS, stage2_steps, name="stage 2"))
+        start_sigma = sigmas_2[0]
+
+        video_positions_2 = compute_video_positions(F, H_full, W_full, frame_rate=frame_rate)
+
+        # Stage 2 video: scalar-blend bit-matches legacy inline arithmetic.
+        # In legacy two-stage, cond_2 is at most a LatentIndex replace (no shape
+        # change) so Stage 2 stays bit-exact. The control-aware refine additionally
+        # appends the reference tokens here (same shape-change / RNG-shift pattern
+        # as Stage 1's reference append), so it is intentionally not bit-exact with
+        # the legacy path.
+        video_state_2 = create_noised_state(
+            base_shape=video_tokens_up.shape,
+            conditionings=conditionings_2,
+            spatial_dims=(F, H_full, W_full),
+            positions=video_positions_2,
+            seed=seed + 2,
+            sigma=start_sigma,
+            initial_latent=video_tokens_up,
+            legacy_scalar_blend=True,
+        )
+
+        # Audio refined in stage 2
+        audio_tokens_1 = audio_latent_1
+        audio_state_2 = create_noised_state(
+            base_shape=audio_tokens_1.shape,
+            conditionings=[],
+            spatial_dims=(F, H_full, W_full),  # unused
+            positions=audio_positions,
+            seed=seed + 2,
+            sigma=start_sigma,
+            initial_latent=audio_tokens_1,
+        )
+
+        self._pre_denoise_flush(video_state_2, audio_state_2)
+        output_2 = denoise_loop(
+            model=x0_model,
+            video_state=video_state_2,
+            audio_state=audio_state_2,
+            video_text_embeds=video_embeds,
+            audio_text_embeds=audio_embeds,
+            sigmas=sigmas_2,
+        )
+        if self.low_memory:
+            aggressive_cleanup()
+
+        # Control-aware refine appended reference tokens — strip them before
+        # unpatchify (mirrors the Stage 1 gen-token extraction). Legacy two-stage
+        # has no appended tokens, so its full latent unpatchifies as-is.
+        video_out = output_2.video_latent
+        if control_aware_refine:
+            video_out = video_out[:, : F * H_full * W_full, :]
+        video_latent = self.video_patchifier.unpatchify(video_out, (F, H_full, W_full))
+        audio_latent = self.audio_patchifier.unpatchify(output_2.audio_latent)
+
+        return video_latent, audio_latent
+
+    def generate_and_save(
+        self,
+        prompt: str,
+        output_path: str,
+        video_conditioning: list[tuple[str, float]],
+        height: int = 480,
+        width: int = 704,
+        num_frames: int = 97,
+        *,
+        frame_rate: float,
+        seed: int = 42,
+        stage1_steps: int | None = None,
+        stage2_steps: int | None = None,
+        images: list[tuple[str, int, float]] | None = None,
+        conditioning_attention_strength: float = 1.0,
+        skip_stage_2: bool = False,
+        single_stage: bool = False,
+        upsample_only: bool = False,
+        refine_steps: int | None = None,
+        source_video: str | None = None,
+    ) -> str:
+        """Generate IC-LoRA conditioned video+audio and save to file.
+
+        Args:
+            prompt: Text prompt.
+            output_path: Path to output video file.
+            video_conditioning: List of (video_path, strength) for IC-LoRA reference.
+            height: Output video height.
+            width: Output video width.
+            num_frames: Number of frames.
+            seed: Random seed.
+            stage1_steps: Denoising steps for stage 1.
+            stage2_steps: Denoising steps for stage 2.
+            images: Optional list of (image_path, frame_index, strength) for I2V.
+            conditioning_attention_strength: Attention strength for conditioning.
+            skip_stage_2: Skip upscale + refine.
+            single_stage: Full-res one-pass generation (Union Control topology).
+            upsample_only: Half-res gen + latent upsample, no refine (full-res output).
+            refine_steps: With upsample_only, run an N-step control-aware refine
+                after the upsample (full-res control re-applied, IC-LoRA fused).
+
+        Returns:
+            Path to the output video file.
+        """
+        video_latent, audio_latent = self.generate(
+            prompt=prompt,
+            video_conditioning=video_conditioning,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            frame_rate=frame_rate,
+            seed=seed,
+            stage1_steps=stage1_steps,
+            stage2_steps=stage2_steps,
+            images=images,
+            conditioning_attention_strength=conditioning_attention_strength,
+            skip_stage_2=skip_stage_2,
+            single_stage=single_stage,
+            upsample_only=upsample_only,
+            refine_steps=refine_steps,
+            source_video=source_video,
+        )
+
+        # Free generation components to make room for decoders
+        if self.low_memory:
+            self.dit = None
+            self.prompt_encoder.free()
+            self.upsampler = None
+            self.image_conditioner.free()
+            self._loaded = False
+            aggressive_cleanup()
+
+        # Load decoders on-demand (not loaded during generate to save memory)
+        self._load_decoders()
+
+        return self._decode_and_save_video(video_latent, audio_latent, output_path, frame_rate=frame_rate)
+
+    # Upstream parity: ``pipe(prompt=..., ...)`` style invocation.
+    __call__ = generate
+
+
+def _load_mask_video(
+    mask_path: str,
+    height: int,
+    width: int,
+    num_frames: int,
+) -> mx.array:
+    """Load a mask video file as a pixel-space attention mask tensor.
+
+    Mirrors upstream ``ltx_pipelines.ic_lora._load_mask_video``:
+
+    1. Decode the first ``num_frames`` frames at ``(height, width)``.
+    2. Channel-average to grayscale.
+    3. Remap from ``[-1, 1]`` (video loader range) back to ``[0, 1]``.
+    4. Clip to ``[0, 1]``.
+
+    Args:
+        mask_path: Path to mask video file (any ffmpeg-readable format).
+        height: Target height in pixels.
+        width: Target width in pixels.
+        num_frames: Number of frames to load.
+
+    Returns:
+        ``mx.array`` of shape ``(1, 1, F, H, W)``, bfloat16, values in ``[0, 1]``.
+    """
+    # load_video_frames_normalized returns shape (1, 3, F, H, W) in [-1, 1].
+    frames = load_video_frames_normalized(mask_path, height, width, num_frames)
+    # Channel-average (RGB → grayscale): (1, 3, F, H, W) → (1, 1, F, H, W).
+    mask = frames.mean(axis=1, keepdims=True)
+    # [-1, 1] → [0, 1].
+    mask = (mask + 1.0) / 2.0
+    # Clip safety.
+    mask = mx.clip(mask, 0.0, 1.0)
+    return mask.astype(mx.bfloat16)
+
+
+def _resolve_lora_path(path: str) -> str:
+    """Resolve a LoRA path — download from HuggingFace if needed.
+
+    Supports:
+        - Local file paths: returned as-is if they exist.
+        - HuggingFace repo IDs: downloads the repo and finds the .safetensors file.
+          Example: "Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control"
+
+    Args:
+        path: Local path or HuggingFace repo ID.
+
+    Returns:
+        Resolved local path to the .safetensors file.
+    """
+    local = Path(path)
+    if local.exists():
+        return str(local)
+
+    # Try HuggingFace download
+    from huggingface_hub import snapshot_download
+
+    logger.info(f"Downloading LoRA from HuggingFace: {path}")
+    repo_dir = Path(snapshot_download(path))
+
+    # Find the .safetensors file in the downloaded repo
+    safetensors_files = list(repo_dir.glob("*.safetensors"))
+    if not safetensors_files:
+        raise FileNotFoundError(f"No .safetensors files found in {repo_dir}")
+    if len(safetensors_files) > 1:
+        logger.warning(f"Multiple .safetensors files found, using first: {safetensors_files[0].name}")
+    return str(safetensors_files[0])

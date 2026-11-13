@@ -1,0 +1,4 @@
+# Ours, not upstream. packages/*/pyproject.toml declare readme = "../../README.md" (outside the package folder);
+# hatchling 1.32.0 turned that into a hard error. Pin the build backend below it, as Phosphene's own
+# pip-build-constraints.txt does, and leave the upstream pyproject files untouched.
+hatchling<1.32

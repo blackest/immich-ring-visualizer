@@ -42,6 +42,20 @@ def phosphene_owned(dest) -> bool:
     return (Path(dest).parent / "mlx_ltx_panel.py").is_file()
 
 
+def app_vendored(dest) -> bool:
+    """True when `dest` is an engine folder that ships inside this repository (vendor/...).
+
+    Its code is committed here and its env is built by that folder's own script, so an install must not
+    run git in it (it sits inside our repository) or reinstall packages into its env.
+    """
+    from pathlib import Path
+    try:
+        Path(dest).resolve().relative_to(Path(__file__).resolve().parent / "vendor")
+        return True
+    except ValueError:
+        return False
+
+
 def run_logged(cmd: list, *, cwd: Optional[str] = None, env: Optional[dict] = None,
                 on_log: Optional[Callable[[str], None]] = None) -> None:
     """Runs `cmd`, piping stdout+stderr line-by-line into on_log (same

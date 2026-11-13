@@ -40,12 +40,17 @@ class VideoJobCancelled(RuntimeError):
 
 
 def _resolve_ltx_repo_dir_ng() -> Path:
-    """LTX_MLX_DIR env var, then conventional install locations, falling
-    back to the first even if it doesn't exist so callers get a clean
-    "not found" error pointing at the conventional location."""
+    """LTX_MLX_DIR env var, then this repository's own vendored copy
+    (vendor/ltx_2_mlx, once its env is built: see its VENDORED.md), then
+    conventional install locations, falling back to the first even if it
+    doesn't exist so callers get a clean "not found" error pointing at the
+    conventional location."""
     env_p = os.environ.get("LTX_MLX_DIR")
     if env_p:
         return Path(env_p).expanduser()
+    vendored = Path(__file__).resolve().parent / "vendor" / "ltx_2_mlx"
+    if (vendored / "env" / "bin" / "ltx-2-mlx").is_file() and (vendored / "env" / "bin" / "python").is_file():
+        return vendored
     home = Path.home()
     for cand in (home / "ltx-2-mlx",
                  home / "AI" / "ltx-2-mlx",

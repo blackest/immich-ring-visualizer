@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Callable, List
 
 import ltx_pack_fetchNG
-from engine_installNG import InstallStep, phosphene_owned, run_logged
+from engine_installNG import InstallStep, app_vendored, phosphene_owned, run_logged
 from ltx_engineNG import LTX_REPO_DIR, LTX_WEIGHTS_ROOT
 
 LTX_FORK_URL = "https://github.com/mrbizarro/ltx-2-mlx.git"
@@ -52,6 +52,9 @@ def _git_head(repo_dir: Path) -> str:
 
 def _step_clone(on_log: Callable[[str], None]) -> None:
     dest = LTX_REPO_DIR
+    if app_vendored(dest):
+        on_log(f"{dest} is vendored with this app (see its VENDORED.md) -- nothing to clone.")
+        return
     if (dest / ".git").is_dir() and phosphene_owned(dest):
         on_log(f"{dest} belongs to Phosphene -- leaving its engine pin alone.")
         return
@@ -82,6 +85,9 @@ def _step_clone(on_log: Callable[[str], None]) -> None:
 
 def _step_venv(on_log: Callable[[str], None]) -> None:
     dest = LTX_REPO_DIR
+    if app_vendored(dest):
+        on_log("the vendored env is built by vendor/ltx_2_mlx/build_env.sh -- leaving it alone.")
+        return
     py311 = dest / "env" / "bin" / "python3.11"
     healthy = py311.is_file() and subprocess.run(
         [str(py311), "-c", "import sys"]).returncode == 0
@@ -96,6 +102,9 @@ def _step_venv(on_log: Callable[[str], None]) -> None:
 
 def _step_deps(on_log: Callable[[str], None]) -> None:
     dest = LTX_REPO_DIR
+    if app_vendored(dest):
+        on_log("the vendored env's packages are pinned in vendor/ltx_2_mlx/requirements.lock -- not touching them.")
+        return
     py = str(dest / "env" / "bin" / "python")
     if phosphene_owned(dest) and Path(py).is_file():
         on_log("Phosphene's venv already exists -- not touching its packages.")
