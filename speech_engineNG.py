@@ -19,6 +19,7 @@ One module, one job: no queue and no routes here (speech_jobsNG.py / routes/spee
 
 from __future__ import annotations
 
+import models_rootNG
 import json
 import os
 import re
@@ -61,9 +62,11 @@ def _resolve_speech_pack_ng() -> Path:
     env_p = os.environ.get("LTX_SPEECH_MODELS")
     if env_p:
         return Path(env_p).expanduser()
-    for cand in (Path("/Volumes/AI/Pinkio/drive/drives/peers/d1785024377531/mlx_models/speech"),
+    own = models_rootNG.mlx_models()
+    for cand in ((own / "speech") if own else None,
+                 Path("/Volumes/AI/Pinkio/drive/drives/peers/d1785024377531/mlx_models/speech"),
                  Path("/Volumes/AI/PhospheneNative/models/speech")):
-        if (cand / "customvoice" / "config.json").exists():
+        if cand is not None and (cand / "customvoice" / "config.json").exists():
             return cand
     return Path.home() / "mlx_models" / "speech"
 

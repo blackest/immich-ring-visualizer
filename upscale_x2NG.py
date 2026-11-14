@@ -12,6 +12,7 @@ LTX's frame grid is 1+8k, so a 124-frame clip renders as 129 (last frame held) a
 
 from __future__ import annotations
 
+import models_rootNG
 import argparse
 import math
 import os
@@ -34,7 +35,7 @@ if SHORT_GPU or re.search(r"Apple M[12]\b", subprocess.run(
     os.environ.setdefault("MLX_MAX_MB_PER_BUFFER", "1")
 
 PHOSPHENE = Path(os.environ.get("LTX_STUDIO_ROOT", "/Volumes/AI/Pinkio/api/phosphene.git"))
-MODELS = PHOSPHENE / "mlx_models"
+MODELS = (None if "LTX_STUDIO_ROOT" in os.environ else models_rootNG.mlx_models()) or PHOSPHENE / "mlx_models"
 PACK = MODELS / "ltx-2.5-mlx-q8"
 TEXT_ENCODER = MODELS / "gemma4-12b-ltx25-q4"  # LTX 2.5's own encoder; the 2.3 one gives a mosaic
 ADAPTER = MODELS / "loras" / "ic" / "ltx-2.5-22b-ic-lora-pixel-spatial-upscaler-x2-1.0.safetensors"

@@ -57,6 +57,7 @@ qkv row order by h3_loraNG.lora_for_runner_ng).
 
 from __future__ import annotations
 
+import models_rootNG
 import dataclasses
 import json
 import math
@@ -121,10 +122,11 @@ def _resolve_h3_models_root_ng() -> Path:
     env_p = os.environ.get("LTX_H3_MODELS")
     if env_p:
         return Path(env_p).expanduser()
-    cand = Path("/Volumes/AI/Pinkio/drive/drives/peers/d1785024377531"
-                "/mlx_models/hailuo-h3/models")
-    if cand.exists():
-        return cand
+    own = models_rootNG.mlx_models()
+    for cand in ((own / "hailuo-h3" / "models") if own else None,
+                 Path("/Volumes/AI/Pinkio/drive/drives/peers/d1785024377531/mlx_models/hailuo-h3/models")):
+        if cand is not None and cand.exists():
+            return cand
     return Path.home() / "mlx_models" / "hailuo-h3" / "models"
 
 

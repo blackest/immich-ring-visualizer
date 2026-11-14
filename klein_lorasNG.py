@@ -8,6 +8,7 @@ A name from the browser is looked up in this listing -- a client-supplied path n
 Optional `<name>.json` sidecar: name, recommended_strength, trigger_words, notes, kind.
 """
 
+import models_rootNG
 import json
 import os
 import struct
@@ -22,6 +23,9 @@ def loras_dir() -> Path:
     env = os.environ.get("KLEIN_LORAS_DIR")
     if env:
         return Path(env).expanduser()
+    own = models_rootNG.mlx_models()
+    if own and (own / "loras" / SUBFOLDER).is_dir():
+        return own / "loras" / SUBFOLDER
     from klein_engineNG import _phosphene_root
     return _phosphene_root() / "mlx_models" / "loras" / SUBFOLDER
 

@@ -88,3 +88,7 @@ Changed to select it: `load.py` (`_video_vae_classes`) and `scripts/generate_sta
 when it was taken from Pinokio's: no patches. `h3_installNG`'s clone, venv and deps steps do nothing here
 (`engine_installNG.app_vendored`). This folder does not carry `scripts/download_selected.py` or `scripts/quantize_stream.py`,
 which the installer's weights and Q8-build steps call, so "Install H3" on a machine without the weights would need Phosphene's checkout.
+
+**Added 2026-11-14 for the "Install H3" steps:** `scripts/download_selected.py` (fetches the checkpoint files into `<root>/models`) and
+`scripts/quantize_stream.py` (builds the local Q8 DiT), both copied unchanged from Phosphene's checkout at `953ec46`, so the weights and Q8
+steps of `h3_installNG` run from this folder on a machine that has no Phosphene.

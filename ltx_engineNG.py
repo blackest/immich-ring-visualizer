@@ -22,6 +22,7 @@ name to a real path.
 
 from __future__ import annotations
 
+import models_rootNG
 import json
 import os
 import random
@@ -66,9 +67,10 @@ def _resolve_ltx_weights_root_ng() -> Path:
     env_p = os.environ.get("LTX_MLX_MODELS_DIR")
     if env_p:
         return Path(env_p).expanduser()
-    cand = Path("/Volumes/AI/Pinkio/drive/drives/peers/d1785024377531/mlx_models")
-    if cand.exists():
-        return cand
+    for cand in (models_rootNG.mlx_models(),
+                 Path("/Volumes/AI/Pinkio/drive/drives/peers/d1785024377531/mlx_models")):
+        if cand is not None and cand.exists():
+            return cand
     return Path.home() / "mlx_models"
 
 

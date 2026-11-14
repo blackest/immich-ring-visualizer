@@ -16,7 +16,7 @@ Each resolver (`ltx_engineNG`, `music_engineNG`, `h3_engineNG`, `speech_engineNG
 env once it is built, then falls back to the old Phosphene/Pinokio locations, and an environment variable still overrides
 everything. Rebuild any env with its script; the exact package set is the `requirements.lock` beside it.
 
-**Weights** are still read from Pinokio: `mlx_models` (LTX, H3, music, speech, LoRAs) and Klein's Hugging Face cache.
+**Weights** are read from the app's own folder, `/Volumes/AI/ImmichRingModels` (or `IMMICHRING_MODELS_ROOT`; see `models_rootNG.py`): `mlx_models/` (LTX, H3, music, speech, LoRAs, characters) and `HF_HOME/hub` (Klein). It is an APFS clone of Pinokio's `mlx_models` and PhospheneNative's Klein cache (made 2026-11-14, about 4 MB of disk), so it does not depend on either. Every resolver looks there first, then at the old Phosphene/Pinokio locations.
 
 ## How this was checked
 
@@ -39,10 +39,7 @@ everything. Rebuild any env with its script; the exact package set is the `requi
 
 ## What is left to separate
 
-1. **Weights.** Cloning `mlx_models` (about 340 GB) into an app-owned root costs no space on APFS; the Pinokio copy has things
-   `PhospheneNative/models` lacks (the 22 GB `minimax-h3-image` pack, `speech/voicedesign`, `characters`). Then Klein's Hugging Face
-   cache (about 19 GB).
-2. **The resolver defaults** that still point at `/Volumes/AI/Pinkio/...` as a last fallback, and the one setting that names a root.
+1. **Weights.** Done: the neutral folder exists and is looked at first. Phosphene and Pinokio still use their own copies; turning those into links to it is optional.
+2. **The resolver fallbacks** that still point at `/Volumes/AI/Pinkio/...` after the neutral folder (harmless; remove with Pinokio).
 3. **Python versions.** All five engines are on 3.14.6 with their original exact pins. The combined-environment finding still applies if they are ever merged into one env: music's exact pins (`mlx` 0.32.2, `transformers` 5.10.4 ...) must be held.
-4. **Installers.** "Install H3" on a machine without the weights needs `scripts/download_selected.py` and `scripts/quantize_stream.py`,
-   which the vendored H3 folder does not carry.
+4. **Installers.** Done: `scripts/download_selected.py` and `scripts/quantize_stream.py` are now in the vendored H3 folder.

@@ -7,6 +7,7 @@ are found, never installed, here; Phosphene's own Klein code is not used, so its
 what this does (the same reason the H3 runner is vendored).
 """
 
+import models_rootNG
 import json
 import os
 import queue
@@ -59,7 +60,7 @@ def cache_roots() -> list:
     """Hugging Face caches to look in: Phosphene's own (where it downloads Klein), then the
     ones this shell's environment names, then the default."""
     env = os.environ
-    found = [_phosphene_root() / "cache" / "HF_HOME" / "hub"]
+    found = [p for p in (models_rootNG.hf_hub(),) if p] + [_phosphene_root() / "cache" / "HF_HOME" / "hub"]
     if env.get("HF_HUB_CACHE"):
         found.append(Path(env["HF_HUB_CACHE"]).expanduser())
     if env.get("HF_HOME"):

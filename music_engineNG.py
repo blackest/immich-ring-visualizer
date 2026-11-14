@@ -48,6 +48,7 @@ pack -- see _resolve_music_precision_ng).
 
 from __future__ import annotations
 
+import models_rootNG
 import json
 import os
 import random
@@ -94,9 +95,11 @@ def _resolve_music_models_root_ng() -> Path:
     env_p = os.environ.get("LTX_MUSIC_MODELS")
     if env_p:
         return Path(env_p).expanduser()
-    cand = Path("/Volumes/AI/Pinkio/drive/drives/peers/d1785024377531/mlx_models/yue2")
-    if cand.exists():
-        return cand
+    own = models_rootNG.mlx_models()
+    for cand in ((own / "yue2") if own else None,
+                 Path("/Volumes/AI/Pinkio/drive/drives/peers/d1785024377531/mlx_models/yue2")):
+        if cand is not None and cand.exists():
+            return cand
     return Path.home() / "mlx_models" / "yue2"
 
 
