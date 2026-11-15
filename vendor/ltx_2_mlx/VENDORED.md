@@ -57,3 +57,9 @@ with this folder as the engine and once with the Phosphene/Pinokio engine it rep
 
 The scripts that run on this interpreter (the Gemma and scene helpers, upscale x2, the H3 upscale, make-vertical) import the
 same third-party packages here as under the old env. Only text-to-video and image-to-video were rendered end to end.
+
+**Opt-in chunked decode (2026-11-15, ours):** `video_vae._long_clip_chunks`. With `LTX_LONG_DECODE_TILES=on` (or `chunk/blend`, e.g. `128/32`),
+a clip of 129+ frames is decoded in 128-frame chunks with a 32-frame blend instead of in one piece. Off by default, so output is unchanged
+unless set. Measured on this Mac, 10 s at 1024x576: the decode's memory peak 24.8 GB -> 15.5 GB, same time (1247 s vs 1261 s), picture
+42 dB against the whole decode (not bit-identical, no visible seam), audio identical. At 768x448 the whole-process peak did not change.
+Same idea as Phosphene v5.0.25's fix. Does not raise the maximum clip length: the denoise stage sets that.

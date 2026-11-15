@@ -58,6 +58,23 @@ from ltx_core_mlx.utils.memory import aggressive_cleanup
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+def _long_clip_chunks(f_lat: int) -> TilingConfig | None:
+    """Chunked decode for a long clip, only when LTX_LONG_DECODE_TILES is set to "on" or to "chunk/blend" in frames
+    (Phosphene v5.0.25 uses 128/32). Off by default; a clip under 17 latent frames (129 frames) is never chunked."""
+    raw = (os.environ.get("LTX_LONG_DECODE_TILES") or "").strip().lower()
+    if raw in ("", "0", "off", "no", "false", "whole") or f_lat < 17:
+        return None
+    tile, overlap = 128, 32
+    if raw not in ("1", "on", "yes", "true"):
+        try:
+            tile, overlap = (int(x) for x in raw.split("/", 1))
+        except ValueError:
+            pass
+    if tile < 16 or tile % 8 or overlap < 0 or overlap % 8 or overlap >= tile or tile // 8 >= f_lat:
+        return None
+    return TilingConfig(temporal_config=TemporalTilingConfig(tile_size_in_frames=tile, tile_overlap_in_frames=overlap))
+
+
 def _compute_decode_tiling(
     latent_shape: tuple[int, ...],
     frame_rate: float = 24.0,
@@ -79,7 +96,9 @@ def _compute_decode_tiling(
     block3_bytes_per_lat_frame = 512 * 4 * (H_lat * 4) * (W_lat * 4) * 2
 
     if block3_bytes_per_lat_frame * F_lat <= budget_bytes:
-        return None  # Full video fits in budget — no tiling needed
+        # immichRingNG, opt-in (LTX_LONG_DECODE_TILES): the estimate above is 10-17x below the real decode peak, so a long
+        # clip can still be decoded in chunks. See vendor/ltx_2_mlx/VENDORED.md.
+        return _long_clip_chunks(F_lat)
 
     # How many latent frames fit within the budget?
     max_lat_frames = max(2, budget_bytes // block3_bytes_per_lat_frame)
