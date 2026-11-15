@@ -365,6 +365,7 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
                f"clips will be encoded at upstream's large crf-18 default")
     env = _clean_subprocess_env_ng()
     env.update(ltx_codecNG.codec_env_ng(configNG.get_ltx_output_preset()))
+    env["LTX_LONG_DECODE_TILES"] = configNG.get_ltx_long_decode_tiles()  # the Settings switch ("off" = normal decode)
     for key, value in LTX_GPU_STEP_ENV_NG.items():
         env.setdefault(key, value)
 

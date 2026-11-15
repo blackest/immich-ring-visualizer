@@ -180,7 +180,8 @@ class GenerateTests(unittest.TestCase):
                   mock.patch.object(ltx, "_resolve_ltx_gemma_ng", return_value="/g"),
                   mock.patch.object(ltx_codecNG, "apply_codec_patch_ng", return_value=ltx_codecNG.ALREADY),
                   mock.patch.object(model_offloadNG, "offload_resident_models_ng"),
-                  mock.patch("configNG.get_ltx_output_preset", return_value="web")):
+                  mock.patch("configNG.get_ltx_output_preset", return_value="web"),
+                  mock.patch("configNG.get_ltx_long_decode_tiles", return_value="off")):
             p.start()
             self.addCleanup(p.stop)
         self.offload = model_offloadNG.offload_resident_models_ng
@@ -259,6 +260,13 @@ class GenerateTests(unittest.TestCase):
     def test_random_seed_when_none(self):
         res = self._run(seed=None)
         self.assertTrue(0 <= res["seed"] < 2**31)
+
+    def test_long_decode_switch_reaches_the_render_process(self):
+        self._run()
+        self.assertEqual(self.envs[0]["LTX_LONG_DECODE_TILES"], "off")
+        with mock.patch("configNG.get_ltx_long_decode_tiles", return_value="on"):
+            self._run()
+        self.assertEqual(self.envs[1]["LTX_LONG_DECODE_TILES"], "on")
 
     def test_codec_preset_env_offload_and_proc_hook(self):
         started = []

@@ -233,6 +233,17 @@ NG_ADDRESS_SETTINGS = [
             {"value": "archival", "label": "Lossless 4:4:4 (huge)"},
         ],
     },
+    {
+        "key": "ltx_long_decode_tiles",
+        "env": "LTX_LONG_DECODE_TILES",
+        "default": "off",
+        "label": "Animate long-clip decode",
+        "description": "Decode clips over about 5 seconds in 128-frame chunks. Cuts the end-of-render memory peak by about a third (10 s at 1024x576: 24.8 to 15.5 GB), same speed, picture within about 42 dB of the normal decode (no visible seam). It does not allow longer clips. Off keeps the normal decode.",
+        "options": [
+            {"value": "off", "label": "Off (normal decode)"},
+            {"value": "on", "label": "On (chunked, less memory)"},
+        ],
+    },
 ]
 
 
@@ -457,6 +468,10 @@ def save_ng_address_settings(values):
 
 def get_ltx_output_preset():
     return _ng_setting("ltx_output_preset")
+
+
+def get_ltx_long_decode_tiles():
+    return _ng_setting("ltx_long_decode_tiles")
 
 
 def get_ollama_base_url():
