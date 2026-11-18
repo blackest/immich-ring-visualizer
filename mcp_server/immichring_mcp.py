@@ -34,8 +34,9 @@ TOOLS = [
      "run": lambda a: api.compile_brief(a["intent"], a.get("seconds", 5.2))},
     {"name": "render_video",
      "description": ("Start a Hailuo H3 video. Give 'windows' from compile_brief, or just a 'prompt' for a single "
-                     "5-second clip. Defaults: draft quality, Fast. Returns a job_id like 'h3:abc'; the video is not "
-                     "ready yet. Use job_status to wait, then fetch."),
+                     "5-second clip. Length is 5 seconds per window; there is no seconds argument. Defaults: draft "
+                     "quality, Fast. Returns a job_id like 'h3:abc'; the video is not ready yet. Use job_status to "
+                     "wait, then fetch."),
      "inputSchema": _schema({"windows": {"type": "array", "items": {"type": "string"},
                                          "description": "Prompts from compile_brief, in order."},
                              "prompt": {"type": "string", "description": "A single prompt, if no windows."},
