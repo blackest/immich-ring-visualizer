@@ -330,6 +330,12 @@ class GenerateTests(unittest.TestCase):
         self.assertTrue(any("attempt 1/3" in l for l in self.logs) and any("attempt 2/3" in l for l in self.logs))
         self.assertTrue(Path(res["mp4_path"]).is_file())
 
+    def test_a_restart_after_a_kill_uses_the_shortest_gpu_steps(self):
+        self._run_seq([_Proc(rc=-6), _Proc(rc=-6), _Proc(rc=0)])
+        ops = [e["MLX_MAX_OPS_PER_BUFFER"] for e in self.envs]
+        self.assertEqual(ops, ["10", "1", "1"])                 # first try as before, then one op per buffer
+        self.assertEqual(self.envs[2]["MLX_MAX_MB_PER_BUFFER"], "1")
+
     def test_the_watchdog_text_also_counts_and_three_failures_give_up_with_the_reason(self):
         procs = [_Proc(rc=1, lines=["Metal: kIOGPUCommandBufferCallbackErrorImpactingInteractivity\n"]) for _ in range(3)]
         with self.assertRaisesRegex(RuntimeError, r"failed with rc=1: .*kIOGPU"):

@@ -194,6 +194,9 @@ def _clean_subprocess_env_ng() -> dict:
 # pieces of work (Phosphene's own settings); every one can still be overridden from the app's environment.
 LTX_GPU_STEP_ENV_NG = {"MLX_DISABLE_COMPILE": "1", "MLX_METAL_FAST_SYNCH": "1",
                        "MLX_MAX_OPS_PER_BUFFER": "10", "MLX_MAX_MB_PER_BUFFER": "10"}
+# After a watchdog kill the next attempt asks for even less per GPU call (Phosphene's own escalation, v5.0.35+):
+# one op per command buffer. The picture is bit-identical; only the speed suffers, and only for the retry.
+LTX_GPU_SHORT_ENV_NG = {"MLX_MAX_OPS_PER_BUFFER": "1", "MLX_MAX_MB_PER_BUFFER": "1"}
 LTX_ATTEMPTS_NG = 3
 
 
@@ -379,7 +382,7 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                env=env,
+                env={**env, **LTX_GPU_SHORT_ENV_NG} if attempt > 1 else env,
                 cwd=str(LTX_REPO_DIR),
                 start_new_session=True,
             )
@@ -427,7 +430,7 @@ def generate_ltx_video_ng(prompt: str, image_path: Optional[str], duration_s: fl
             if attempt < LTX_ATTEMPTS_NG and _watchdog_death_ng(rc, tail):
                 if on_log:
                     on_log(f"[ltx] macOS stopped the render (rc={rc}, attempt {attempt}/{LTX_ATTEMPTS_NG}); "
-                           f"starting it again")
+                           f"starting it again with the shortest GPU steps")
                 continue
             last = " | ".join(t for t in tail if t.strip())[-300:]
             raise RuntimeError(f"LTX gen failed with rc={rc}" + (f": {last}" if last else ""))
