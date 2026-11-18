@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""immichring MCP server: six tools for an agent, over newline JSON-RPC on stdio.
+"""immichring MCP server: eight tools for an agent, over newline JSON-RPC on stdio.
 
     IMMICHRING_URL=http://192.168.3.54:5050 python3 immichring_mcp.py
 
@@ -54,21 +54,39 @@ TOOLS = [
                              "width": {"type": "integer", "description": "Default 1024."},
                              "height": {"type": "integer", "description": "Default 576."}}, ["prompt"]),
      "run": lambda a: api.make_image(a["prompt"], a.get("pictures"), a.get("width", 1024), a.get("height", 576))},
+    {"name": "make_song",
+     "description": ("Start a song. Give a 'style' (for example 'slow blues, male vocal'), and/or 'lyrics', or set "
+                     "instrumental. The song is as long as the lyrics make it. Takes minutes. Returns a job_id like "
+                     "'music:abc'. Use job_status to wait, then fetch."),
+     "inputSchema": _schema({"style": {"type": "string", "description": "Genre, mood, voice."},
+                             "lyrics": {"type": "string", "description": "The words to sing, with verses on new lines."},
+                             "instrumental": {"type": "boolean", "description": "No singing. Default false."},
+                             "seconds": {"type": "number", "description": "Optional longest length. Default 240."}}),
+     "run": lambda a: api.make_song(a.get("style", ""), a.get("lyrics", ""), a.get("instrumental", False),
+                                    a.get("seconds", 0))},
+    {"name": "make_speech",
+     "description": ("Start spoken audio from text. 'voice' is a preset speaker or a character with a saved voice; "
+                     "leave it out for the default, or give a wrong name and the error lists the voices. Returns a "
+                     "job_id like 'speech:abc'. Use job_status to wait, then fetch."),
+     "inputSchema": _schema({"text": {"type": "string", "description": "The words to say."},
+                             "voice": {"type": "string", "description": "A voice name. Default: the first preset."},
+                             "language": {"type": "string", "description": "Default english."}}, ["text"]),
+     "run": lambda a: api.make_speech(a["text"], a.get("voice", ""), a.get("language", "english"))},
     {"name": "job_status",
      "description": ("Where a job is: queued, rendering, done, failed or cancelled. Works for any job_id. Set "
                      "wait_seconds (up to 600) to wait for it to finish instead of asking again and again."),
-     "inputSchema": _schema({"job_id": {"type": "string", "description": "For example 'h3:abc' or 'klein:k1'."},
+     "inputSchema": _schema({"job_id": {"type": "string", "description": "For example 'h3:abc', 'klein:k1', 'music:abc' or 'speech:abc'."},
                              "wait_seconds": {"type": "number", "description": "Default 0: answer now."}}, ["job_id"]),
      "run": lambda a: api.job_status(a["job_id"], a.get("wait_seconds", 0))},
     {"name": "fetch",
-     "description": ("Save a finished job's video or first picture to a file on this machine. 'dest' is a file path, "
+     "description": ("Save a finished job's video, song, speech or first picture to a file on this machine. 'dest' is a file path, "
                      "or a folder to save into. The job must be done."),
      "inputSchema": _schema({"job_id": {"type": "string"},
                              "dest": {"type": "string", "description": "File path or folder to save to."}},
                             ["job_id", "dest"]),
      "run": lambda a: api.fetch(a["job_id"], a["dest"])},
     {"name": "recent_jobs",
-     "description": "The latest jobs, videos and pictures together, newest first. Default 8.",
+     "description": "The latest videos, pictures and speech together, newest first (songs are not listed). Default 8.",
      "inputSchema": _schema({"limit": {"type": "integer", "description": "How many, 1 to 25."}}),
      "run": lambda a: api.recent_jobs(a.get("limit", 8))},
 ]

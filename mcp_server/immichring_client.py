@@ -22,6 +22,7 @@ import uuid
 BASE = os.environ.get("IMMICHRING_URL", "http://127.0.0.1:5050").rstrip("/")
 
 H3_QUALITIES = ("draft", "standard", "high", "native")
+KINDS = ("h3", "klein", "music", "speech")
 KLEIN_SLOTS = ("subject", "location", "extra")   # the app's first three reference slots, in order
 
 
@@ -45,10 +46,13 @@ def _multipart(fields: dict, files: list) -> tuple:
     return b"".join(out), f"multipart/form-data; boundary={boundary}"
 
 
-def _call(method: str, path: str, fields: dict = None, files: list = None, timeout: float = 30, raw: bool = False):
+def _call(method: str, path: str, fields: dict = None, files: list = None, timeout: float = 30, raw: bool = False,
+          json_body: dict = None):
     """One request. JSON back (or raw bytes), or ImmichringError with the app's own sentence."""
     data, headers = None, {}
-    if fields is not None or files:
+    if json_body is not None:
+        data, headers["Content-Type"] = json.dumps(json_body).encode(), "application/json"
+    elif fields is not None or files:
         data, headers["Content-Type"] = _multipart(fields or {}, files or [])
     req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
     try:
@@ -75,8 +79,8 @@ def _call(method: str, path: str, fields: dict = None, files: list = None, timeo
 
 def split_id(job_id: str) -> tuple:
     kind, sep, raw = str(job_id or "").partition(":")
-    if not sep or kind not in ("h3", "klein") or not raw:
-        raise ImmichringError(f"{job_id!r} is not a job id. Ids look like 'h3:abc123' or 'klein:k1'.")
+    if not sep or kind not in KINDS or not raw:
+        raise ImmichringError(f"{job_id!r} is not a job id. Ids look like 'h3:abc123', 'klein:k1', 'music:abc' or 'speech:abc'.")
     return kind, raw
 
 
@@ -88,7 +92,7 @@ def _check_pictures(paths) -> list:
     return paths
 
 
-# --- the six things --------------------------------------------------------------------------------
+# --- the eight things --------------------------------------------------------------------------------
 
 def _window_texts(windows) -> list:
     """The compiler returns {prompt, continues, shots} objects; the renderer wants plain strings."""
@@ -142,6 +146,42 @@ def make_image(prompt: str, pictures=None, width: int = 1024, height: int = 576)
     return {"job_id": f"klein:{out['jobId']}", "status": "queued"}
 
 
+def make_song(style: str = "", lyrics: str = "", instrumental: bool = False, seconds: float = 0) -> dict:
+    """Queue a song. A style and/or lyrics; the song is as long as the lyrics make it, `seconds` only caps it."""
+    if not str(style or "").strip() and not str(lyrics or "").strip():
+        raise ImmichringError("Give a style (for example 'slow blues, male vocal') and/or lyrics.")
+    body = {"style": style or "", "lyrics": lyrics or "", "instrumental": bool(instrumental)}
+    if seconds:
+        body["duration_s"] = float(seconds)
+    out = _call("POST", "/api/ng/music/generate", json_body=body, timeout=60)
+    return {"job_id": f"music:{out['job_id']}", "status": "queued"}
+
+
+def _voices() -> dict:
+    return _call("GET", "/api/ng/speech/voices")
+
+
+def make_speech(text: str, voice: str = "", language: str = "english") -> dict:
+    """Queue spoken audio. `voice` is a preset speaker or a character with a saved voice; blank = the first preset."""
+    if not str(text or "").strip():
+        raise ImmichringError("Give the words to say.")
+    known = _voices()
+    presets = [p["id"] for p in known.get("presets", [])]
+    characters = [c["id"] for c in known.get("characters", [])]
+    wanted = str(voice or "").strip()
+    if not wanted:
+        wanted = presets[0] if presets else ""
+    by_name = {n.casefold(): n for n in presets + characters}
+    if wanted.casefold() not in by_name:
+        raise ImmichringError(f"No voice called {wanted!r}. Choose one of: {', '.join(presets + characters)}.")
+    name = by_name[wanted.casefold()]
+    kind = "preset" if name in presets else "character"
+    fields = {"text": text, "kind": kind, "language": str(language or "english").lower(),
+              ("voice" if kind == "preset" else "character"): name}
+    out = _call("POST", "/api/ng/speech/generate", fields, timeout=60)
+    return {"job_id": f"speech:{out['job_id']}", "status": "queued", "voice": name}
+
+
 def _h3_view(st: dict) -> dict:
     status = {"completed": "done"}.get(st.get("status"), st.get("status"))
     view = {"job_id": f"h3:{st['job_id']}", "kind": "video", "status": status, "prompt": st.get("prompt", "")[:140]}
@@ -161,22 +201,47 @@ def _klein_view(st: dict) -> dict:
     return view
 
 
+def _audio_view(kind: str, st: dict) -> dict:
+    """Music and speech jobs share a shape: completed means done."""
+    status = {"completed": "done"}.get(st.get("status"), st.get("status"))
+    text = st.get("lyrics") or st.get("style") or st.get("text") or ""
+    view = {"job_id": f"{kind}:{st['job_id']}", "kind": "song" if kind == "music" else "speech", "status": status,
+            "prompt": str(text)[:140]}
+    if status == "done" and st.get("audio_seconds"):
+        view["seconds"] = round(st["audio_seconds"], 1)
+    if status == "failed":
+        view["error"] = st.get("error") or "The job failed."
+    return view
+
+
+def _view(kind: str, raw: str) -> dict:
+    q = urllib.parse.quote(raw)
+    if kind == "h3":
+        return _h3_view(_call("GET", f"/api/ng/h3/jobs/{q}"))
+    if kind == "klein":
+        return _klein_view(_call("GET", f"/api/ng/klein/status/{q}"))
+    return _audio_view(kind, _call("GET", f"/api/ng/{kind}/jobs/{q}"))
+
+
 def job_status(job_id: str, wait_s: float = 0) -> dict:
     """Where a job is. With wait_s, polls until it ends or the time runs out (max 600 s)."""
     kind, raw = split_id(job_id)
     deadline = time.monotonic() + max(0.0, min(float(wait_s or 0), 600.0))
     while True:
-        if kind == "h3":
-            view = _h3_view(_call("GET", f"/api/ng/h3/jobs/{urllib.parse.quote(raw)}"))
-        else:
-            view = _klein_view(_call("GET", f"/api/ng/klein/status/{urllib.parse.quote(raw)}"))
+        view = _view(kind, raw)
         if view["status"] in ("done", "failed", "cancelled") or time.monotonic() >= deadline:
             return view
         time.sleep(5)
 
 
+# kinds whose finished job is one file behind a download route: (route, extension)
+DOWNLOADS = {"h3": ("/api/ng/h3/jobs/{}/download", ".mp4"),
+             "music": ("/api/ng/music/jobs/{}/download", ".flac"),
+             "speech": ("/api/ng/speech/jobs/{}/download", ".wav")}
+
+
 def fetch(job_id: str, dest: str) -> dict:
-    """Save a finished job's video or first picture to `dest` (a file path on this machine)."""
+    """Save a finished job's video, song, speech or first picture to `dest` (a file path on this machine)."""
     kind, raw = split_id(job_id)
     view = job_status(job_id)
     if view["status"] != "done":
@@ -185,9 +250,9 @@ def fetch(job_id: str, dest: str) -> dict:
     if not dest:
         raise ImmichringError("Say where to save it: 'dest' is a file path.")
     if os.path.isdir(dest):
-        dest = os.path.join(dest, f"{kind}-{raw}" + (".mp4" if kind == "h3" else ".png"))
-    if kind == "h3":
-        body = _call("GET", f"/api/ng/h3/jobs/{urllib.parse.quote(raw)}/download", timeout=300, raw=True)
+        dest = os.path.join(dest, f"{kind}-{raw}{DOWNLOADS[kind][1] if kind in DOWNLOADS else '.png'}")
+    if kind in DOWNLOADS:
+        body = _call("GET", DOWNLOADS[kind][0].format(urllib.parse.quote(raw)), timeout=300, raw=True)
         others = 0
     else:
         results = _call("GET", f"/api/ng/klein/status/{urllib.parse.quote(raw)}").get("results") or []
@@ -212,6 +277,11 @@ def recent_jobs(limit: int = 8) -> dict:
     try:
         for st in _call("GET", "/api/ng/h3/jobs").get("jobs", []):
             found.append((st.get("queued_at") or 0, _h3_view(st)))
+    except ImmichringError:
+        pass
+    try:
+        for st in _call("GET", "/api/ng/speech/jobs").get("jobs", []):
+            found.append((st.get("queued_at") or 0, _audio_view("speech", st)))
     except ImmichringError:
         pass
     for st in _call("GET", f"/api/ng/klein/jobs?limit={limit}").get("jobs", []):

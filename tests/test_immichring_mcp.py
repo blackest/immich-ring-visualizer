@@ -52,6 +52,12 @@ class Stub(BaseHTTPRequestHandler):
             if b"toolong" in body:
                 return self._send(400, {"error": "duration_s must be at most 15"})
             return self._send(202, {"ok": True, "job_id": "abc123", "poll_url": "/api/ng/h3/jobs/abc123"})
+        if self.path == "/api/ng/music/generate":
+            if b"toolong" in body:
+                return self._send(400, {"error": "duration_s too long"})
+            return self._send(202, {"ok": True, "job_id": "m1", "poll_url": "/api/ng/music/jobs/m1"})
+        if self.path == "/api/ng/speech/generate":
+            return self._send(202, {"ok": True, "job_id": "s1", "poll_url": "/api/ng/speech/jobs/s1"})
         if self.path == "/api/ng/klein/generate":
             return self._send(200, {"jobId": "k1", "job": {"id": "k1", "status": "queued"}})
         self._send(404, {"error": "nope"})
@@ -72,6 +78,25 @@ class Stub(BaseHTTPRequestHandler):
         if p == "/api/ng/h3/jobs":
             return self._send(200, {"jobs": [{"job_id": "abc123", "status": "completed", "prompt": "a hill",
                                               "queued_at": 20}]})
+        if p == "/api/ng/music/jobs/m1":
+            return self._send(200, {"job_id": "m1", "status": "completed", "style": "slow blues", "lyrics": "la la",
+                                    "audio_seconds": 61.234, "error": None})
+        if p == "/api/ng/music/jobs/m1/download":
+            return self._send(200, b"FLACDATA", "audio/flac")
+        if p == "/api/ng/speech/voices":
+            return self._send(200, {"presets": [{"id": "Aiden", "label": "Aiden"}, {"id": "Serena", "label": "Serena"}],
+                                    "characters": [{"id": "knight", "label": "knight"}], "styles": [], "languages": []})
+        if p == "/api/ng/speech/jobs/s1":
+            return self._send(200, {"job_id": "s1", "status": "failed", "text": "hello", "error": "voice model missing",
+                                    "audio_seconds": None})
+        if p == "/api/ng/speech/jobs/s2":
+            return self._send(200, {"job_id": "s2", "status": "completed", "text": "hello", "error": None,
+                                    "audio_seconds": 2.0})
+        if p == "/api/ng/speech/jobs/s2/download":
+            return self._send(200, b"WAVDATA", "audio/wav")
+        if p == "/api/ng/speech/jobs":
+            return self._send(200, {"jobs": [{"job_id": "s2", "status": "completed", "text": "hello",
+                                              "audio_seconds": 2.0, "queued_at": 40}]})
         if p == "/api/ng/klein/status/k1":
             return self._send(200, {"id": "k1", "status": "done", "prompt": "an apple", "error": None,
                                     "results": [{"file": "out1.png"}, {"file": "out2.png"}], "created_at": 30})
@@ -110,9 +135,10 @@ class StubbedCase(unittest.TestCase):
 
 
 class ToolLayerTests(StubbedCase):
-    def test_six_tools_with_schemas(self):
+    def test_eight_tools_with_schemas(self):
         names = [t["name"] for t in mcp._tool_list()]
-        self.assertEqual(names, ["compile_brief", "render_video", "make_image", "job_status", "fetch", "recent_jobs"])
+        self.assertEqual(names, ["compile_brief", "render_video", "make_image", "make_song", "make_speech",
+                                 "job_status", "fetch", "recent_jobs"])
         self.assertTrue(all("run" not in t and t["inputSchema"]["type"] == "object" for t in mcp._tool_list()))
 
     def test_protocol_handshake_and_list(self):
@@ -120,7 +146,7 @@ class ToolLayerTests(StubbedCase):
         self.assertEqual(init["result"]["protocolVersion"], "2025-06-18")
         self.assertEqual(init["result"]["serverInfo"]["name"], "immichring")
         self.assertIsNone(mcp.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
-        self.assertEqual(len(mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]), 6)
+        self.assertEqual(len(mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]), 8)
         self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 3, "method": "nope"})["error"]["code"], -32601)
 
     def test_missing_and_unknown_arguments_are_sentences(self):
@@ -193,6 +219,66 @@ class ImageTests(StubbedCase):
         self.assertIn("At most 3", text)
 
 
+class SongSpeechTests(StubbedCase):
+    def test_a_song_goes_as_json_and_comes_back_as_a_music_id(self):
+        self.assertEqual(run("make_song", {"style": "slow blues", "lyrics": "la la"}),
+                         (False, {"job_id": "music:m1", "status": "queued"}))
+        method, path, body = SEEN[-1]
+        self.assertEqual((method, path), ("POST", "/api/ng/music/generate"))
+        self.assertEqual(json.loads(body), {"style": "slow blues", "lyrics": "la la", "instrumental": False})
+
+    def test_seconds_is_only_sent_when_given_and_an_instrumental_needs_no_words(self):
+        run("make_song", {"style": "ambient", "instrumental": True, "seconds": 90})
+        self.assertEqual(json.loads(SEEN[-1][2]), {"style": "ambient", "lyrics": "", "instrumental": True,
+                                                   "duration_s": 90.0})
+
+    def test_a_song_needs_a_style_or_lyrics_and_app_errors_come_through(self):
+        self.assertIn("style", run("make_song", {})[1])
+        self.assertEqual(run("make_song", {"style": "x", "seconds": 5}), (False, {"job_id": "music:m1", "status": "queued"}))
+        self.assertEqual(run("make_song", {"style": "toolong"}), (True, "duration_s too long"))
+
+    def test_speech_uses_the_first_preset_when_no_voice_is_named(self):
+        err, out = run("make_speech", {"text": "hello"})
+        self.assertEqual((err, out), (False, {"job_id": "speech:s1", "status": "queued", "voice": "Aiden"}))
+        body = SEEN[-1][2].decode()
+        for want in ('name="kind"\r\n\r\npreset', 'name="voice"\r\n\r\nAiden', 'name="text"\r\n\r\nhello',
+                     'name="language"\r\n\r\nenglish'):
+            self.assertIn(want, body)
+
+    def test_a_saved_character_voice_goes_as_a_character_and_names_ignore_case(self):
+        err, out = run("make_speech", {"text": "hi", "voice": "KNIGHT"})
+        self.assertFalse(err)
+        self.assertEqual(out["voice"], "knight")
+        body = SEEN[-1][2].decode()
+        self.assertIn('name="kind"\r\n\r\ncharacter', body)
+        self.assertIn('name="character"\r\n\r\nknight', body)
+        self.assertNotIn('name="voice"', body)
+
+    def test_an_unknown_voice_lists_the_choices_and_sends_nothing(self):
+        before = len([s for s in SEEN if s[1] == "/api/ng/speech/generate"])
+        err, text = run("make_speech", {"text": "hi", "voice": "Zed"})
+        self.assertTrue(err)
+        self.assertIn("Aiden, Serena, knight", text)
+        self.assertEqual(len([s for s in SEEN if s[1] == "/api/ng/speech/generate"]), before)
+
+    def test_status_for_music_and_speech_uses_the_shared_words(self):
+        self.assertEqual(run("job_status", {"job_id": "music:m1"})[1],
+                         {"job_id": "music:m1", "kind": "song", "status": "done", "prompt": "la la", "seconds": 61.2})
+        err, out = run("job_status", {"job_id": "speech:s1"})
+        self.assertEqual((out["status"], out["error"]), ("failed", "voice model missing"))
+
+    def test_songs_and_speech_are_saved_with_the_right_extension(self):
+        out = run("fetch", {"job_id": "music:m1", "dest": str(self.tmp)})[1]
+        self.assertTrue(out["saved"].endswith("music-m1.flac"))
+        self.assertEqual(Path(out["saved"]).read_bytes(), b"FLACDATA")
+        out = run("fetch", {"job_id": "speech:s2", "dest": str(self.tmp / "hello.wav")})[1]
+        self.assertEqual(Path(out["saved"]).read_bytes(), b"WAVDATA")
+
+    def test_recent_jobs_includes_speech(self):
+        kinds = {j["kind"] for j in run("recent_jobs", {})[1]["jobs"]}
+        self.assertEqual(kinds, {"video", "picture", "speech"})
+
+
 class StatusFetchRecentTests(StubbedCase):
     def test_states_are_named_the_same_for_both_kinds(self):
         self.assertEqual(run("job_status", {"job_id": "h3:abc123"})[1]["status"], "done")
@@ -233,10 +319,10 @@ class StatusFetchRecentTests(StubbedCase):
         self.assertIn("rendering, not done yet", text)
         self.assertFalse((self.tmp / "x.mp4").exists())
 
-    def test_recent_jobs_merges_both_kinds_newest_first(self):
+    def test_recent_jobs_merges_all_kinds_newest_first(self):
         err, out = run("recent_jobs", {})
         self.assertFalse(err)
-        self.assertEqual([j["job_id"] for j in out["jobs"]], ["klein:k1", "h3:abc123"])
+        self.assertEqual([j["job_id"] for j in out["jobs"]], ["speech:s2", "klein:k1", "h3:abc123"])
 
 
 class OutsideTests(unittest.TestCase):
