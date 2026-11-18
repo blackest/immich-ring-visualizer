@@ -11,6 +11,7 @@ import models_rootNG
 import json
 import os
 import queue
+import re
 import signal
 import subprocess
 import threading
@@ -156,7 +157,27 @@ def _large_settings_ng(width: int, height: int, options: dict) -> dict:
     return {**options, "low_ram": False, "vae_tile": options.get("vae_tile") or LARGE_TILE}
 
 
-def _clean_env(large: bool = False) -> dict:
+# macOS kills a GPU command that runs too long ("Impacting Interactivity", ml-explore/mlx#3267).
+_WATCHDOG = re.compile(r"Impacting ?Interactivity|Caused GPU Timeout Error", re.I)
+# Phosphene's own retry (v5.0.38): every Metal op in a command buffer of its own. Output is bit-identical.
+SHORT_BUFFERS = {"MLX_MAX_OPS_PER_BUFFER": "1", "MLX_MAX_MB_PER_BUFFER": "1"}
+_PROGRESS = re.compile(r"%\||[0-9.]+s/it|it/s\]|^\s*(\[download\]|Fetching \d+ files)")
+
+
+class KleinWatchdogKill(RuntimeError):
+    """The worker was stopped by the macOS GPU watchdog (not a fault in the request)."""
+
+
+def _failure_reason_ng(tail, rc) -> str:
+    """The worker's own reason, not its last progress bars (Phosphene's hotfix H7: the real error was cut off)."""
+    lines = [l.strip() for l in tail if l.strip()]
+    keep = [l for l in lines if not _PROGRESS.search(l)]
+    if keep:
+        return "\n".join(keep[-6:])
+    return f"the Klein worker stopped (exit code {rc}) without saying why. Retry; if it stops again, free some memory."
+
+
+def _clean_env(large: bool = False, short_buffers: bool = False) -> dict:
     drop = {"VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "__PYVENV_LAUNCHER__"}
     env = {k: v for k, v in os.environ.items() if k not in drop and not k.startswith(("Malloc", "MFLUX_"))}
     env.update(PYTHONUNBUFFERED="1", HF_HUB_DISABLE_TELEMETRY="1", HF_HUB_OFFLINE="1", MLX_ENABLE_TF32="0")
@@ -165,6 +186,8 @@ def _clean_env(large: bool = False) -> dict:
         # command buffers. Two 3840x2160 renders died without it; the third finished (29 min, 108 s/step).
         env.setdefault("MLX_DISABLE_COMPILE", "1")
         env.setdefault("MLX_METAL_FAST_SYNCH", "1")
+    if short_buffers:
+        env.update(SHORT_BUFFERS)
     return env
 
 
@@ -191,45 +214,62 @@ def generate_klein_ng(prompt: str, n: int, width: int, height: int, output_dir, 
     if options.get("loras"):  # names were checked above; only now do they become paths
         import klein_lorasNG
         request["loras"] = [[klein_lorasNG.find_lora_ng(l["name"])["path"], l["scale"]] for l in options["loras"]]
-    proc = subprocess.Popen([str(py), str(WORKER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, errors="replace", env=_clean_env(width * height > LARGE_PIXELS),
-                            start_new_session=True)
-    lines = queue.Queue()
-    threading.Thread(target=lambda: ([lines.put(l.rstrip()) for l in proc.stdout], lines.put(None)),
-                     daemon=True).start()
-    results, tail = [], []
+    results = []
+
+    def attempt(seeds: list, short_buffers: bool) -> None:
+        req = {**request, "seeds": seeds}
+        proc = subprocess.Popen([str(py), str(WORKER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace",
+                                env=_clean_env(width * height > LARGE_PIXELS, short_buffers), start_new_session=True)
+        lines = queue.Queue()
+        threading.Thread(target=lambda: ([lines.put(l.rstrip()) for l in proc.stdout], lines.put(None)),
+                         daemon=True).start()
+        tail = []
+        try:
+            proc.stdin.write(json.dumps(req) + "\n")
+            proc.stdin.close()
+            started = time.monotonic()
+            while True:
+                if should_stop and should_stop():
+                    raise KleinCancelled("Klein stopped")
+                if time.monotonic() - started > 1800 + 900 * len(seeds):
+                    raise RuntimeError("Klein timed out")
+                try:
+                    line = lines.get(timeout=0.25)
+                except queue.Empty:
+                    continue
+                if line is None:
+                    break
+                if line.startswith(RESULT_PREFIX):
+                    results.append(json.loads(line[len(RESULT_PREFIX):]))
+                    if on_result:
+                        on_result(results[-1])
+                else:
+                    tail = (tail + [line])[-15:]
+                    if on_log:
+                        on_log(line)
+            rc = proc.wait(timeout=30)
+            if rc:
+                msg = "Klein did not finish: " + _failure_reason_ng(tail, rc)
+                raise (KleinWatchdogKill if _WATCHDOG.search("\n".join(tail)) else RuntimeError)(msg)
+        finally:
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait(timeout=10)
+
+    seeds = list(request["seeds"])
     try:
-        proc.stdin.write(json.dumps(request) + "\n")
-        proc.stdin.close()
-        started = time.monotonic()
-        while True:
-            if should_stop and should_stop():
-                raise KleinCancelled("Klein stopped")
-            if time.monotonic() - started > 1800 + 900 * n:
-                raise RuntimeError("Klein timed out")
-            try:
-                line = lines.get(timeout=0.25)
-            except queue.Empty:
-                continue
-            if line is None:
-                break
-            if line.startswith(RESULT_PREFIX):
-                results.append(json.loads(line[len(RESULT_PREFIX):]))
-                if on_result:
-                    on_result(results[-1])
-            else:
-                tail = (tail + [line])[-15:]
-                if on_log:
-                    on_log(line)
-        if proc.wait(timeout=30):
-            raise RuntimeError("Klein did not finish: " + "\n".join(tail[-6:]))
-    finally:
-        if proc.poll() is None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.wait(timeout=10)
+        attempt(seeds, False)
+    except KleinWatchdogKill:
+        left = [x for x in seeds if x not in {r.get("seed") for r in results}]
+        if not left:
+            raise
+        if on_log:
+            on_log("macOS stopped the GPU job (watchdog); retrying once with the shortest command buffers")
+        attempt(left, True)
     if len(results) != n or any(not Path(r["png_path"]).is_file() for r in results):
         raise RuntimeError("Klein returned fewer pictures than asked for; check the log")
     return results
