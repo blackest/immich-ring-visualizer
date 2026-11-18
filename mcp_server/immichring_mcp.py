@@ -79,8 +79,9 @@ TOOLS = [
                              "wait_seconds": {"type": "number", "description": "Default 0: answer now."}}, ["job_id"]),
      "run": lambda a: api.job_status(a["job_id"], a.get("wait_seconds", 0))},
     {"name": "fetch",
-     "description": ("Save a finished job's video, song, speech or first picture to a file on this machine. 'dest' is a file path, "
-                     "or a folder to save into. The job must be done."),
+     "description": ("Copy a finished job's video, song, speech or first picture to a file on THIS machine (not the Mac "
+                     "Studio). 'dest' is a file path, or a folder to save into. The job must be done. The original "
+                     "always stays on the Mac Studio, so you only need fetch to have your own copy."),
      "inputSchema": _schema({"job_id": {"type": "string"},
                              "dest": {"type": "string", "description": "File path or folder to save to."}},
                             ["job_id", "dest"]),
