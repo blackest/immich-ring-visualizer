@@ -86,7 +86,7 @@ TOOLS = [
                             ["job_id", "dest"]),
      "run": lambda a: api.fetch(a["job_id"], a["dest"])},
     {"name": "recent_jobs",
-     "description": "The latest videos, pictures and speech together, newest first (songs are not listed). Default 8.",
+     "description": "The latest videos, pictures, songs and speech together, newest first. A song only shows once finished. Default 8.",
      "inputSchema": _schema({"limit": {"type": "integer", "description": "How many, 1 to 25."}}),
      "run": lambda a: api.recent_jobs(a.get("limit", 8))},
 ]

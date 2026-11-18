@@ -81,6 +81,14 @@ class Stub(BaseHTTPRequestHandler):
         if p == "/api/ng/music/jobs/m1":
             return self._send(200, {"job_id": "m1", "status": "completed", "style": "slow blues", "lyrics": "la la",
                                     "audio_seconds": 61.234, "error": None})
+        if p == "/api/ng/music/logs":
+            return self._send(200, {"ok": True, "entries": [
+                {"job_id": "m9", "date": "2026-11-18", "status": "completed", "style": "slow blues", "lyrics": "",
+                 "audio_seconds": 30.0, "error": None, "has_audio": True, "finished_at": 50, "queued_at": 10},
+                {"job_id": "m8", "date": "2026-11-17", "status": "failed", "style": "polka", "lyrics": "",
+                 "audio_seconds": None, "error": "out of memory", "has_audio": False, "finished_at": 5, "queued_at": 1}]})
+        if p == "/api/ng/music/logs/2026-11-18/m9/audio":
+            return self._send(200, b"LOGFLAC", "audio/flac")
         if p == "/api/ng/music/jobs/m1/download":
             return self._send(200, b"FLACDATA", "audio/flac")
         if p == "/api/ng/speech/voices":
@@ -276,7 +284,15 @@ class SongSpeechTests(StubbedCase):
 
     def test_recent_jobs_includes_speech(self):
         kinds = {j["kind"] for j in run("recent_jobs", {})[1]["jobs"]}
-        self.assertEqual(kinds, {"video", "picture", "speech"})
+        self.assertEqual(kinds, {"video", "picture", "speech", "song"})
+
+    def test_a_song_the_app_forgot_is_still_found_and_fetched_through_the_log(self):
+        err, out = run("job_status", {"job_id": "music:m9"})
+        self.assertEqual((err, out["status"], out["seconds"]), (False, "done", 30.0))
+        saved = run("fetch", {"job_id": "music:m9", "dest": str(self.tmp)})[1]["saved"]
+        self.assertEqual(Path(saved).read_bytes(), b"LOGFLAC")
+        self.assertEqual(run("job_status", {"job_id": "music:m8"})[1]["error"], "out of memory")
+        self.assertTrue(run("job_status", {"job_id": "music:nothere"})[0])
 
 
 class StatusFetchRecentTests(StubbedCase):
@@ -322,7 +338,7 @@ class StatusFetchRecentTests(StubbedCase):
     def test_recent_jobs_merges_all_kinds_newest_first(self):
         err, out = run("recent_jobs", {})
         self.assertFalse(err)
-        self.assertEqual([j["job_id"] for j in out["jobs"]], ["speech:s2", "klein:k1", "h3:abc123"])
+        self.assertEqual([j["job_id"] for j in out["jobs"]], ["music:m9", "speech:s2", "klein:k1", "h3:abc123", "music:m8"])
 
 
 class OutsideTests(unittest.TestCase):

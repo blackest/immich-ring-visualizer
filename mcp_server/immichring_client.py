@@ -214,8 +214,25 @@ def _audio_view(kind: str, st: dict) -> dict:
     return view
 
 
+def _music_logs() -> list:
+    """Finished songs, newest first. The app keeps these on disk, so they outlive a restart."""
+    return _call("GET", "/api/ng/music/logs").get("entries", [])
+
+
+def _music_log(raw: str):
+    return next((e for e in _music_logs() if e.get("job_id") == raw), None)
+
+
 def _view(kind: str, raw: str) -> dict:
     q = urllib.parse.quote(raw)
+    if kind == "music":
+        try:
+            return _audio_view(kind, _call("GET", f"/api/ng/music/jobs/{q}"))
+        except ImmichringError:
+            entry = _music_log(raw)         # the app forgot the job (restarted), the log still has it
+            if entry is None:
+                raise
+            return _audio_view(kind, entry)
     if kind == "h3":
         return _h3_view(_call("GET", f"/api/ng/h3/jobs/{q}"))
     if kind == "klein":
@@ -252,7 +269,14 @@ def fetch(job_id: str, dest: str) -> dict:
     if os.path.isdir(dest):
         dest = os.path.join(dest, f"{kind}-{raw}{DOWNLOADS[kind][1] if kind in DOWNLOADS else '.png'}")
     if kind in DOWNLOADS:
-        body = _call("GET", DOWNLOADS[kind][0].format(urllib.parse.quote(raw)), timeout=300, raw=True)
+        try:
+            body = _call("GET", DOWNLOADS[kind][0].format(urllib.parse.quote(raw)), timeout=300, raw=True)
+        except ImmichringError:
+            entry = _music_log(raw) if kind == "music" else None
+            if not entry or not entry.get("has_audio"):
+                raise
+            body = _call("GET", f"/api/ng/music/logs/{urllib.parse.quote(entry['date'])}/{urllib.parse.quote(raw)}/audio",
+                         timeout=300, raw=True)
         others = 0
     else:
         results = _call("GET", f"/api/ng/klein/status/{urllib.parse.quote(raw)}").get("results") or []
@@ -282,6 +306,11 @@ def recent_jobs(limit: int = 8) -> dict:
     try:
         for st in _call("GET", "/api/ng/speech/jobs").get("jobs", []):
             found.append((st.get("queued_at") or 0, _audio_view("speech", st)))
+    except ImmichringError:
+        pass
+    try:
+        for st in _music_logs():
+            found.append((st.get("finished_at") or st.get("queued_at") or 0, _audio_view("music", st)))
     except ImmichringError:
         pass
     for st in _call("GET", f"/api/ng/klein/jobs?limit={limit}").get("jobs", []):
