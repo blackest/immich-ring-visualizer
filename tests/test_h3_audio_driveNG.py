@@ -92,6 +92,16 @@ class CommandTests(_DriveBase):
             self.assertIn(flag, cmd)
         self.assertNotIn("--stream-text-encoder", self._cmd(model="h3q8"))  # off means off
 
+    def test_low_memory_caps_the_mlx_buffer_cache_when_the_runner_can(self):
+        self.runner.write_text(DRIVE_RUNNER + "--stream-dit\n")
+        cmd = self._cmd(model="h3q8", low_memory=True)
+        self.assertNotIn("--cache-gb", cmd)
+        self.runner.write_text(DRIVE_RUNNER + "--stream-dit\n--cache-gb\n--decode-cache-gb\n")
+        cmd = self._cmd(model="h3q8", low_memory=True)
+        self.assertEqual(self._value(cmd, "--cache-gb"), "2")
+        self.assertEqual(self._value(cmd, "--decode-cache-gb"), "1")
+        self.assertNotIn("--cache-gb", self._cmd(model="h3q8"))  # off means off
+
     def test_off_means_no_flag(self):
         self.assertNotIn("--audio-drive", self._cmd(model="h3q8"))
 

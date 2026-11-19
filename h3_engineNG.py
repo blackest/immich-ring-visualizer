@@ -197,6 +197,10 @@ H3_STREAM_DIT_FLAG = "--stream-dit"
 # text encoder, 29 GiB with the reference pictures) and the video decoder, each only on a runner that has the flag.
 H3_STREAM_TEXT_FLAG = "--stream-text-encoder"
 H3_STREAM_VAE_FLAG = "--stream-vae-decoder"
+H3_CACHE_FLAG = "--cache-gb"
+H3_DECODE_CACHE_FLAG = "--decode-cache-gb"
+H3_LOWMEM_CACHE_GIB = 2.0         # the runner's own low-memory plan values (memory_plan.LOWMEM_*)
+H3_LOWMEM_DECODE_CACHE_GIB = 1.0
 # `--adaln-cache-dir` (minimax-h3-mlx branch adaln-cache): the AdaLN tables are stored once per
 # schedule and reloaded, and a hit never reads the ~24 GiB of AdaLN weights at all (the AdaLN stage
 # drops from 4.5 s to 0.1 s; the output is byte-identical). Used automatically when the runner has
@@ -949,6 +953,11 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
             raise ValueError("this H3 runner has no --stream-dit -- update the minimax-h3-mlx runner")
         cmd += [H3_STREAM_DIT_FLAG]
         cmd += [f for f in (H3_STREAM_TEXT_FLAG, H3_STREAM_VAE_FLAG) if h3_lora.runner_has_flag_ng(runner, f)]
+        # Cap MLX's buffer cache the way the runner's own low-memory plan does: MLX keeps freed buffers around, and
+        # under a GPU memory limit (a small Mac) that retained cache is what runs a streamed render out of memory.
+        for flag, gib in ((H3_CACHE_FLAG, H3_LOWMEM_CACHE_GIB), (H3_DECODE_CACHE_FLAG, H3_LOWMEM_DECODE_CACHE_GIB)):
+            if h3_lora.runner_has_flag_ng(runner, flag):
+                cmd += [flag, f"{gib:g}"]
     adaln_cache_argv = _h3_adaln_cache_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
     cmd += adaln_cache_argv
 
