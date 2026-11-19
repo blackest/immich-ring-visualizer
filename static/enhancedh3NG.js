@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "speed", "render", "stop", "hybrid", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
+      "quality", "speed", "render", "stop", "hybrid", "lowmem", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -89,6 +89,10 @@
     fetch("/api/ng/h3/status").then(function (r) { return r.json(); }).then(function (h) {
       flexOk.plain = !!(h.flex_ok && h.flex_supported);
       flexOk.ref = !!(h.flex_ref2va_ok && h.flex_supported);
+      if (els.lowmem) {
+        els.lowmem.disabled = !h.low_memory_supported;
+        if (!h.low_memory_supported) els.lowmem.checked = false;
+      }
       syncSpeedChoices();
     }).catch(function () {});
   }
@@ -454,6 +458,7 @@
     if (els.speed.value === "fast") form.append("tristep", "true");
     else if (els.speed.value === "flex") form.append("flex", "true");
     if (els.seed.value) form.append("seed", els.seed.value);
+    if (els.lowmem && els.lowmem.checked) form.append("low_memory", "true");
     var first = extendFrom ? null : items.image.filter(function (it) { return it.role === "frame_anchor_first"; })[0];
     if (!first && briefNeedsFirstFrame) {
       setRender("This brief used a first-frame picture. Add it again (role: frame anchor first), or it would render as text-only.");

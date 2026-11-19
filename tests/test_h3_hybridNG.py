@@ -235,6 +235,26 @@ class EngineTests(Base):
         with self.assertRaisesRegex(FileNotFoundError, "DiT weights not found"):
             self._cmd()
 
+    def _offload_calls(self, env, **kw):
+        self.runner.write_text(OVERLAY_RUNNER + "--stream-dit\n")
+        args = dict(prompt="p", image_path=None, duration_s=5.0, output_dir=self.tmp / "o", seed=1,
+                    config=eng.H3Config(model="h3q8"))
+        args.update(kw)
+        with mock.patch.object(eng.subprocess, "Popen",
+                               side_effect=lambda cmd, **k: (_ for _ in ()).throw(_Captured(cmd))), \
+             mock.patch("model_offloadNG.offload_resident_models_ng") as offload, \
+             mock.patch.dict(os.environ, env):
+            with self.assertRaises(_Captured):
+                eng.generate_h3_video_ng(**args)
+        return offload.call_count
+
+    def test_resident_models_are_unloaded_unless_a_low_memory_render_is_told_to_keep_them(self):
+        keep = {eng.H3_LOWMEM_KEEP_MODELS_ENV: "1"}
+        self.assertEqual(self._offload_calls({eng.H3_LOWMEM_KEEP_MODELS_ENV: ""}), 1)                   # default
+        self.assertEqual(self._offload_calls({eng.H3_LOWMEM_KEEP_MODELS_ENV: ""}, low_memory=True), 1)  # off by default
+        self.assertEqual(self._offload_calls(keep), 1)                                                   # not low memory
+        self.assertEqual(self._offload_calls(keep, low_memory=True), 0)                                  # kept
+
     def test_health_reports_the_switch_and_the_pack(self):
         with mock.patch.object(ref2va, "resolve_adaln_pack_ng", lambda root: "/pack"), \
              mock.patch.dict(os.environ, {ref2va.ADALN_SOURCE_ENV: "pack"}):

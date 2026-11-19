@@ -197,6 +197,8 @@ H3_STREAM_DIT_FLAG = "--stream-dit"
 # text encoder, 29 GiB with the reference pictures) and the video decoder, each only on a runner that has the flag.
 H3_STREAM_TEXT_FLAG = "--stream-text-encoder"
 H3_STREAM_VAE_FLAG = "--stream-vae-decoder"
+# RINGVIZ_H3_LOWMEM_KEEP_MODELS=1: a Low memory render does not unload Ollama and the Gemma server first (off by default).
+H3_LOWMEM_KEEP_MODELS_ENV = "RINGVIZ_H3_LOWMEM_KEEP_MODELS"
 H3_CACHE_FLAG = "--cache-gb"
 H3_DECODE_CACHE_FLAG = "--decode-cache-gb"
 H3_LOWMEM_CACHE_GIB = 2.0         # the runner's own low-memory plan values (memory_plan.LOWMEM_*)
@@ -1010,8 +1012,13 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         if on_log:
             on_log("[h3] Fast VAE: video decode in float16 (H3_VAE_DTYPE=float16)")
     with _H3_SUBPROCESS_LOCK:
-        from model_offloadNG import offload_resident_models_ng
-        offload_resident_models_ng(on_log=on_log)
+        if low_memory and os.environ.get(H3_LOWMEM_KEEP_MODELS_ENV, "").strip().lower() in ("1", "true", "on", "yes"):
+            # A streamed render needs about 5 GiB, so Ollama and the Gemma server can stay loaded beside it.
+            if on_log:
+                on_log("[h3] low memory: leaving Ollama and the Gemma server loaded")
+        else:
+            from model_offloadNG import offload_resident_models_ng
+            offload_resident_models_ng(on_log=on_log)
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

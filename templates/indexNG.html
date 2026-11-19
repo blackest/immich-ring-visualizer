@@ -2949,7 +2949,7 @@
                       off)</label
                     >
                     <label class="ng-checkbox-row" id="ng-h3-lowmem-row"
-                      title="Reads the model from disk one block at a time instead of holding it all in memory. Same picture and sound, much less memory (about 4 GB instead of 22 GB in the denoise); lets other apps keep their RAM while this renders."
+                      title="Reads the model from disk one block at a time instead of holding it all in memory. Also streams the prompt encoder and the video decoder and caps the GPU cache. Same picture and sound; the biggest memory use of a reference render dropped from about 29 GB to about 5 GB (measured); lets other apps keep their RAM while this renders."
                       ><input type="checkbox" id="ng-h3-lowmem" /> Low memory
                       (stream the model from disk; same result, far less
                       RAM)</label
@@ -3192,6 +3192,7 @@
                     <option value="" selected>Standard (Ref2VA)</option>
                     <option value="45-49">Clean (hybrid, blocks 45-49)</option>
                   </select></label>
+                <label class="ng-checkbox-row" id="ng-enhancedh3-lowmem-row" title="Streams the model, the prompt encoder and the video decoder from disk and caps the GPU cache. Same picture and sound; the biggest memory use drops from about 29 GB to about 5 GB. Lets other apps and models keep their RAM while this renders."><input type="checkbox" id="ng-enhancedh3-lowmem" /> Low memory (stream from disk; same result, far less RAM)</label>
                 <label class="ng-checkbox-row"><input type="checkbox" id="ng-enhancedh3-refmod-on" /> Use a RefMod (keeps a saved person's likeness; one 5 s window)</label>
                 <div id="ng-enhancedh3-refmod-block" hidden>
                   <div id="ng-enhancedh3-refmod-note" class="ng-gen-status"></div>
