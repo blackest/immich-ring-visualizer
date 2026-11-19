@@ -1299,7 +1299,7 @@ def render_window(
     ref_geoms = None
     if references:
         with record.phase(f"{label}reference_encode"):
-            reference_vae = load_compact_video_vae(args.compact_root / "video_vae.safetensors")
+            reference_vae = load_encode_vae(args)  # encoder only under --stream-vae-decoder, like the keyframe paths
             condition_rows, ref_geoms = encode_reference_rows(reference_vae, references, patch)
             mx.eval(condition_rows)
         del reference_vae
