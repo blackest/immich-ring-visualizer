@@ -77,6 +77,21 @@ class CommandTests(_DriveBase):
         cmd = self._cmd(model="h3q8", low_memory=True)
         self.assertIn("--stream-dit", cmd)
 
+    def test_low_memory_also_streams_the_prompt_encoder_and_decoder_when_the_runner_can(self):
+        self.runner.write_text(DRIVE_RUNNER + "--stream-dit\n")
+        cmd = self._cmd(model="h3q8", low_memory=True)
+        self.assertNotIn("--stream-text-encoder", cmd)
+        self.assertNotIn("--stream-vae-decoder", cmd)
+        self.runner.write_text(DRIVE_RUNNER + "--stream-dit\n--stream-text-encoder\n")
+        cmd = self._cmd(model="h3q8", low_memory=True)
+        self.assertIn("--stream-text-encoder", cmd)
+        self.assertNotIn("--stream-vae-decoder", cmd)
+        self.runner.write_text(DRIVE_RUNNER + "--stream-dit\n--stream-text-encoder\n--stream-vae-decoder\n")
+        cmd = self._cmd(model="h3q8", low_memory=True)
+        for flag in ("--stream-dit", "--stream-text-encoder", "--stream-vae-decoder"):
+            self.assertIn(flag, cmd)
+        self.assertNotIn("--stream-text-encoder", self._cmd(model="h3q8"))  # off means off
+
     def test_off_means_no_flag(self):
         self.assertNotIn("--audio-drive", self._cmd(model="h3q8"))
 
