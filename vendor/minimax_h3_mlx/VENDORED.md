@@ -92,3 +92,5 @@ which the installer's weights and Q8-build steps call, so "Install H3" on a mach
 **Added 2026-11-14 for the "Install H3" steps:** `scripts/download_selected.py` (fetches the checkpoint files into `<root>/models`) and
 `scripts/quantize_stream.py` (builds the local Q8 DiT), both copied unchanged from Phosphene's checkout at `953ec46`, so the weights and Q8
 steps of `h3_installNG` run from this folder on a machine that has no Phosphene.
+
+**Changed 2026-11-19 (`memory_plan.py`):** `plan_for_request` counted reference pictures from `args.reference` only (upstream's `--reference`), so a `--ref2va-reference` render was planned like a text-only one (no reference rows, no vision tokens). It now counts both. Test: `tests/test_memory_plan.py::test_ref2va_references_count_like_upstream_references`. The app's own renders never call `--low-memory`, so this only affects the plan/admission check (`--low-memory auto|on`, `--admission-only`).

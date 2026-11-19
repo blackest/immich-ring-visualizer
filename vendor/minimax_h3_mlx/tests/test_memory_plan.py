@@ -170,6 +170,28 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(args.cache_gb, 2.0)
         self.assertEqual(args.decode_cache_gb, 1.0)
 
+    def test_ref2va_references_count_like_upstream_references(self):
+        def plan(**refs):
+            args = SimpleNamespace(
+                compact_root=self.root / "compact", dit=self.root / "dit", lora=None, width=768,
+                height=448, memory_gb=56.0, low_memory="on", reference=None, extend_from=None,
+                lora_qkv_permute=False, lora_fc1_swap=False, revoice_steps=0, revoice_kv="int8",
+                stream_text_encoder=False, stream_dit=False, dit_pipeline=False, cache_gb=None,
+                decode_cache_gb=None)
+            for k, v in refs.items():
+                setattr(args, k, v)
+            return mp.plan_for_request(args, {"max_recommended_working_set_size": 48 * GIB}, 124, 1, [[]], ["p" * 90])
+
+        none = plan()
+        ours_one = plan(ref2va_reference=["a.png"])
+        ours_three = plan(ref2va_reference=["a.png", "b.png", "c.png"])
+        upstream_one = plan(reference=["a.png"])
+        self.assertGreater(ours_one["rows_estimate"], none["rows_estimate"])
+        self.assertGreater(ours_three["rows_estimate"], ours_one["rows_estimate"])
+        self.assertGreater(ours_one["passes_gib"]["denoise"], none["passes_gib"]["denoise"])
+        self.assertGreater(ours_three["passes_gib"]["denoise"], ours_one["passes_gib"]["denoise"])
+        self.assertEqual(ours_one["passes_gib"], upstream_one["passes_gib"])
+
 
 if __name__ == "__main__":
     unittest.main()

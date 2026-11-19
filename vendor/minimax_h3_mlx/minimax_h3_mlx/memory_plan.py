@@ -359,7 +359,9 @@ def plan_for_request(args, device: dict, frames: int, chain: int, window_keyfram
     # character count over 3 is a safe ceiling. Vision tokens ride the text stream too.
     text_tokens = max((len(p or "") for p in prompts), default=0) // 3 + 64
     keyframes = max((len(w) for w in (window_keyframes or [])), default=0)
-    refs = len(getattr(args, "reference", None) or [])
+    # Upstream's `--reference` pictures and our `--ref2va-reference` pictures/clips both add reference rows and
+    # vision tokens; counting only the first made a Ref2VA render look as light as a text-only one.
+    refs = len(getattr(args, "reference", None) or []) + len(getattr(args, "ref2va_reference", None) or [])
     history = chain > 1 or getattr(args, "extend_from", None) is not None
     vision = bool(keyframes or refs)
     if vision:
