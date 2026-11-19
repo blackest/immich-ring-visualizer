@@ -386,6 +386,13 @@ def _resolve_h3_text_config_ng(config: H3Config) -> Optional[str]:
     return str(p) if p.is_file() else None
 
 
+def _adaln_source_mode_or_error_ng() -> str:
+    try:
+        return h3_ref2va.adaln_source_mode_ng()
+    except ValueError as e:
+        return f"invalid: {e}"
+
+
 def _resolve_h3_dit_ng(config: H3Config) -> Optional[str]:
     """Which DiT weights to pass, per config.model: bf16 is a single
     .safetensors file, q8 is a sharded directory (config.json +
@@ -536,6 +543,10 @@ def h3_health_ng(model: H3Model = "h3q8") -> dict:
         # RefMods need BOTH a Ref2VA DiT on disk and a runner that takes --refmod; the
         # UI shows its rows only when `refmod_ready`, with the missing half spelled out.
         "ref2va_ok": h3_ref2va.resolve_ref2va_dit_ng("", H3_MODELS_ROOT) is not None,
+        # The hybrid's AdaLN source: the switch, the small pack if there is one, and whether a source can serve it.
+        "adaln_source": _adaln_source_mode_or_error_ng(),
+        "adaln_pack_ok": h3_ref2va.resolve_adaln_pack_ng(H3_MODELS_ROOT) is not None,
+        "adaln_pack_path": h3_ref2va.resolve_adaln_pack_ng(H3_MODELS_ROOT) or str(H3_MODELS_ROOT / h3_ref2va.ADALN_PACK_DIRNAME),
         "refmod_supported": bool(runner) and h3_ref2va.runner_supports_refmod_ng(runner),
         "reference_supported": bool(runner) and h3_references.runner_supports_reference_ng(runner),
         "refmod_ready": h3_ref2va.resolve_ref2va_dit_ng("", H3_MODELS_ROOT) is not None
@@ -756,7 +767,10 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         raise ValueError("this H3 runner lacks a flag Flex Turbo needs "
                          f"({', '.join(h3_flex.FLEX_TURBO_RUNNER_FLAGS)}) -- update the minimax-h3-mlx runner")
     dit = _resolve_h3_dit_ng(config)
-    if not dit:
+    # The hybrid look can run on the small AdaLN pack alone, so a missing full Ref2VA is not an error
+    # yet when one was asked for; the source is picked (and refused with a plain sentence) below.
+    hybrid_asked = config.model == "h3ref" and bool(str(adaln_blocks or "").strip())
+    if not dit and not hybrid_asked:
         expected = (H3_DIT_Q8_DIR if config.model == "h3q8"
                     else h3_ref2va.ref2va_dit_candidates_ng(H3_MODELS_ROOT)[0] if config.model == "h3ref"
                     else H3_DIT_BF16)
@@ -828,7 +842,8 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         adaln_blocks, model=config.model, flex=flex, turbo=turbo, v13=v13, runner=runner)
     overlay_dit = None
     if adaln_blocks:
-        overlay_dit = dit
+        overlay_dit = h3_ref2va.pick_overlay_source_ng(
+            h3_ref2va.adaln_source_mode_ng(), dit, h3_ref2va.resolve_adaln_pack_ng(H3_MODELS_ROOT), adaln_blocks)
         dit = _resolve_h3_dit_ng(dataclasses.replace(config, model="h3q8"))
         if not dit:
             raise FileNotFoundError(f"the hybrid look needs the FL2VA Q8 base, not found at {H3_DIT_Q8_DIR}")

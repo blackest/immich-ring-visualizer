@@ -19,6 +19,7 @@ What this guards, and why it is stricter than the runner:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -150,6 +151,95 @@ def validate_adaln_blocks_ng(spec, *, model: str, flex: bool, turbo: bool, v13: 
     if not runner_supports_adaln_overlay_ng(runner):
         raise ValueError("this H3 runner has no --adaln-overlay -- it needs the vendored runner")
     return spec
+
+
+# Where the hybrid takes Ref2VA's AdaLN from. The overlay reads only 14 tensors per block range, so the
+# runner accepts either the full Ref2VA Q8 (47.5 GB) or the small pack scripts/extract_adaln_overlay_pack.py
+# cuts from it (2.7 GB for blocks 45-49); the tables come out identical. The switch is an env var like the
+# other RINGVIZ_H3_* ones: auto (the full model if it is on disk, else the pack), full, or pack.
+ADALN_SOURCE_ENV = "RINGVIZ_H3_ADALN_OVERLAY"
+ADALN_PACK_ENV = "RINGVIZ_H3_ADALN_PACK"
+ADALN_PACK_DIRNAME = "adaln-overlay-45-49"
+ADALN_SOURCES = ("auto", "full", "pack")
+_TIME_EMBEDDER = tuple(f"time_embedder.{part}.{kind}" for part in ("proj_in", "proj_out") for kind in ("weight", "bias"))
+
+
+def adaln_source_mode_ng(raw=None) -> str:
+    """The switch: "auto" (default), "full" or "pack". `raw` defaults to the env var."""
+    mode = str(os.environ.get(ADALN_SOURCE_ENV, "") if raw is None else raw).strip().lower() or "auto"
+    if mode not in ADALN_SOURCES:
+        raise ValueError(f"{ADALN_SOURCE_ENV} is {mode!r}; it must be one of {', '.join(ADALN_SOURCES)}")
+    return mode
+
+
+def adaln_pack_candidates_ng(models_root: Path) -> list:
+    cands = []
+    env = os.environ.get(ADALN_PACK_ENV)
+    if env:
+        cands.append(Path(env).expanduser())
+    cands.append(Path(models_root) / ADALN_PACK_DIRNAME)
+    cands.append(Path.home() / "models" / "h3-ref2va" / ADALN_PACK_DIRNAME)
+    return cands
+
+
+def _is_pack_dir(p: Path) -> bool:
+    return (p / "config.json").is_file() and (p / "model.safetensors").is_file()
+
+
+def resolve_adaln_pack_ng(models_root: Path) -> Optional[str]:
+    for p in adaln_pack_candidates_ng(models_root):
+        if _is_pack_dir(p):
+            return str(p)
+    return None
+
+
+def _blocks_of(spec: str, num_layers: int) -> list:
+    """"45-49", "45-", "3" or "0,2,45-49" -> block numbers; "none" -> []."""
+    if spec == "none":
+        return []
+    out = set()
+    for part in spec.split(","):
+        lo, _, hi = part.partition("-")
+        lo_n = int(lo)
+        hi_n = (int(hi) if hi else num_layers - 1) if "-" in part else lo_n
+        out.update(range(lo_n, hi_n + 1))
+    return sorted(out)
+
+
+def pack_missing_blocks_ng(pack_dir, blocks_spec: str) -> list:
+    """Block numbers `blocks_spec` needs that the pack does not hold ([] = fine), plus -1 when its
+    time embedder is missing. Reads only the safetensors header."""
+    pack = Path(pack_dir)
+    with open(pack / "model.safetensors", "rb") as f:
+        head = json.loads(f.read(int.from_bytes(f.read(8), "little")))
+    have = set(head)
+    layers = int(json.loads((pack / "config.json").read_text()).get("num_layers", 50))
+    blocks = _blocks_of(blocks_spec, layers)
+    missing = [b for b in blocks if not all(f"blocks.{b}.adaln_proj.linear.{k}" in have for k in ("weight", "bias"))]
+    if blocks and not all(n in have for n in _TIME_EMBEDDER):
+        missing.append(-1)
+    return missing
+
+
+def pick_overlay_source_ng(mode: str, full_dit, pack, blocks_spec: str) -> str:
+    """The folder to hand the runner as `--adaln-overlay`, per the switch. Raises FileNotFoundError
+    (the wanted source is not on disk) or ValueError (the pack lacks a block) with one plain sentence."""
+    if mode == "full" or (mode == "auto" and full_dit):
+        if not full_dit:
+            raise FileNotFoundError("the hybrid look is set to use the full Ref2VA model "
+                                    f"({ADALN_SOURCE_ENV}=full), which is not on this machine")
+        return str(full_dit)
+    if not pack:
+        raise FileNotFoundError(
+            "the hybrid look needs the full Ref2VA model or the small AdaLN pack "
+            f"({ADALN_PACK_DIRNAME}, made by scripts/extract_adaln_overlay_pack.py); neither was found")
+    missing = pack_missing_blocks_ng(pack, blocks_spec)
+    if missing:
+        what = "its time embedder" if missing == [-1] else "block " + ", ".join(str(b) for b in missing if b >= 0)
+        raise ValueError(f"the small AdaLN pack does not hold {what}; rebuild it with "
+                         "scripts/extract_adaln_overlay_pack.py --blocks, or set "
+                         f"{ADALN_SOURCE_ENV}=full to use the full Ref2VA model")
+    return str(pack)
 
 
 def adaln_overlay_argv_ng(overlay_dir, blocks: str) -> list:
