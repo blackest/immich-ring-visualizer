@@ -25,6 +25,11 @@ from pathlib import Path
 # Read by ltx_core_mlx / MLX at import time, so they go in before the pipeline import below.
 os.environ.setdefault("LTX2_DIT_EVAL_EVERY", "1")
 os.environ.setdefault("LTX2_GEMMA_EVAL_EVERY", "1")
+# The prompt is padded to 1024 tokens before Gemma reads it, in one GPU call. On macOS 27.2 on this M2 Max that
+# call was killed by the watchdog every time ("Impacting Interactivity", right after the encoder loaded), with one
+# op per buffer already set. 256 tokens makes it far lighter; the prompt is cut from the left, so a normal prompt
+# is untouched. Same lever Phosphene arms after such a kill (LTX2_GEMMA_MAX_LENGTH, v5.0.35).
+os.environ.setdefault("LTX2_GEMMA_MAX_LENGTH", "256")
 # M1/M2 GPUs kill a command buffer that runs too long ("Impacting Interactivity"). One op per buffer
 # gives identical output and was the only setting that got through (10 died right after the text
 # encoder loaded, three times), so it is the default there; --short-gpu forces it on other chips.

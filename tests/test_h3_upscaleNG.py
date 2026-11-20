@@ -8,6 +8,7 @@ Run with: python3 -m unittest tests.test_h3_upscaleNG -v
 import io
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -150,6 +151,28 @@ class Route(UpscaleBase):
         self.assertEqual(self.client.post("/api/ng/h3/jobs/j1/upscale", json={"steps": 99}).status_code, 400)
         with mock.patch.object(up.h3_reroll, "resolve_source_ng", side_effect=LookupError("no such job")):
             self.assertEqual(self.client.post("/api/ng/h3/jobs/zz/upscale").status_code, 404)
+
+
+class ScriptEnvironment(unittest.TestCase):
+    """The script sets its GPU-friendly environment at import time, before the pipeline loads."""
+
+    def _env_after_help(self, **extra):
+        code = ("import os, runpy, sys\n"
+                "sys.argv = ['upscale_x2NG.py', '--help']\n"
+                "try:\n    runpy.run_path(%r, run_name='__main__')\n"
+                "except SystemExit:\n    pass\n"
+                "print(os.environ.get('LTX2_GEMMA_MAX_LENGTH'))\n" % str(up.SCRIPT))
+        env = {k: v for k, v in os.environ.items() if k != "LTX2_GEMMA_MAX_LENGTH"}
+        env.update(extra)
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env,
+                             cwd=os.path.dirname(str(up.SCRIPT)))
+        return out.stdout.strip().splitlines()[-1] if out.stdout.strip() else out.stderr[-300:]
+
+    def test_the_gemma_prompt_is_padded_to_256_not_1024(self):
+        self.assertEqual(self._env_after_help(), "256")
+
+    def test_a_value_set_by_the_caller_wins(self):
+        self.assertEqual(self._env_after_help(LTX2_GEMMA_MAX_LENGTH="512"), "512")
 
 
 if __name__ == "__main__":
