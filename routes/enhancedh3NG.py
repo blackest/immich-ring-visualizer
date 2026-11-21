@@ -27,6 +27,7 @@ from flask import Blueprint, jsonify, request
 
 import configNG
 import h3_continueNG as h3_continue
+import h3_extend_lookNG as h3_extend_look
 import h3_engineNG
 
 enhancedh3NG_bp = Blueprint("enhancedh3NG", __name__)
@@ -334,6 +335,16 @@ def enhanced_h3_brief_ng():
     seconds = form.get("seconds", 5.167, type=float)
 
     payload = {"intent": intent, "seconds": seconds}
+    # Extending a finished film: the brief writer cannot see it, so the cast and look it established are read from the
+    # film's own window prompts and stated up front (and added to every new window below).
+    extend_job = (form.get("extend_job") or "").strip()
+    established, extend_note = None, None
+    if extend_job:
+        try:
+            established = h3_extend_look.established_ng(extend_job, intent)
+            payload["intent"] = h3_extend_look.intent_with_ng(intent, established)
+        except (h3_continue.ContinueError, LookupError, ValueError) as e:
+            extend_note = f"The earlier clip's cast and look could not be read ({e}), so the brief may not match it."
     for key in ("aspect", "creativity", "director", "effort"):
         if form.get(key):
             payload[key] = form[key]
@@ -397,6 +408,10 @@ def enhanced_h3_brief_ng():
         _brief_base[out["id"]] = base
     if fallback:
         out["note"] = fallback
+    if extend_note:
+        out["note"] = (out.get("note") or "") + " " + extend_note
+    if established and out.get("windows"):
+        out["windows"] = h3_extend_look.add_lines_ng(out["windows"], established)
     if str(form.get("continue_windows") or "").lower() in ("1", "true", "on") and out.get("windows"):
         out["windows"], why = h3_continue.continue_windows_ng(
             out["windows"], intent, str(form.get("improvise") or "").lower() in ("1", "true", "on"))

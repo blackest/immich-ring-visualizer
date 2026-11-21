@@ -128,6 +128,8 @@ def _with_lines(prompt: str, lines) -> str:
     fresh = [l.strip() for l in lines if l and l.strip() and l.strip() not in prompt]
     if not fresh:
         return prompt
+    # Gemma often leaves the full stop off; without it two lines run into each other and into the shot's own text.
+    fresh = [l if l[-1] in ".!?" else l + "." for l in fresh]
     return _SHOT1_RE.sub(lambda m: m.group(1) + " ".join(fresh) + " ", prompt, count=1)
 
 

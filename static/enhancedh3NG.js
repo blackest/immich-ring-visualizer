@@ -333,6 +333,7 @@
     });
     if (els.silent.checked) form.append("silent", "true");
     if (els.cont.checked) form.append("continue_windows", "true");
+    if (extendFrom) form.append("extend_job", extendFrom);   // the brief writer cannot see the clip: the server reads its cast and look
     if (els.improv.checked) form.append("improvise", "true");
     var d = dialogue();
     if (d) {
