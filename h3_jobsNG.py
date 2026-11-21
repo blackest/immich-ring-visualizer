@@ -63,6 +63,7 @@ class H3JobNG:
     refmods: list = field(default_factory=list)  # [{"name", "path", "strength", "images", "videos"}] RefMods
     references: list = field(default_factory=list)  # reference_N.<ext> file names in the job dir, in order
     reference_size: str = "match"  # "max" = upstream's 2048 px picture size (several times slower)
+    reference_mode: str = "ref2va"  # "faces": pictures kept in every window of a chain on the first-frame model
     adaln_blocks: str = ""  # hybrid "clean look" (model h3ref): FL2VA base + Ref2VA AdaLN on these blocks, e.g. "45-49"
     fast_vae: bool = False  # opt-in: decode the video in float16 (H3_VAE_DTYPE) instead of float32; off = the old path
     low_memory: bool = False  # opt-in: stream the DiT blocks from disk (runner --stream-dit): same output, far less memory
@@ -180,7 +181,8 @@ def _worker_loop() -> None:
                 loras=[(l["path"], l["strength"]) for l in job.loras],
                 refmods=job.refmods, chain_prompts=job.chain_prompts,
                 references=[str(job.job_dir / n) for n in job.references],
-                reference_size=job.reference_size, adaln_blocks=job.adaln_blocks,
+                reference_size=job.reference_size, reference_mode=job.reference_mode,
+                adaln_blocks=job.adaln_blocks,
                 fast_vae=job.fast_vae, vae_v2=job.vae_v2, low_memory=job.low_memory,
                 extend_from=str(extend_path) if job.extends else None,
                 last_frame_path=str(last_path) if last_path else None,
@@ -233,6 +235,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                      keyframes: Optional[list] = None,
                      references: Optional[list] = None,
                      reference_size: str = "match",
+                     reference_mode: str = h3_references.MODE_REF2VA,
                      adaln_blocks: str = "",
                      fast_vae: bool = False,
                      low_memory: bool = False,
@@ -275,8 +278,9 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
     if tristep and h3._resolve_h3_tristep_ng() is None:
         raise FileNotFoundError(
             "Fast (TaoMate 3-step) adapter not found in the H3 turbo-lora folder")
+    speed_refs = None if reference_mode == h3_references.MODE_FACES else references  # kept faces are not Ref2VA refs
     if flex:
-        h3_flex.check_flex_ng(turbo=turbo, v13=v13, tristep=tristep, refmods=refmods, references=references,
+        h3_flex.check_flex_ng(turbo=turbo, v13=v13, tristep=tristep, refmods=refmods, references=speed_refs,
                               model=model)
         if h3_flex.resolve_flex_for_model_ng(h3.H3_MODELS_ROOT, model) is None:
             raise FileNotFoundError("the Pika H3 Flex Ref2VA adapter is not built (scripts/build_pika_ref2va_adapter.py)"
@@ -284,7 +288,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                                     "the Pika H3 Flex adapter is not in the H3 models folder (pika-h3-flex/)")
     if flex_turbo:
         h3_flex.check_flex_turbo_ng(flex=flex, turbo=turbo, v13=v13, tristep=tristep, refmods=refmods,
-                                    references=references, model=model)
+                                    references=speed_refs, model=model)
         if h3_flex.resolve_flex_turbo_ng(h3.H3_MODELS_ROOT) is None:
             raise FileNotFoundError("the Pika H3 Flex Turbo LoRA is not in the H3 models folder (pika-h3-flex/)")
     h3._validate_h3_duration_ng(duration_s)
@@ -319,7 +323,7 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         last_frame_path="last" if last_bytes is not None else None, keyframes=keyframes,
         extend_from="extend" if extend_bytes is not None else None, refmods=refmods, turbo=turbo, v13=v13,
         chain_windows=h3._h3_chain_plan_ng(duration_s)[1],
-        runner=h3._resolve_h3_runner_ng(h3.H3Config()) or h3.H3_RUNNER, check_files=False)
+        runner=h3._resolve_h3_runner_ng(h3.H3Config()) or h3.H3_RUNNER, check_files=False, mode=reference_mode)
 
     width = h3.H3_WIDTH if width is None else int(width)
     height = h3.H3_HEIGHT if height is None else int(height)
@@ -379,7 +383,8 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
                   keyframe_times=[w for _b, _e, w in keyframes or []], width=width, height=height, steps=steps, turbo=turbo, v13=v13,
                   tristep=tristep, flex=flex, flex_turbo=flex_turbo, loras=loras, refmods=refmods,
                   timeout_s=timeout_s, chain_prompts=chain_prompts or [], extends=extend_bytes is not None,
-                  references=reference_names, reference_size=reference_size, adaln_blocks=adaln_blocks,
+                  references=reference_names, reference_size=reference_size, reference_mode=reference_mode,
+                  adaln_blocks=adaln_blocks,
                   fast_vae=bool(fast_vae), vae_v2=bool(vae_v2), low_memory=bool(low_memory),
                   reroll=reroll, on_done=on_done)
     (job_dir / SETTINGS_NAME).write_text(json.dumps({
@@ -478,6 +483,7 @@ def job_status_ng(job_id: str) -> dict:
         "loras": [{"name": l["name"], "strength": l["strength"]} for l in job.loras],
         "refmods": [{"name": r["name"], "strength": r["strength"]} for r in job.refmods],
         "references": len(job.references),
+        "reference_mode": job.reference_mode if job.references else None,
         "reroll": job.reroll,
         "task": job.task,
         "meta": job.meta,

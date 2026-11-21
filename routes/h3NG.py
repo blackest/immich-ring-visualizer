@@ -273,6 +273,9 @@ def h3_generate_ng():
     and clips for a Ref2VA render, in order: the first picture is <Picture 1>, the first clip
     <Video 1>; needs model "h3ref", a single 5 s window, and no keyframe, RefMod or extend),
     reference_size ("match", the default, or "max": upstream's 2048 px, several times slower),
+    reference_mode ("ref2va", the default, or "faces": up to three pictures kept in EVERY window of a
+    chained clip on the first-frame model (model "h3q8" or "h3"; a first frame may come with them; not with
+    a last or timed frame, extend, RefMod, Turbo or v1.3)),
     adaln_blocks (optional block range such as "45-49" -- the hybrid "clean look": the FL2VA Q8 runs
     everywhere and Ref2VA's AdaLN is used for those blocks only; needs model "h3ref", not with Flex,
     Turbo or v1.3).
@@ -339,6 +342,7 @@ def h3_generate_ng():
                        for f, t in zip(kf_files, kf_times)],
             references=[(f.read(), os.path.splitext(f.filename or "")[1]) for f in ref_files],
             reference_size=str(request.form.get("reference_size") or "match").strip().lower(),
+            reference_mode=str(request.form.get("reference_mode") or "ref2va").strip().lower(),
             adaln_blocks=str(request.form.get("adaln_blocks") or "").strip(),
             fast_vae=str(request.form.get("fast_vae") or "").strip().lower() in ("1", "true", "on"),
             low_memory=str(request.form.get("low_memory") or "").strip().lower() in ("1", "true", "on"),

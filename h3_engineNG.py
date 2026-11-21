@@ -608,6 +608,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
                           keyframes: Optional[list] = None,
                           references: Optional[list] = None,
                           reference_size: str = "match",
+                          reference_mode: str = h3_references.MODE_REF2VA,
                           adaln_blocks: str = "",
                           fast_vae: bool = False,
                           low_memory: bool = False,
@@ -682,12 +683,15 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         raise ValueError("turbo and v13 are separate speed adapters -- pick one")
     if tristep and (turbo or v13):
         raise ValueError("Fast (3-step) is its own speed adapter -- not with turbo or v13")
+    # Pictures kept in every window ("faces") ride on the ordinary first-frame model, so for the speed options
+    # they are not "references" in the Ref2VA sense that Flex and Flex Turbo refuse.
+    speed_refs = None if reference_mode == h3_references.MODE_FACES else references
     if flex:
         h3_flex.check_flex_ng(turbo=turbo, v13=v13, tristep=tristep, refmods=refmods,
-                              references=references, model=config.model)
+                              references=speed_refs, model=config.model)
     if flex_turbo:
         h3_flex.check_flex_turbo_ng(flex=flex, turbo=turbo, v13=v13, tristep=tristep, refmods=refmods,
-                                    references=references, model=config.model)
+                                    references=speed_refs, model=config.model)
     steps = (H3_TURBO_STEPS if turbo else H3_V13_STEPS if v13 else H3_TRISTEP_STEPS if tristep
              else h3_flex.FLEX_STEPS if flex else h3_flex.FLEX_TURBO_STEPS if flex_turbo
              else (H3_STEPS if steps is None else int(steps)))
@@ -848,7 +852,14 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     references = h3_references.validate_references_ng(
         references, reference_size, model=config.model, image_path=image_path,
         last_frame_path=last_frame_path, keyframes=keyframes, extend_from=extend_from,
-        refmods=refmods, turbo=turbo, v13=v13, chain_windows=chain_windows, runner=runner)
+        refmods=refmods, turbo=turbo, v13=v13, chain_windows=chain_windows, runner=runner, mode=reference_mode)
+    if references and reference_mode == h3_references.MODE_FACES:
+        # Every window names the kept pictures; they come after the first-frame picture, if there is one.
+        first_picture = 2 if image_path is not None else 1
+        prompt = h3_references.name_faces_in_prompt_ng(prompt, len(references), first_picture)
+        if chain_prompts:
+            chain_prompts = [h3_references.name_faces_in_prompt_ng(p, len(references), first_picture)
+                             for p in chain_prompts]
     # Hybrid "clean look": the FL2VA Q8 is the base DiT, the Ref2VA Q8 supplies AdaLN for `adaln_blocks`.
     adaln_blocks = h3_ref2va.validate_adaln_blocks_ng(
         adaln_blocks, model=config.model, flex=flex, turbo=turbo, v13=v13, runner=runner)
@@ -943,7 +954,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         cmd += ["--lora", f"{runner_file}:{strength:g}"]
     cmd += h3_ref2va.refmod_argv_ng(refmods)
     cmd += h3_ref2va.adaln_overlay_argv_ng(overlay_dit, adaln_blocks)
-    cmd += h3_references.reference_argv_ng(references, reference_size)
+    cmd += h3_references.reference_argv_ng(references, reference_size, reference_mode)
     lazy_argv = _h3_lazy_adaln_argv_ng(runner, legacy_adaln=turbo_adaln is not None)
     cmd += lazy_argv
     if low_memory:
@@ -1133,6 +1144,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         "duration_s": frames / H3_FRAME_RATE,
         "refmods": [{"name": Path(r["path"]).stem, "strength": r["strength"]} for r in refmods],
         "references": [Path(r).name for r in references],
+        "reference_mode": reference_mode if references else None,
         "adaln_blocks": adaln_blocks,
         "fast_vae": bool(fast_vae),
         "low_memory": bool(low_memory),
