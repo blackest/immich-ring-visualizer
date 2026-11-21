@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "speed", "render", "stop", "hybrid", "lowmem", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale", "sharp", "keepfaces"
+      "quality", "speed", "render", "stop", "hybrid", "lowmem", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale", "sharp", "finish", "keepfaces"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -99,6 +99,7 @@
 
   function loadOptions() {
     loadFlex();
+    loadFinish();
     fetch(API + "/status").then(function (r) { return r.json(); }).then(function (s) {
       els.status.textContent = !s.ok ? s.error || "Compiler not running."
         : s.llm ? "Compiler ready (" + s.profile + ")." : "Compiler is up but can't reach its language model.";
@@ -459,7 +460,54 @@
   function startUpscale() { startSizeUp("upscale"); }
   function startSharp() { startSizeUp("sharp"); }
 
+  // Soft finish: the colour pass (finish_jobsNG: softer contrast, filmic roll-off, lifted shadows) on the finished film.
+  // The finish route takes the H3 job id; its own job is polled here, and the finished copy plays beside the original.
+  function startFinish() {
+    if (!lastDone) return;
+    els.finish.disabled = true;
+    setRender("Starting the soft finish...");
+    var form = new FormData();
+    form.append("h3_job_id", lastDone);
+    fetch("/api/ng/finish/jobs", { method: "POST", body: form })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (r) {
+        if (!r.ok || !r.body.job_id) { els.finish.disabled = false; setRender(r.body.error || "Could not start the soft finish."); return; }
+        pollFinish(r.body.job_id, Date.now());
+      })
+      .catch(function (e) { els.finish.disabled = false; setRender(e.message); });
+  }
+
+  function pollFinish(id, started) {
+    var timer = setInterval(function () {
+      fetch("/api/ng/finish/jobs/" + id).then(function (r) { return r.json(); }).then(function (j) {
+        if (j.status === "completed") {
+          clearInterval(timer);
+          els.finish.disabled = false;
+          setRender("Done: soft finish (the original is kept). Download: " + j.download_url);
+          els.video.src = j.video_url + "?v=" + Date.now();
+          els.video.style.display = "";
+        } else if (j.status === "failed" || j.cancelled) {
+          clearInterval(timer);
+          els.finish.disabled = false;
+          setRender("The soft finish failed: " + (j.error || "stopped"));
+        } else {
+          var up = Math.round((Date.now() - started) / 1000);
+          setRender("Soft finish \u00b7 " + Math.floor(up / 60) + ":" + ("0" + (up % 60)).slice(-2) + " elapsed");
+        }
+      }).catch(function (e) { clearInterval(timer); els.finish.disabled = false; setRender(e.message); });
+    }, 2000);
+  }
+
+  function loadFinish() {
+    fetch("/api/ng/finish/status").then(function (r) { return r.json(); }).then(function (h) {
+      if (!els.finish) return;
+      els.finish.dataset.ok = h.ok ? "1" : "";
+      if (!h.ok) { els.finish.disabled = true; els.finish.title = "Soft finish is not available: " + (h.problems || []).join("; "); }
+    }).catch(function () { /* the button simply stays as it is */ });
+  }
+
   function updateExtend() {
+    if (els.finish) els.finish.style.display = lastDone ? "" : "none";
     if (els.upscale) els.upscale.style.display = lastDone ? "" : "none";
     if (els.sharp) els.sharp.style.display = lastDone ? "" : "none";
     els.extend.style.display = lastDone || extendFrom ? "" : "none";
@@ -686,6 +734,7 @@
     els.extend.onclick = toggleExtend;
     if (els.upscale) els.upscale.onclick = startUpscale;
     if (els.sharp) els.sharp.onclick = startSharp;
+    if (els.finish) els.finish.onclick = startFinish;
     if (els.keepfaces) els.keepfaces.onchange = function () { syncKeepFaces(); updateRefNote(); saveSoon(); };
     if (els.lowmem) els.lowmem.addEventListener("change", saveSoon);
     if (window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.init(els.rerolls, {
