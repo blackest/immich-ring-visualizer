@@ -393,6 +393,8 @@ def start_h3_job_ng(image_bytes: Optional[bytes], image_ext: str, prompt: str,
         "adaln_blocks": adaln_blocks, "fast_vae": bool(fast_vae), "vae_v2": bool(vae_v2), "low_memory": bool(low_memory),
         "has_audio_drive": audio_bytes is not None,
         "loras": [{"name": l["name"], "path": l["path"], "strength": l["strength"]} for l in loras],
+        # The kept reference pictures live in this folder as reference_N.<ext>; a re-roll reads them back by name.
+        "references": list(reference_names), "reference_size": reference_size, "reference_mode": reference_mode,
     }, indent=2), encoding="utf-8")
     with _JOBS_LOCK:
         _JOBS[job_id] = job

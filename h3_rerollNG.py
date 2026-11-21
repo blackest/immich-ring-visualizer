@@ -156,6 +156,18 @@ def restitch_ng(job_id: str, joins) -> dict:
         return _stitch_version(src, man, joins, "joins changed")
 
 
+def _kept_pictures_ng(src) -> list:
+    """[(bytes, ext)] for the reference pictures the source render was given, read back from its folder, so a
+    re-rolled window keeps the same people as the rest of the clip. ValueError if one has gone."""
+    out = []
+    for name in getattr(src, "references", None) or []:
+        path = Path(src.job_dir) / name
+        if not path.is_file():
+            raise ValueError(f"the reference picture {name} is no longer in that render's folder; render it again")
+        out.append((path.read_bytes(), path.suffix))
+    return out
+
+
 def start_reroll_ng(job_id: str, window: int, *, seed=None, prompt=None, from_previous: bool = True,
                     joins=None):
     """Queue the one-window render for `window` (1-based) and return its job. When it ends the new
@@ -186,6 +198,10 @@ def start_reroll_ng(job_id: str, window: int, *, seed=None, prompt=None, from_pr
         height=src.height, steps=src.steps, turbo=src.turbo, v13=getattr(src, "v13", False),
         tristep=src.tristep, flex=getattr(src, "flex", False),
         flex_turbo=getattr(src, "flex_turbo", False), loras=[dict(l) for l in src.loras],
+        references=_kept_pictures_ng(src), reference_size=getattr(src, "reference_size", "match"),
+        reference_mode=getattr(src, "reference_mode", "ref2va"),
+        adaln_blocks=getattr(src, "adaln_blocks", "") or "", fast_vae=bool(getattr(src, "fast_vae", False)),
+        vae_v2=bool(getattr(src, "vae_v2", False)), low_memory=bool(getattr(src, "low_memory", False)),
         reroll={"source": job_id, "window": window, "joins": joins, "version": None},
         on_done=finish_reroll_ng)
 

@@ -117,6 +117,42 @@ class StartReroll(RerollBase):
         self.assertEqual(kw["reroll"]["window"], 2)
         self.assertIs(kw["on_done"], rr.finish_reroll_ng)
 
+    def test_a_render_with_no_extras_passes_none_of_them(self):
+        start, _ = self.start(2)
+        kw = start.call_args.kwargs
+        self.assertEqual((kw["references"], kw["reference_mode"], kw["low_memory"], kw["fast_vae"], kw["vae_v2"]),
+                         ([], "ref2va", False, False, False))
+        self.assertEqual(kw["adaln_blocks"], "")
+
+    def test_kept_pictures_and_low_memory_are_carried_into_the_re_rolled_window(self):
+        (self.job_dir / "reference_0.png").write_bytes(b"FAIRY")
+        (self.job_dir / "reference_1.jpg").write_bytes(b"MAGE")
+        self.src = live_job(self.job_dir, references=["reference_0.png", "reference_1.jpg"], reference_size="max",
+                            reference_mode="faces", low_memory=True, fast_vae=True, vae_v2=True, adaln_blocks="45-49")
+        start, _ = self.start(2, seed=5)
+        kw = start.call_args.kwargs
+        self.assertEqual(kw["references"], [(b"FAIRY", ".png"), (b"MAGE", ".jpg")])
+        self.assertEqual((kw["reference_size"], kw["reference_mode"]), ("max", "faces"))
+        self.assertEqual((kw["low_memory"], kw["fast_vae"], kw["vae_v2"], kw["adaln_blocks"]), (True, True, True, "45-49"))
+        self.assertEqual(start.call_args.args[0], b"PNG")      # still starts on the previous window's last frame
+
+    def test_a_kept_picture_that_has_gone_is_named(self):
+        self.src = live_job(self.job_dir, references=["reference_0.png"], reference_mode="faces")
+        with self.assertRaisesRegex(ValueError, "reference_0.png is no longer"):
+            self.start(2)
+
+    def test_the_references_are_read_back_for_a_job_gone_from_memory(self):
+        (self.job_dir / "reference_0.png").write_bytes(b"FAIRY")
+        saved = {"model": "h3q8", "width": 640, "height": 384, "steps": 4, "turbo": False, "tristep": True, "loras": [],
+                 "has_image": False, "references": ["reference_0.png"], "reference_size": "match",
+                 "reference_mode": "faces", "low_memory": True}
+        (self.job_dir / jobs.SETTINGS_NAME).write_text(json.dumps(saved))
+        with mock.patch.object(rr.h3_jobs, "get_job_ng", return_value=None):
+            start, _ = self.start(2)
+        kw = start.call_args.kwargs
+        self.assertEqual((kw["references"], kw["reference_mode"], kw["low_memory"]),
+                         ([(b"FAIRY", ".png")], "faces", True))
+
     def test_the_prompt_can_be_changed_and_the_start_frame_declined(self):
         start, last = self.start(3, prompt="  in his pale shirt  ", from_previous=False)
         self.assertEqual(start.call_args.args[2], "in his pale shirt")
@@ -193,6 +229,26 @@ class JobSettings(unittest.TestCase):
                          ("h3q8", True, jobs.h3.H3_TRISTEP_STEPS, False))
         self.assertIs(job.on_done, hook)
         self.assertEqual(jobs.job_status_ng(job.job_id)["reroll"], {"source": "a", "window": 2})
+        self.assertEqual((saved["references"], saved["reference_mode"], saved["reference_size"]), ([], "ref2va", "match"))
+
+    def test_the_kept_pictures_are_recorded_by_name_for_a_later_re_roll(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        runner = tmp / "runner.py"
+        runner.write_text("--lora PATH\nRepeat the flag to stack adapters\n--sigma-subset X\n--reference IMAGE\n--reference-size PIXELS\n")
+        for target, name, val in ((jobs, "H3GEN_DIR", str(tmp / "gen")), (jobs, "_QUEUE", mock.MagicMock()),
+                                  (jobs, "_ensure_worker_started", lambda: None),
+                                  (jobs.h3, "_resolve_h3_runner_ng", lambda c: str(runner)),
+                                  (jobs.h3, "_resolve_h3_tristep_ng", lambda: "/x/tristep.safetensors")):
+            p = mock.patch.object(target, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+        self.addCleanup(jobs._JOBS.clear)
+        job = jobs.start_h3_job_ng(None, ".png", "p", 10.0, 1, tristep=True, chain_prompts=["a", "b"],
+                                   references=[(b"FAIRY", ".png")], reference_mode="faces")
+        saved = json.loads((job.job_dir / jobs.SETTINGS_NAME).read_text())
+        self.assertEqual((saved["references"], saved["reference_mode"]), (["reference_0.png"], "faces"))
+        self.assertEqual((job.job_dir / "reference_0.png").read_bytes(), b"FAIRY")
 
 
 class Routes(RerollBase):
