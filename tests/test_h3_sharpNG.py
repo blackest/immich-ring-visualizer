@@ -75,6 +75,21 @@ class Start(SharpBase):
         self.assertEqual((self.queued["task"], self.queued["meta"]["frames"]), ("sharp", 124))
         self.assertLess(self.queued["meta"]["estimate_min"], 1.0)
 
+    def test_the_default_is_the_halo_limited_picture_and_is_passed_to_the_runner(self):
+        self.assertEqual(sharp.DEFAULT_STRENGTH, 1.0)
+        self.assertEqual(runner.DEFAULT_STRENGTH, 1.0)
+        sharp.start_sharp_ng("j1", strength=0.5)
+        self.assertEqual(self.queued["meta"]["strength"], 0.5)
+        with mock.patch.object(sharp.subprocess, "Popen", return_value=FakeProc(["ok"], 0, make=self.tmp / "film_sr2x.mp4")) as popen:
+            self.queued["run"](self.job())
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("--strength") + 1], "0.5")
+
+    def test_a_strength_out_of_range_is_refused(self):
+        for bad in (-1, 1.01, "x", None):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "strength"):
+                sharp.start_sharp_ng("j1", strength=bad)
+
     def test_a_render_without_a_video_is_refused(self):
         self.clip.unlink()
         with self.assertRaisesRegex(ValueError, "no video"):
@@ -126,6 +141,11 @@ class Route(SharpBase):
         self.assertEqual((r.status_code, r.get_json()["job_id"]), (202, "s1"))
         self.assertIn("estimate_min", r.get_json())
 
+    def test_a_strength_goes_through_and_a_bad_one_is_a_400(self):
+        r = self.client.post("/api/ng/h3/jobs/j1/sharp", json={"strength": 0.25})
+        self.assertEqual((r.status_code, self.queued["meta"]["strength"]), (202, 0.25))
+        self.assertEqual(self.client.post("/api/ng/h3/jobs/j1/sharp", json={"strength": 7}).status_code, 400)
+
     def test_unknown_job_and_bad_source(self):
         with mock.patch.object(sharp.h3_reroll, "resolve_source_ng", side_effect=LookupError("no such job")):
             self.assertEqual(self.client.post("/api/ng/h3/jobs/zz/sharp").status_code, 404)
@@ -152,6 +172,11 @@ class RunnerRefusals(unittest.TestCase):
         self.assertEqual(runner.main([str(bad)]), 2)
         self.assertFalse((self.tmp / "bad_sr2x.png").exists())
 
+    def test_a_strength_out_of_range(self):
+        pic = self.tmp / "a.png"
+        pic.write_bytes(b"x")
+        self.assertEqual(runner.main([str(pic), "--strength", "1.5"]), 2)
+
     def test_a_clip_with_no_video(self):
         bad = self.tmp / "bad.mp4"
         bad.write_bytes(b"not a clip")
@@ -161,6 +186,56 @@ class RunnerRefusals(unittest.TestCase):
         for name in ("a.png", "a.JPG", "a.jpeg", "a.webp"):
             self.assertIn(Path(name).suffix.lower(), runner.PICTURE_SUFFIXES)
         self.assertNotIn(".mp4", runner.PICTURE_SUFFIXES)
+
+
+class HaloLimit(unittest.TestCase):
+    """The halo limit holds every pixel inside the plain resize's local range; mix is a straight blend."""
+
+    def setUp(self):
+        import numpy as np
+        from PIL import Image
+        self.np, self.Image = np, Image
+
+    def img(self, arr):
+        return self.Image.fromarray(self.np.array(arr, dtype=self.np.uint8))
+
+    def test_running_min_and_max_match_a_brute_force_window(self):
+        np = self.np
+        rng = np.random.default_rng(3)
+        a = rng.integers(0, 256, (9, 11, 3), dtype=np.uint8)
+        r = runner.HALO_WINDOW // 2
+        padded = np.pad(a, ((r, r), (r, r), (0, 0)), mode="edge")
+        for op, ref in ((np.minimum, np.min), (np.maximum, np.max)):
+            want = np.zeros_like(a)
+            for y in range(a.shape[0]):
+                for x in range(a.shape[1]):
+                    want[y, x] = ref(padded[y:y + 2 * r + 1, x:x + 2 * r + 1], axis=(0, 1))
+            self.assertTrue((runner._running(a, op) == want).all())
+
+    def test_an_overshoot_beside_an_edge_is_pulled_back_and_a_flat_area_is_untouched(self):
+        np = self.np
+        plain = np.full((12, 12, 3), 100, dtype=np.uint8)
+        plain[:, 6:] = 200                                  # a step edge
+        sharp = plain.copy()
+        sharp[:, 5] = 60                                    # dark halo on the dark side
+        sharp[:, 6] = 255                                   # bright halo on the bright side
+        sharp[0, 0] = 100
+        out = np.asarray(runner.limit_halo(self.img(plain), self.img(sharp)))
+        self.assertEqual((out[:, 5] == 100).all(), True)    # the dark halo is back inside the 100..200 range
+        self.assertEqual((out[:, 6] == 200).all(), True)    # and the bright one is cut to 200
+        self.assertEqual(int(out[0, 0, 0]), 100)
+
+    def test_nothing_is_changed_when_sharp_stays_inside_the_range(self):
+        np = self.np
+        plain = np.tile(np.arange(0, 240, 20, dtype=np.uint8), (12, 1))[..., None].repeat(3, axis=2)
+        out = np.asarray(runner.limit_halo(self.img(plain), self.img(plain)))
+        self.assertTrue((out == plain).all())
+
+    def test_mix_endpoints_and_midpoint(self):
+        plain, sharp = self.img([[[0, 0, 0]]]), self.img([[[200, 100, 50]]])
+        self.assertEqual(runner.mix(plain, sharp, 1.0).getpixel((0, 0)), (200, 100, 50))
+        self.assertEqual(runner.mix(plain, sharp, 0.0).getpixel((0, 0)), (0, 0, 0))
+        self.assertEqual(runner.mix(plain, sharp, 0.5).getpixel((0, 0)), (100, 50, 25))
 
 
 class TileLayout(unittest.TestCase):

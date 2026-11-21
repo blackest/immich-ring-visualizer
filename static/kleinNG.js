@@ -495,7 +495,7 @@
           holder.textContent = ""; holder.appendChild(a);
         })
         .catch(function (e) { b.disabled = false; b.textContent = "Sharp 2x"; setStatus(e.message); });
-    }, "A quick 2x sharpen on the Neural Engine (about a second). Crisps edges and keeps the picture as it is. Powered by PiperSR from ModelPiper (https://modelpiper.com): free for personal and academic use, commercial use needs the author's licence.");
+    }, "A quick 2x sharpen on the Neural Engine (about a second). Crisps edges, with halos limited, and keeps the picture as it is. Powered by PiperSR from ModelPiper (https://modelpiper.com): free for personal and academic use, commercial use needs the author's licence.");
     holder.appendChild(b);
     return holder;
   }

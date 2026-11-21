@@ -6,7 +6,7 @@ POST /api/ng/h3/refmods/create         multipart: name, files[], canvas (square|
                                        description? -> a queued job that writes the RefMod; poll it at
                                        /api/ng/h3/jobs/<job_id> (task "refmod"), then reload /api/ng/h3/refmods
 POST /api/ng/h3/jobs/<id>/upscale      {steps?, keep?} -> a queued 2x upscale of that render's film;
-POST /api/ng/h3/jobs/<id>/sharp        -> a queued 2x sharpen on the Neural Engine (PiperSR, seconds, no redraw);
+POST /api/ng/h3/jobs/<id>/sharp        {strength?} -> a queued 2x sharpen on the Neural Engine (PiperSR, seconds, no redraw);
                                        poll it at /api/ng/h3/jobs/<job_id> (task "upscale" or "sharp"), play at .../video
 """
 
@@ -59,8 +59,9 @@ def h3_upscale_ng(job_id):
 
 @h3ToolsNG_bp.route("/api/ng/h3/jobs/<job_id>/sharp", methods=["POST"])
 def h3_sharp_ng(job_id):
+    body = request.get_json(silent=True) or {}
     try:
-        job = sharp.start_sharp_ng(job_id)
+        job = sharp.start_sharp_ng(job_id, strength=body.get("strength", sharp.DEFAULT_STRENGTH))
     except LookupError as e:
         return jsonify({"error": str(e)}), 404
     except (ValueError, FileNotFoundError) as e:

@@ -195,15 +195,16 @@ def klein_jobs_ng():
 
 @kleinNG_bp.route("/api/ng/klein/sharp", methods=["POST"])
 def klein_sharp_ng():
-    """2x sharpen of one of the job's pictures on the Neural Engine ({"ref": "<job>/<file>"}); the new picture
-    is saved beside it as <name>_sr2x.png and comes back as a ref the image route can serve."""
-    ref = str((request.get_json(silent=True) or {}).get("ref") or "")
+    """2x sharpen of one of the job's pictures on the Neural Engine ({"ref": "<job>/<file>", "strength"?: 0 to 1,
+    default 1}); the new picture is saved beside it as <name>_sr2x<strength %>.png (sr2x100 by default) and comes back as a ref the image route can serve."""
+    body = request.get_json(silent=True) or {}
+    ref = str(body.get("ref") or "")
     path = _picture_path(ref)
     if path is None:
         return jsonify({"error": "no such picture"}), 404
     try:
-        out = klein_sharpNG.sharpen_picture_ng(path)
-    except FileNotFoundError as exc:
+        out = klein_sharpNG.sharpen_picture_ng(path, body.get("strength", klein_sharpNG.h3_sharp.DEFAULT_STRENGTH))
+    except (ValueError, FileNotFoundError) as exc:
         return jsonify({"error": str(exc)}), 400
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 500

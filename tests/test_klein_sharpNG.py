@@ -58,10 +58,11 @@ class Base(unittest.TestCase):
 class Module(Base):
     def test_the_new_picture_sits_beside_the_original_and_the_original_is_untouched(self):
         dest = ks.sharpen_picture_ng(self.pic)
-        self.assertEqual(dest, self.out / "klein_1_sr2x.png")
+        self.assertEqual(dest, self.out / "klein_1_sr2x100.png")
         self.assertTrue(dest.is_file())
         self.assertEqual(self.pic.read_bytes(), PNG)
         self.assertEqual(self.runs[0][:3], ["/venv/bin/python", str(ks.h3_sharp.SCRIPT), str(self.pic)])
+        self.assertEqual(self.runs[0][self.runs[0].index("--strength") + 1], "1")
         self.assertFalse(list(self.out.glob("*.partial.png")))
 
     def test_asking_again_returns_the_existing_one_without_running_it_again(self):
@@ -84,6 +85,19 @@ class Module(Base):
         with self.assertRaises(FileNotFoundError):
             ks.sharpen_picture_ng(self.out / "nope.png")
 
+    def test_each_strength_is_its_own_file_and_is_passed_on(self):
+        full = ks.sharpen_picture_ng(self.pic)
+        half = ks.sharpen_picture_ng(self.pic, 0.5)
+        self.assertEqual((full.name, half.name), ("klein_1_sr2x100.png", "klein_1_sr2x50.png"))
+        self.assertEqual(len(self.runs), 2)
+        self.assertEqual(self.runs[1][self.runs[1].index("--strength") + 1], "0.5")
+
+    def test_a_strength_out_of_range_is_refused_before_anything_runs(self):
+        for bad in (-0.1, 1.5, "x", None):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                ks.sharpen_picture_ng(self.pic, bad)
+        self.assertEqual(self.runs, [])
+
 
 class Route(Base):
     def setUp(self):
@@ -98,9 +112,9 @@ class Route(Base):
     def test_a_picture_comes_back_as_a_ref_the_image_route_can_serve(self):
         r = self.post("job1/klein_1.png")
         body = r.get_json()
-        self.assertEqual((r.status_code, body["ref"], body["file"]), (200, "job1/klein_1_sr2x.png", "klein_1_sr2x.png"))
+        self.assertEqual((r.status_code, body["ref"], body["file"]), (200, "job1/klein_1_sr2x100.png", "klein_1_sr2x100.png"))
         self.assertEqual((body["width"], body["height"]), (1, 1))
-        self.assertEqual(self.client.get("/api/ng/klein/image/job1/klein_1_sr2x.png").status_code, 200)
+        self.assertEqual(self.client.get("/api/ng/klein/image/job1/klein_1_sr2x100.png").status_code, 200)
 
     def test_unknown_pictures_and_odd_paths_are_refused(self):
         for ref in ("job1/nope.png", "nojob/klein_1.png", "../job1/out/klein_1.png", "job1/../klein_1.png", "", "x"):
@@ -113,6 +127,13 @@ class Route(Base):
         r = self.post("job1/klein_1.png")
         self.assertEqual(r.status_code, 500)
         self.assertIn("cannot read that picture", r.get_json()["error"])
+
+    def test_a_strength_can_be_asked_for_and_a_bad_one_is_a_400(self):
+        r = self.client.post("/api/ng/klein/sharp", json={"ref": "job1/klein_1.png", "strength": 0.5})
+        self.assertEqual((r.status_code, r.get_json()["file"]), (200, "klein_1_sr2x50.png"))
+        r = self.client.post("/api/ng/klein/sharp", json={"ref": "job1/klein_1.png", "strength": 3})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("strength", r.get_json()["error"])
 
     def test_a_missing_env_says_how_to_build_it(self):
         with mock.patch.object(ks.h3_sharp, "pipersr_python_ng",
