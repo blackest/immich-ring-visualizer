@@ -17,7 +17,8 @@ Two modes, chosen by `reference_mode`:
   later (the runner's own help: "Every window gets it"). Pictures only, up to three; a first-frame picture may come
   with them; Phosphene's "Face to keep" uses the same flag on a single picture. The pictures are named in each
   window's prompt as <Picture n>, after the first frame if there is one (the runner moves the number for the later
-  windows, which also hold the carried frame).
+  windows, which also hold the carried frame). An extension of a finished clip is allowed too: every
+  extension window starts from the carried last frame, so the pictures are <Picture 2> there as well.
 """
 
 from pathlib import Path
@@ -75,8 +76,6 @@ def validate_faces_ng(references, *, model: str, last_frame_path=None, keyframes
         raise ValueError("this H3 runner has no --reference -- update the minimax-h3-mlx runner")
     if last_frame_path is not None or keyframes:
         raise ValueError("pictures kept in every window combine with a first frame, not with a last or timed frame")
-    if extend_from is not None:
-        raise ValueError("pictures kept in every window do not combine with extending a clip")
     if refmods:
         raise ValueError("pictures kept in every window do not combine with a RefMod: use one or the other")
     if turbo or v13:

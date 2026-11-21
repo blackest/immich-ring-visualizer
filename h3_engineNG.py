@@ -854,8 +854,9 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
         last_frame_path=last_frame_path, keyframes=keyframes, extend_from=extend_from,
         refmods=refmods, turbo=turbo, v13=v13, chain_windows=chain_windows, runner=runner, mode=reference_mode)
     if references and reference_mode == h3_references.MODE_FACES:
-        # Every window names the kept pictures; they come after the first-frame picture, if there is one.
-        first_picture = 2 if image_path is not None else 1
+        # Every window names the kept pictures; they come after the first-frame picture, if there is one, or after
+        # the carried last frame of the clip being extended (an extension window always starts from it).
+        first_picture = 2 if (image_path is not None or extend_from is not None) else 1
         prompt = h3_references.name_faces_in_prompt_ng(prompt, len(references), first_picture)
         if chain_prompts:
             chain_prompts = [h3_references.name_faces_in_prompt_ng(p, len(references), first_picture)

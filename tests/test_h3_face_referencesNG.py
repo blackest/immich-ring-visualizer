@@ -52,12 +52,18 @@ class Validation(_FacesBase):
     def test_a_first_frame_picture_may_come_with_them(self):
         self.assertEqual(self._validate(image_path="keyframe"), [str(self.pic)])
 
+    def test_extending_a_clip_is_allowed_with_them_but_not_in_the_default_mode(self):
+        self.assertEqual(self._validate(extend_from="clip.mp4", chain_windows=2), [str(self.pic)])
+        self.runner.write_text(FACES_RUNNER + "--ref2va-reference PICTURE|CLIP\n")
+        with self.assertRaisesRegex(ValueError, "extending"):
+            refs.validate_references_ng([str(self.pic)], "match", model="h3ref", image_path=None,
+                                        extend_from="clip.mp4", runner=str(self.runner))
+
     def test_refusals(self):
         for kw, text in (
                 (dict(model="h3ref"), "first-frame model"),
                 (dict(last_frame_path="last"), "last or timed"),
                 (dict(keyframes=[("a", "1")]), "last or timed"),
-                (dict(extend_from="x"), "extending"),
                 (dict(refmods=[{"path": "r"}]), "RefMod"),
                 (dict(turbo=True), "Turbo"),
                 (dict(v13=True), "Turbo"),
@@ -148,6 +154,22 @@ class EngineCommand(_FacesBase):
             self.assertIn("The person from <Picture 1>", text)
             self.assertIn("The person from <Picture 2>", text)
 
+    def test_an_extension_carries_them_and_numbers_them_after_the_carried_frame(self):
+        clip = self.tmp / "film.mp4"
+        clip.write_bytes(b"mp4")
+        self.runner.write_text(FACES_RUNNER + "--extend-from CLIP\n--extend-frames N\n--chain-keep-windows\n"
+                               "--chain-windows N\n--chain-total-frames N\n--chain-prompts FILE\n")
+        windows = [DESC, DESC.replace("looks up", "smiles")]
+        cmd = self._cmd(model="h3q8", duration_s=10.0, chain_prompts=windows, tristep=True, extend_from=str(clip),
+                        references=[str(self.pic)], reference_mode="faces")
+        self.assertEqual(self._value(cmd, "--extend-from"), str(clip))
+        self.assertEqual(self._value(cmd, "--reference"), str(self.pic))
+        with open(self._value(cmd, "--chain-prompts")) as fh:
+            saved = json.load(fh)
+        for text in saved:
+            self.assertIn("The person from <Picture 2>", text)       # after the carried frame, never <Picture 1>
+            self.assertNotIn("<Picture 1>", text)
+
     def test_a_single_window_names_them_in_the_prompt_and_a_first_frame_moves_the_numbers(self):
         cmd = self._cmd(model="h3q8", prompt=DESC, image_path=str(self.pic2), references=[str(self.pic)],
                         reference_mode="faces")
@@ -198,6 +220,12 @@ class JobAndRoute(_FacesBase):
         self.assertEqual((job.references, job.reference_mode), (["reference_0.png"], "faces"))
         status = jobs.job_status_ng(job.job_id)
         self.assertEqual((status["references"], status["reference_mode"]), (1, "faces"))
+
+    def test_an_extension_with_kept_pictures_is_queued(self):
+        self.runner.write_text(FACES_RUNNER + "--extend-from CLIP\n--extend-frames N\n--chain-keep-windows\n"
+                               "--chain-windows N\n--chain-total-frames N\n--chain-prompts FILE\n")
+        job = self._start(extend_bytes=b"MP4DATA")
+        self.assertEqual((job.references, job.reference_mode, job.extends), (["reference_0.png"], "faces", True))
 
     def test_a_job_without_references_reports_no_mode(self):
         self.assertIsNone(jobs.job_status_ng(self._start(references=None).job_id)["reference_mode"])

@@ -423,7 +423,7 @@
   var pollTimer = null;
   var REF_MAX_SECONDS = 5.167;
   // "Keep the reference pictures in every window": the first-frame model with the runner's --reference, any length.
-  function keepFaces() { return !!(els.keepfaces && els.keepfaces.checked) && !extendFrom; }
+  function keepFaces() { return !!(els.keepfaces && els.keepfaces.checked); }
   // The look selector belongs to the one-window Ref2VA route; with kept pictures it would do nothing, so it is switched off.
   function syncKeepFaces() {
     if (!els.hybrid) return;
@@ -513,7 +513,8 @@
     els.extend.style.display = lastDone || extendFrom ? "" : "none";
     els.extend.textContent = extendFrom ? "Stop extending" : "Extend this video";
     els.extendnote.textContent = extendFrom
-      ? "Extending the last render. Describe the same people and place and what happens next; Seconds is the time to add. Tray items are ignored."
+      ? "Extending the last render. Describe the same people and place and what happens next; Seconds is the time to add. " +
+        (keepFaces() ? "Pictures in the tray with a subject-style role are kept in every new window." : "Tray items are ignored.")
       : "";
   }
 
@@ -550,7 +551,9 @@
       form.append("keyframe_times", it.at);
     });
 
-    var refs = extendFrom ? [] : referenceItems();
+    // An extension carries the kept pictures too (every extension window starts from the carried frame, so they come
+    // after it); without the box ticked, tray items are ignored when extending, as before.
+    var refs = (extendFrom && !keepFaces()) ? [] : referenceItems();
     var faces = keepFaces() && refs.length > 0;
     if (faces) {
       if (items.video.length) { setRender("Only pictures can be kept in every window. Remove the clip, or untick the box."); return; }
@@ -735,7 +738,7 @@
     if (els.upscale) els.upscale.onclick = startUpscale;
     if (els.sharp) els.sharp.onclick = startSharp;
     if (els.finish) els.finish.onclick = startFinish;
-    if (els.keepfaces) els.keepfaces.onchange = function () { syncKeepFaces(); updateRefNote(); saveSoon(); };
+    if (els.keepfaces) els.keepfaces.onchange = function () { syncKeepFaces(); updateRefNote(); updateExtend(); saveSoon(); };
     if (els.lowmem) els.lowmem.addEventListener("change", saveSoon);
     if (window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.init(els.rerolls, {
       say: setRender,
