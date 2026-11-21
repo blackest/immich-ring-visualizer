@@ -28,6 +28,8 @@ from flask import Blueprint, jsonify, request
 import configNG
 import h3_continueNG as h3_continue
 import h3_extend_lookNG as h3_extend_look
+import h3_rerollNG as h3_reroll
+import h3_seeNG as h3_see
 import h3_writerNG as h3_writer
 import h3_engineNG
 
@@ -445,6 +447,12 @@ def enhanced_h3_write_window_ng():
             told = h3_extend_look.intent_with_ng(intent, established)
         except (h3_continue.ContinueError, LookupError, ValueError) as e:
             notes.append(f"The earlier clip's cast and look could not be read ({e}), so check this window matches it.")
+    if extend_job and str(form.get("look") or "").lower() in ("1", "true", "on"):
+        try:
+            clip = h3_reroll.resolve_source_ng(extend_job).mp4_path
+            told = h3_see.intent_with_seen_ng(told, h3_see.seen_ng(clip))
+        except (h3_see.SeeError, LookupError, ValueError, TypeError, OSError) as e:
+            notes.append(f"Gemma could not look at the earlier clip's last frame ({e}), so the writer went without it.")
     try:
         prompt = h3_writer.write_window_ng(told, seconds, form.get("speaker") or "")
     except h3_writer.WriterError as e:

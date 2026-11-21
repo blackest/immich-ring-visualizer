@@ -367,10 +367,10 @@
     form.append("intent", intent);
     form.append("seconds", els.seconds.value || "5.1");
     if (els.speaker.value.trim()) form.append("speaker", els.speaker.value.trim());
-    if (extendFrom) form.append("extend_job", extendFrom);
+    if (extendFrom) { form.append("extend_job", extendFrom); form.append("look", "true"); }   // Gemma looks at the last frame for the blind writer
     briefNeedsFirstFrame = !extendFrom && items.image.some(function (it) { return it.role === "frame_anchor_first"; });
     capNote = "";
-    run("The H3 writer is writing one window (about 20 s)...", fetch(API + "/write-window", { method: "POST", body: form }));
+    run("The H3 writer is writing one window (about " + (extendFrom ? "40" : "20") + " s)...", fetch(API + "/write-window", { method: "POST", body: form }));
   }
 
   function refine() {
