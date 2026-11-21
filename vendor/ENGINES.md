@@ -10,6 +10,7 @@ repository** (`vendor/` and the app's own scripts). What is still outside is the
 | H3 (Enhanced H3, Talk, H3-Image) | `vendor/minimax_h3_mlx` (runner and package) | `vendor/minimax_h3_mlx/.venv` (`build_venv.sh`) | uv 3.14.6 | No (80 packages) |
 | Speech | `vendor/speech_runner` | `vendor/speech_runner/.venv` (`build_venv.sh`) | uv 3.14.6 | No (35 packages) |
 | Klein | `klein_workerNG.py` (ours; uses `mflux` from the env) | `vendor/flux3_worker/env` (`build_env.sh`) | uv 3.14.6 | No (57 packages) |
+| Sharp 2x (PiperSR, Neural Engine) | `vendor/pipersr_x2` (ours; PiperSR 1.0.0 from the wheel) | `vendor/pipersr_x2/.venv` (`build_venv.sh`) | uv 3.12.11 (coremltools has no native Core ML library for 3.14) | No |
 | Make-vertical, x2 upscale, H3 upscale | `vendor/vertical_outpaint`, `upscale_x2NG.py`, `h3_upscaleNG.py` (ours) | the LTX env | | |
 
 Each resolver (`ltx_engineNG`, `music_engineNG`, `h3_engineNG`, `speech_engineNG`, `klein_engineNG`) prefers the vendored

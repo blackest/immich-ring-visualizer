@@ -6,7 +6,8 @@ POST /api/ng/h3/refmods/create         multipart: name, files[], canvas (square|
                                        description? -> a queued job that writes the RefMod; poll it at
                                        /api/ng/h3/jobs/<job_id> (task "refmod"), then reload /api/ng/h3/refmods
 POST /api/ng/h3/jobs/<id>/upscale      {steps?, keep?} -> a queued 2x upscale of that render's film;
-                                       poll it at /api/ng/h3/jobs/<job_id> (task "upscale"), play at .../video
+POST /api/ng/h3/jobs/<id>/sharp        -> a queued 2x sharpen on the Neural Engine (PiperSR, seconds, no redraw);
+                                       poll it at /api/ng/h3/jobs/<job_id> (task "upscale" or "sharp"), play at .../video
 """
 
 import os
@@ -15,6 +16,7 @@ from flask import Blueprint, jsonify, request
 
 import h3_lora_convertNG as lora_convert
 import h3_refmod_makeNG as refmod_make
+import h3_sharpNG as sharp
 import h3_upscaleNG as upscale
 from h3_lora_libraryNG import H3_LORAS_DIR, list_h3_loras_ng
 
@@ -47,6 +49,18 @@ def h3_upscale_ng(job_id):
     body = request.get_json(silent=True) or {}
     try:
         job = upscale.start_upscale_ng(job_id, steps=body.get("steps", 3), keep=body.get("keep", 1.0))
+    except LookupError as e:
+        return jsonify({"error": str(e)}), 404
+    except (ValueError, FileNotFoundError) as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "job_id": job.job_id, "poll_url": f"/api/ng/h3/jobs/{job.job_id}",
+                    "estimate_min": job.meta["estimate_min"]}), 202
+
+
+@h3ToolsNG_bp.route("/api/ng/h3/jobs/<job_id>/sharp", methods=["POST"])
+def h3_sharp_ng(job_id):
+    try:
+        job = sharp.start_sharp_ng(job_id)
     except LookupError as e:
         return jsonify({"error": str(e)}), 404
     except (ValueError, FileNotFoundError) as e:

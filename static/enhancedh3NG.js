@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "speed", "render", "stop", "hybrid", "lowmem", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale"
+      "quality", "speed", "render", "stop", "hybrid", "lowmem", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale", "sharp"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -413,25 +413,32 @@
   function setRender(text) { els.renderstatus.textContent = text || ""; }
 
   // Upscale 2x: a queued task on the finished film (LTX's upscaler adapter, a few minutes per 5 s).
-  function startUpscale() {
+  // Sharp 2x: the same kind of queued task (PiperSR on the Neural Engine, seconds, keeps the picture as it is).
+  function startSizeUp(kind) {
     if (!lastDone) return;
+    var sharp = kind === "sharp";
     els.upscale.disabled = true;
-    setRender("Starting the 2x upscale...");
-    fetch("/api/ng/h3/jobs/" + lastDone + "/upscale", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+    if (els.sharp) els.sharp.disabled = true;
+    setRender(sharp ? "Starting the 2x sharpen..." : "Starting the 2x upscale...");
+    function back() { els.upscale.disabled = false; if (els.sharp) els.sharp.disabled = false; }
+    fetch("/api/ng/h3/jobs/" + lastDone + "/" + kind, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
       .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (r) {
-        els.upscale.disabled = false;
-        if (!r.ok || !r.body.job_id) { setRender(r.body.error || "Could not start the upscale."); return; }
+        back();
+        if (!r.ok || !r.body.job_id) { setRender(r.body.error || (sharp ? "Could not start the sharpen." : "Could not start the upscale.")); return; }
         els.render.disabled = true;
         renderJob = r.body.job_id;
         saveNow();
         pollJob(r.body.job_id);
       })
-      .catch(function (e) { els.upscale.disabled = false; setRender(e.message); });
+      .catch(function (e) { back(); setRender(e.message); });
   }
+  function startUpscale() { startSizeUp("upscale"); }
+  function startSharp() { startSizeUp("sharp"); }
 
   function updateExtend() {
     if (els.upscale) els.upscale.style.display = lastDone ? "" : "none";
+    if (els.sharp) els.sharp.style.display = lastDone ? "" : "none";
     els.extend.style.display = lastDone || extendFrom ? "" : "none";
     els.extend.textContent = extendFrom ? "Stop extending" : "Extend this video";
     els.extendnote.textContent = extendFrom
@@ -533,11 +540,11 @@
 
   function progressOf(job) {
     var log = job.log_tail || [];
-    if (job.task === "upscale") {
+    if (job.task === "upscale" || job.task === "sharp") {
       var up = Date.now() / 1000 - (job.dispatched_at || Date.now() / 1000);
       var est = (job.meta && job.meta.estimate_min) || 0;
       return { frac: est ? Math.min(0.95, up / 60 / est) : 0.1,
-        text: "Upscaling 2x \u00b7 " + Math.floor(up / 60) + ":" + ("0" + Math.floor(up % 60)).slice(-2) + " elapsed" +
+        text: (job.task === "sharp" ? "Sharpening 2x \u00b7 " : "Upscaling 2x \u00b7 ") + Math.floor(up / 60) + ":" + ("0" + Math.floor(up % 60)).slice(-2) + " elapsed" +
           (est ? " (about " + est + " min in all)" : "") };
     }
     var windows = (lastBrief && lastBrief.windows && lastBrief.windows.length) || 1;
@@ -595,9 +602,9 @@
           els.stop.style.display = "none";
           renderJob = null; saveNow();
           els.progress.style.display = "none";
-          if (job.task === "upscale") {
+          if (job.task === "upscale" || job.task === "sharp") {
             // The upscaled copy plays but does not replace the film: Extend and Reroll stay on the original.
-            setRender("Done: 2x upscale. Download: " + job.video_url.replace("/video", "/download"));
+            setRender((job.task === "sharp" ? "Done: 2x sharpen (PiperSR). Download: " : "Done: 2x upscale. Download: ") + job.video_url.replace("/video", "/download"));
             els.video.src = job.video_url + "?v=" + Date.now();
             els.video.style.display = "";
             els.render.disabled = false;
@@ -642,6 +649,7 @@
     els.render.onclick = render;
     els.extend.onclick = toggleExtend;
     if (els.upscale) els.upscale.onclick = startUpscale;
+    if (els.sharp) els.sharp.onclick = startSharp;
     if (window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.init(els.rerolls, {
       say: setRender,
       playUrl: function (url) { els.video.src = url; els.video.style.display = ""; els.video.play(); },

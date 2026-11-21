@@ -1,0 +1,15 @@
+# Exact package set of the PiperSR env, taken on 2026-11-21 (Python 3.12.11). Rebuild with ./build_venv.sh.
+attrs==26.1.0
+cattrs==26.2.1
+coremltools==9.0
+mpmath==1.3.0
+numpy==2.5.5
+packaging==26.3
+pillow==13.0.0
+pipersr==1.0.0
+protobuf==7.36.2
+pyaml==26.7.0
+pyyaml==6.0.4
+sympy==1.14.0
+tqdm==4.70.1
+typing-extensions==4.16.0
