@@ -106,6 +106,21 @@ def _h3ir(method, path, timeout=_QUICK_TIMEOUT_S, base=None, **kwargs):
             raise _ServiceError("The H3 compiler took too long to answer.", 504) from None
 
 
+def _with_spoken_lines(intent, lines):
+    """The sentence with each spoken line written into it ("Speaker says: "..."), which the compiler turns
+    into a <d> tag even where it cannot take a separate dialogue entry."""
+    return intent + "".join(
+        f' {(d.get("speaker") or "A character").capitalize()} says: "{d["text"]}".' for d in lines)
+
+
+def _brief_speaks(res) -> bool:
+    """Whether a compiled brief holds a spoken line (a <d> tag in its prompt)."""
+    try:
+        return "<d>" in ((res.json().get("ir") or {}).get("prompt") or "")
+    except (ValueError, AttributeError):
+        return False
+
+
 def _error_text(res):
     try:
         body = res.json()
@@ -356,10 +371,23 @@ def enhanced_h3_brief_ng():
             # entry ("<Subject 1> is used but never defined"). The same line
             # written into the sentence still compiles to a <d> tag.
             lines = payload.pop("dialogue")
-            payload["intent"] += "".join(
-                f' {(d.get("speaker") or "A character").capitalize()} says: "{d["text"]}".' for d in lines)
+            payload["intent"] = _with_spoken_lines(payload["intent"], lines)
             fallback = "The compiler can't take a spoken line with these pictures, so the line was written into the sentence instead."
             res = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, base=base, json=payload)
+        # The compiler can also answer normally and leave the line out: with reference pictures it writes the
+        # one-window reference layout (<Subject n> definitions, room tone for sound) and nothing is said. Write the
+        # line into the sentence and ask once more; if that does not bring it back, say so instead of staying quiet.
+        if res.ok and payload.get("dialogue") and not payload.get("silent") and not _brief_speaks(res):
+            lines = payload.pop("dialogue")
+            retry = _h3ir("POST", "/v1/briefs", timeout=_BRIEF_TIMEOUT_S, base=base,
+                          json={**payload, "intent": _with_spoken_lines(payload["intent"], lines)})
+            lead = (fallback + " ") if fallback else ""
+            if retry.ok and _brief_speaks(retry):
+                res = retry
+                fallback = lead + "The compiler left the spoken line out, so it was written into the sentence instead."
+            else:
+                fallback = (lead + "The brief has no spoken line: the compiler left it out and a second try did too. "
+                            "Add it to the shot by hand, for example: the man (S1) says: <d>[English] your line</d>.")
     except _ServiceError as e:
         return jsonify({"error": str(e)}), e.status
     if not res.ok:

@@ -95,6 +95,73 @@ class BriefRouting(CompilerBase):
         self.assertEqual(self.calls, [("PATCH", GEMMA + "/v1/briefs/zzz")])
 
 
+class SpokenLine(CompilerBase):
+    """A spoken line must not vanish quietly: the brief is checked for its <d> tag and asked again once."""
+
+    LINE = [{"text": "Good evening princess", "speaker": "old man", "language": "English"}]
+
+    def setUp(self):
+        super().setUp()
+        routes._brief_base.clear()
+        self.payloads = []
+        self.answers = []
+
+        def fake(method, url, **kw):
+            body = dict(kw.get("json") or {})   # a copy: the route edits its payload after sending it
+            self.payloads.append(body)
+            prompt = self.answers.pop(0) if self.answers else "p"
+            status = 500 if prompt == "CRASH" else 201
+            return _Res(status, {"id": "b1", "plan": {"shots": []}, "ir": {"prompt": prompt, "sections": {}}})
+        patch = mock.patch.object(routes.requests, "request", side_effect=fake)
+        patch.start(); self.addCleanup(patch.stop)
+
+    def _brief(self, dialogue=True, silent=False):
+        data = {"intent": "a fairy and an old man", "seconds": "5"}
+        if dialogue:
+            data["dialogue"] = json.dumps(self.LINE)
+        if silent:
+            data["silent"] = "true"
+        r = _client().post("/api/ng/enhanced-h3/brief", data=data, content_type="multipart/form-data")
+        return r.status_code, r.get_json()
+
+    def test_a_brief_that_already_speaks_is_left_alone(self):
+        self.answers = ["x <d>[English] Good evening</d>"]
+        status, body = self._brief()
+        self.assertEqual(status, 201)
+        self.assertEqual(len(self.payloads), 1)
+        self.assertNotIn("note", body)
+
+    def test_a_line_the_compiler_dropped_is_written_into_the_sentence_and_asked_again(self):
+        self.answers = ["reference layout, room tone", "x <d>[English] Good evening princess</d>"]
+        status, body = self._brief()
+        self.assertEqual(status, 201)
+        self.assertEqual(len(self.payloads), 2)
+        self.assertIn("dialogue", self.payloads[0])
+        self.assertNotIn("dialogue", self.payloads[1])
+        self.assertIn('Old man says: "Good evening princess".', self.payloads[1]["intent"])
+        self.assertIn("<d>", body["prompt"])
+        self.assertIn("written into the sentence", body["note"])
+
+    def test_when_the_second_try_also_drops_it_the_note_says_so_and_the_first_brief_stays(self):
+        self.answers = ["first", "second, still nothing said"]
+        status, body = self._brief()
+        self.assertEqual(status, 201)
+        self.assertEqual(body["prompt"], "first")
+        self.assertIn("no spoken line", body["note"])
+        self.assertIn("<d>", body["note"])
+
+    def test_no_dialogue_asked_or_a_silent_clip_makes_no_second_call(self):
+        self._brief(dialogue=False)
+        self._brief(silent=True)
+        self.assertEqual(len(self.payloads), 2)
+
+    def test_the_older_fallback_for_a_crash_still_writes_the_line_and_is_not_asked_a_third_time(self):
+        self.answers = ["CRASH", "x <d>[English] Good evening princess</d>"]
+        status, body = self._brief()
+        self.assertEqual((status, len(self.payloads)), (201, 2))
+        self.assertIn("can't take a spoken line", body["note"])
+
+
 class ErrorText(unittest.TestCase):
     def test_a_nested_detail_shows_its_message_not_a_dict(self):
         text = routes._error_text(_Res(422, {"detail": {"code": "replacement-target-unnamed",
