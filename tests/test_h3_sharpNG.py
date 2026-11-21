@@ -133,6 +133,36 @@ class Route(SharpBase):
         self.assertEqual(self.client.post("/api/ng/h3/jobs/j1/sharp").status_code, 400)
 
 
+class RunnerRefusals(unittest.TestCase):
+    """The runner says what is wrong in one line and exits 2, before the model is ever loaded."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        p = mock.patch.object(runner, "load_model", side_effect=AssertionError("the model must not load"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_a_missing_file(self):
+        self.assertEqual(runner.main([str(self.tmp / "nope.png")]), 2)
+
+    def test_a_picture_that_is_not_a_picture(self):
+        bad = self.tmp / "bad.png"
+        bad.write_bytes(b"not a png")
+        self.assertEqual(runner.main([str(bad)]), 2)
+        self.assertFalse((self.tmp / "bad_sr2x.png").exists())
+
+    def test_a_clip_with_no_video(self):
+        bad = self.tmp / "bad.mp4"
+        bad.write_bytes(b"not a clip")
+        self.assertEqual(runner.main([str(bad)]), 2)
+
+    def test_pictures_and_clips_are_told_apart_by_their_suffix(self):
+        for name in ("a.png", "a.JPG", "a.jpeg", "a.webp"):
+            self.assertIn(Path(name).suffix.lower(), runner.PICTURE_SUFFIXES)
+        self.assertNotIn(".mp4", runner.PICTURE_SUFFIXES)
+
+
 class TileLayout(unittest.TestCase):
     """Every padded pixel of the kept area is supplied by exactly one tile, always well inside that tile."""
 

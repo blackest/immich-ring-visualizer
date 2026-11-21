@@ -1,7 +1,7 @@
-# pipersr_x2: 2x sharpen of a finished clip on the Apple Neural Engine (ours)
+# pipersr_x2: 2x sharpen of a finished clip or a still picture on the Apple Neural Engine (ours)
 
 `pipersr_x2_run.py` is **our own** small runner; nothing of upstream is copied. It runs as a subprocess of
-`h3_sharpNG.py` on this folder's own env (`.venv`, Python 3.12, built by `build_venv.sh` from `requirements.lock`), so the app
+`h3_sharpNG.py` (H3 films) and `klein_sharpNG.py` (Klein pictures, written beside the original as `<name>_sr2x.png`) on this folder's own env (`.venv`, Python 3.12, built by `build_venv.sh` from `requirements.lock`), so the app
 never imports PiperSR. Python 3.12 because `coremltools` has no native Core ML library for 3.14.
 
 **Model:** PiperSR 1.0.0 by Ben Racicot (https://modelpiper.com, https://github.com/ModelPiper/PiperSR), a small image
@@ -16,3 +16,6 @@ https://modelpiper.com" (printed by the runner and shown on the Sharp 2x button)
 see `upscale_x2NG.py`), so blocks from a low-resolution render stay. Frames are processed one by one, so shimmer between
 frames is possible (not yet checked on moving footage). Tiles overlap by 16 px on each side and only each tile's centre is
 kept, so there are no grid seams. Measured 2026-11-21 on an M2 Max: 124 frames at 640x384 -> 1280x768 in 18 s, sound kept.
+
+Stills: a 1024x576 Klein picture became 2048x1152 in 0.8 s (measured 2026-11-21); the edges of a water droplet and its ripples were
+visibly cleaner than a plain Lanczos resize of the same picture, nothing else changed.

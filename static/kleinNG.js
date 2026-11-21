@@ -474,8 +474,30 @@
     }, "Extend this picture's edges"));
     row.appendChild(button("→ Video first frame", function () { sendToVideo(job.id, r.file); },
       "Open the H3 view with this picture as its first frame"));
+    row.appendChild(sharpButton(job, r));
     cell.appendChild(row);
     return cell;
+  }
+
+  // Sharp 2x: PiperSR on the Neural Engine, about a second, no GPU. The new picture is saved beside this one and the
+  // button turns into a link to it. Powered by PiperSR from ModelPiper (free for personal and academic use).
+  function sharpButton(job, r) {
+    var holder = el("span");
+    var b = button("Sharp 2x", function () {
+      b.disabled = true; b.textContent = "Sharpening...";
+      fetch(API + "sharp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref: job.id + "/" + r.file }) })
+        .then(function (res) { return res.json().then(function (body) { return { ok: res.ok, body: body }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.body.file) { b.disabled = false; b.textContent = "Sharp 2x"; setStatus(res.body.error || "Could not sharpen that picture."); return; }
+          var a = el("a", "ng-gen-btn", "2x picture (" + res.body.width + "x" + res.body.height + ")");
+          a.href = imgUrl(job.id, res.body.file); a.target = "_blank"; a.style.width = "auto"; a.style.display = "inline-block";
+          a.title = "Opens the sharpened picture; right-click to save it. Powered by PiperSR from ModelPiper (https://modelpiper.com)";
+          holder.textContent = ""; holder.appendChild(a);
+        })
+        .catch(function (e) { b.disabled = false; b.textContent = "Sharp 2x"; setStatus(e.message); });
+    }, "A quick 2x sharpen on the Neural Engine (about a second). Crisps edges and keeps the picture as it is. Powered by PiperSR from ModelPiper (https://modelpiper.com): free for personal and academic use, commercial use needs the author's licence.");
+    holder.appendChild(b);
+    return holder;
   }
 
   function reuse(job, seed) {

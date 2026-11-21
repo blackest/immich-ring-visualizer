@@ -18,6 +18,7 @@ import klein_engineNG
 import klein_lorasNG
 import klein_outpaintNG
 import klein_promptNG
+import klein_sharpNG
 import klein_jobsNG as jobs
 from configNG import KLEIN_DIR
 
@@ -190,6 +191,27 @@ def klein_jobs_ng():
         return jsonify({"error": "limit must be a number"}), 400
     found, total = jobs.recent_ng(limit, request.args.get("q", ""), with_total=True)
     return jsonify({"jobs": [_public(j) for j in found], "total": total})
+
+
+@kleinNG_bp.route("/api/ng/klein/sharp", methods=["POST"])
+def klein_sharp_ng():
+    """2x sharpen of one of the job's pictures on the Neural Engine ({"ref": "<job>/<file>"}); the new picture
+    is saved beside it as <name>_sr2x.png and comes back as a ref the image route can serve."""
+    ref = str((request.get_json(silent=True) or {}).get("ref") or "")
+    path = _picture_path(ref)
+    if path is None:
+        return jsonify({"error": "no such picture"}), 404
+    try:
+        out = klein_sharpNG.sharpen_picture_ng(path)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 500
+    from PIL import Image
+    with Image.open(out) as im:
+        width, height = im.size
+    return jsonify({"ok": True, "ref": ref.rsplit("/", 1)[0] + "/" + out.name, "file": out.name,
+                    "width": width, "height": height})
 
 
 @kleinNG_bp.route("/api/ng/klein/cancel/<job_id>", methods=["POST"])

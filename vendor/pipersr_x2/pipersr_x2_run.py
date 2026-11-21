@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""2x upscale of a finished clip with PiperSR on the Apple Neural Engine, keeping its sound.
+"""2x upscale of a finished clip or a still picture with PiperSR on the Apple Neural Engine, keeping a clip's sound.
 
 Run with this folder's own env (built by build_venv.sh):
 
     vendor/pipersr_x2/.venv/bin/python vendor/pipersr_x2/pipersr_x2_run.py CLIP.mp4 [-o OUT.mp4]
+    vendor/pipersr_x2/.venv/bin/python vendor/pipersr_x2/pipersr_x2_run.py PICTURE.png [-o OUT.png]
+
+A picture (png, jpg, jpeg, webp) comes out as a PNG; anything else is read as a clip.
 
 PiperSR is a small image model (128x128 tiles in, 256x256 out), so each frame is cut into overlapping tiles and only the
 middle of every tile is kept; the plain edge-to-edge tiling of a first try leaves faint grid seams. It sharpens what is there
@@ -13,7 +16,8 @@ Licence: the pipersr code is AGPL-3.0, the model weights are free for personal a
 use needs a separate licence from the author. Attribution: "Powered by PiperSR from ModelPiper - https://modelpiper.com".
 This file is ours and only calls PiperSR as a separate program; nothing of it is copied here.
 
-Protocol on stdout, one line each: `[pipersr] frame i/n`, `[pipersr] done <seconds>`; the attribution line comes first.
+Protocol on stdout, one line each: `[pipersr] frame i/n` (clips only), `[pipersr] done <seconds> <output>`; the attribution
+line comes first.
 Exit codes: 0 ok, 2 bad input, 1 anything else.
 """
 
@@ -93,14 +97,39 @@ def ffprobe(clip: Path, entries: str, stream: str = "v:0") -> str:
                            "-of", "default=nw=1:nk=1", str(clip)], capture_output=True, text=True).stdout.strip()
 
 
+PICTURE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def sharpen_picture(src: Path, out: Path) -> int:
+    from PIL import Image
+
+    print(ATTRIBUTION, flush=True)
+    t0 = time.perf_counter()
+    try:
+        img = Image.open(src)
+        img.load()
+    except Exception as e:  # noqa: BLE001 - a bad picture is the caller's to hear about, not a traceback
+        print(f"[pipersr] error cannot read that picture: {e}", flush=True)
+        return 2
+    if min(img.size) < 32:
+        print("[pipersr] error the picture is too small", flush=True)
+        return 2
+    upscale_image(load_model(), img.convert("RGB")).save(out, format="PNG")
+    print(f"[pipersr] done {time.perf_counter() - t0:.1f}s {out}", flush=True)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("clip", type=Path)
-    ap.add_argument("-o", "--output", type=Path, default=None, help="default: <clip>_sr2x.mp4 beside the clip")
+    ap.add_argument("clip", type=Path, help="a clip, or a picture (png, jpg, jpeg, webp)")
+    ap.add_argument("-o", "--output", type=Path, default=None,
+                    help="default: <name>_sr2x.mp4 (clip) or <name>_sr2x.png (picture) beside the input")
     args = ap.parse_args(argv)
     if not args.clip.is_file():
-        print(f"[pipersr] error no such clip: {args.clip}", flush=True)
+        print(f"[pipersr] error no such file: {args.clip}", flush=True)
         return 2
+    if args.clip.suffix.lower() in PICTURE_SUFFIXES:
+        return sharpen_picture(args.clip, args.output or args.clip.with_name(args.clip.stem + "_sr2x.png"))
     out = args.output or args.clip.with_name(args.clip.stem + "_sr2x.mp4")
     probe = ffprobe(args.clip, "stream=width,height,r_frame_rate").splitlines()
     if len(probe) < 3:
