@@ -95,11 +95,57 @@ class Applying(unittest.TestCase):
         self.assertIn("overall_soundscape: Boots on gravel.", p)
         self.assertIn("non_diegetic_music: One cello note.", p)
 
-    def test_nothing_to_write_returns_the_windows_as_is(self):
-        wins = [_w("a"), _w("b")]
-        self.assertEqual(cont.continue_windows_ng(wins, "x", ask=lambda _t: 1 / 0), (wins, None))
+    def test_a_single_window_is_returned_as_is_without_asking(self):
         single = [_w("a", True)]
         self.assertEqual(cont.continue_windows_ng(single, "x", ask=lambda _t: 1 / 0), (single, None))
+
+    def test_the_look_line_is_read_and_a_reply_with_only_cast_and_look_is_fine(self):
+        out = cont.parse_reply_ng(json.dumps({"cast": "Aldric.", "look": "Night, low-key warm light.", "windows": []}))
+        self.assertEqual((out["cast"], out["look"], out["windows"]), ("Aldric.", "Night, low-key warm light.", {}))
+        self.assertEqual(cont.parse_reply_ng(json.dumps({"look": "Night."}))["look"], "Night.")
+        with self.assertRaises(cont.ContinueError):
+            cont.parse_reply_ng(json.dumps({"cast": "", "look": "", "windows": []}))
+
+    def test_the_request_says_when_no_window_is_empty(self):
+        text = cont.build_request_ng([_w("a"), _w("b")], "x", True)
+        self.assertIn("No window is empty", text)
+        self.assertNotIn("Speech is", text)
+
+    def test_every_later_window_gets_cast_and_look_even_when_none_carries_on(self):
+        wins = [_w("A knight stands in a night forest."), _w("The camera cuts to a close-up of the knight's face.")]
+        reply = json.dumps({"cast": "Sir Aldric, bald with a grey beard.", "look": "Cinematic digital painting at night, low-key warm light.",
+                            "windows": []})
+        out, note = cont.continue_windows_ng(wins, "a knight", ask=lambda _t: reply)
+        self.assertIsNone(note)
+        self.assertEqual(out[0]["prompt"], wins[0]["prompt"])                 # window 1 is never touched
+        self.assertIn("[Shot 1] Sir Aldric, bald with a grey beard. Cinematic digital painting at night, low-key warm light. "
+                      "The camera cuts to", out[1]["prompt"])
+        self.assertIn("non_diegetic_music: One cello note.", out[1]["prompt"])  # the sound sections are kept
+
+    def test_a_line_already_in_the_window_is_not_added_twice(self):
+        wins = [_w("A knight."), _w("Night, low-key warm light. The camera cuts to his face.")]
+        reply = json.dumps({"cast": "", "look": "Night, low-key warm light.", "windows": []})
+        out, _ = cont.continue_windows_ng(wins, "x", ask=lambda _t: reply)
+        self.assertEqual(out[1]["prompt"].count("Night, low-key warm light."), 1)
+
+    def test_the_look_goes_in_with_the_carry_on_windows_too(self):
+        reply = _reply(look="Soft dawn light, muted greens.")
+        out, _ = cont.continue_windows_ng(_windows(), "a man", True, ask=lambda _t: reply)
+        for i in (1, 2, 3):
+            self.assertIn("Soft dawn light, muted greens.", out[i]["prompt"])
+        self.assertNotIn("Soft dawn light", out[0]["prompt"])
+
+    def test_a_reply_without_a_look_still_gives_the_cast(self):
+        out, _ = cont.continue_windows_ng([_w("a"), _w("b")], "x", ask=lambda _t: json.dumps({"cast": "A man.", "windows": []}))
+        self.assertIn("[Shot 1] A man. b", out[1]["prompt"])
+
+    def test_gemma_failure_with_no_carry_on_window_says_the_lines_were_not_added(self):
+        def down(_t):
+            raise cont.ContinueError("connection refused")
+        wins = [_w("a"), _w("b")]
+        out, note = cont.continue_windows_ng(wins, "x", ask=down)
+        self.assertEqual(out, wins)
+        self.assertIn("cast and look lines were not added", note)
 
     def test_gemma_failure_keeps_the_windows_and_says_so(self):
         def down(_t):

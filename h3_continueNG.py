@@ -10,9 +10,14 @@ This module makes one narrow Gemma call (text only; no agent, no tools) that ret
 * a cast line -- who must stay in the scene and how they look, copied from window 1 (Phosphene's tip for
   Flex applies to every H3 mode: the model drops people the prompt does not name), put at the start of every
   later window;
+* a look line -- the visual style, time of day, lighting and colour palette of window 1, put beside the cast line
+  in every later window. Without it a later window that does not say "night" is drawn in plain daylight (a 10 s clip
+  of a night forest turned to day in window 2) and one that does not name the style drifts to another;
 * for each window that carries on, a new beat in the style of the shot before it, a varied sound line, and,
   only when the brief had speech and the person allows it, a new short line in the same voice.
 
+The cast and look lines go into every window after the first, whether or not any window carries on: an own-shot
+window ("The camera cuts to...") loses the cast and the lighting just as a carried-on one does.
 If Gemma is down or answers badly the windows are left as they were (the old copy), with a note.
 Nothing here renders; the person still reads and edits every window prompt.
 """
@@ -40,8 +45,11 @@ object and nothing else:
 {"cast": "one sentence, at most 60 words: every person who must stay in the scene, with a name if the intent gave one, \
 and their visible look exactly as the first shot describes them: face, hair, build, glasses or other worn things (shape and \
 colour), and clothes (material, cut, how they fit, any armour or accessories); no action",
+ "look": "one sentence, at most 45 words: the visual style (the medium or look words the first shot uses), the time of day, \
+the light sources and the colour palette, exactly as the first shot describes them; no people and no action",
  "windows": [{"window": <number>, "beat": "...", "soundscape": "...", "dialogue": "..."}]}
 
+If no window is empty, "windows" is an empty list: you are only writing the cast and look lines.
 For each window you are asked to write:
 - beat: 40 to 70 words of camera and action in the same style as the shots you were given. It continues straight on from \
 the previous window's last moment: a NEW action or camera move, never a repeat of an earlier one, no cut, no new person. \
@@ -75,15 +83,18 @@ def build_request_ng(windows: list, intent: str, speech_ok: bool) -> str:
     for i, w in enumerate(windows, 1):
         lines.append(f"Window {i}: " + ("EMPTY" if w.get("continues") else _description_ng(w["prompt"])))
     todo = [i for i, w in enumerate(windows, 1) if w.get("continues")]
-    lines += ["", "Write the beat and soundscape for window(s): " + ", ".join(map(str, todo)) + ".",
-              "Speech is " + ("allowed: write a new dialogue line for each of them." if speech_ok
-                              else "NOT allowed: leave dialogue empty.")]
+    if todo:
+        lines += ["", "Write the beat and soundscape for window(s): " + ", ".join(map(str, todo)) + ".",
+                  "Speech is " + ("allowed: write a new dialogue line for each of them." if speech_ok
+                                  else "NOT allowed: leave dialogue empty.")]
+    else:
+        lines += ["", "No window is empty: reply with an empty windows list and write only the cast and look lines."]
     return "\n".join(lines)
 
 
 def parse_reply_ng(content: str) -> dict:
-    """{"cast": str, "windows": {number: {"beat", "soundscape", "dialogue"}}} from Gemma's text; ContinueError if it
-    has no JSON object or no usable window."""
+    """{"cast": str, "look": str, "windows": {number: {"beat", "soundscape", "dialogue"}}} from Gemma's text;
+    ContinueError if it has no JSON object, or has no cast, no look and no usable window."""
     m = re.search(r"\{.*\}", content or "", re.S)
     if not m:
         raise ContinueError("no JSON in the reply")
@@ -101,9 +112,10 @@ def parse_reply_ng(content: str) -> dict:
         if beat:
             out[n] = {"beat": beat, "soundscape": str(item.get("soundscape") or "").strip(),
                       "dialogue": str(item.get("dialogue") or "").strip()}
-    if not out:
-        raise ContinueError("the reply had no window beats")
-    return {"cast": str(raw.get("cast") or "").strip(), "windows": out}
+    cast, look = str(raw.get("cast") or "").strip(), str(raw.get("look") or "").strip()
+    if not (out or cast or look):
+        raise ContinueError("the reply had no window beats, cast or look")
+    return {"cast": cast, "look": look, "windows": out}
 
 
 def _bare_line(text: str) -> str:
@@ -111,16 +123,17 @@ def _bare_line(text: str) -> str:
     return re.sub(r"^\s*(\[[^\]]*\]\s*)+", "", text).strip().strip('"\u201c\u201d')
 
 
-def _with_cast(prompt: str, cast: str) -> str:
-    """`cast` as the first sentence of Shot 1, once."""
-    if not cast or cast in prompt:
+def _with_lines(prompt: str, lines) -> str:
+    """The lines (cast, look) as the first sentences of Shot 1, each once; one already in the prompt is skipped."""
+    fresh = [l.strip() for l in lines if l and l.strip() and l.strip() not in prompt]
+    if not fresh:
         return prompt
-    return _SHOT1_RE.sub(lambda m: m.group(1) + cast.rstrip() + " ", prompt, count=1)
+    return _SHOT1_RE.sub(lambda m: m.group(1) + " ".join(fresh) + " ", prompt, count=1)
 
 
 def apply_ng(windows: list, reply: dict, speech: Optional[tuple], speech_ok: bool) -> list:
     """New window list: windows that carry on get Gemma's beat (and sound, and a new spoken line when `speech`
-    is known and `speech_ok`); every window after the first gets the cast line. Window 1 is never touched."""
+    is known and `speech_ok`); every window after the first gets the cast and look lines. Window 1 is never touched."""
     out = []
     for i, w in enumerate(windows, 1):
         w = dict(w)
@@ -137,7 +150,7 @@ def apply_ng(windows: list, reply: dict, speech: Optional[tuple], speech_ok: boo
             w["prompt"] = f"{head}{SECTION}: [Shot 1] {beat}" + (f"{sep}{rest}" if sep else "")
             w["generated"] = True
         if i > 1:
-            w["prompt"] = _with_cast(w["prompt"], reply["cast"])
+            w["prompt"] = _with_lines(w["prompt"], [reply["cast"], reply.get("look", "")])
         out.append(w)
     return out
 
@@ -158,14 +171,17 @@ def ask_gemma_ng(user_text: str) -> str:
 
 def continue_windows_ng(windows: list, intent: str, improvise: bool = True,
                         ask: Callable[[str], str] = ask_gemma_ng) -> tuple:
-    """(windows, note). Windows are returned unchanged, with a note saying why, when there is nothing to write or
-    Gemma fails. Dialogue is improvised only if the first window already has a spoken line."""
-    if len(windows) < 2 or not any(w.get("continues") for w in windows):
+    """(windows, note). Windows are returned unchanged, with a note saying why, when there is a single window or
+    Gemma fails. Every window after the first gets the cast and look lines; windows that carry on are also written.
+    Dialogue is improvised only if the first window already has a spoken line."""
+    if len(windows) < 2:
         return windows, None
     speech = speech_in_ng(" ".join(w["prompt"] for w in windows))
     speech_ok = bool(improvise and speech)
     try:
         reply = parse_reply_ng(ask(build_request_ng(windows, intent, speech_ok)))
     except ContinueError as e:
-        return windows, f"Windows with no shot of their own repeat the shot before: Gemma could not write them ({e})."
+        if any(w.get("continues") for w in windows):
+            return windows, f"Windows with no shot of their own repeat the shot before: Gemma could not write them ({e})."
+        return windows, f"The cast and look lines were not added to the later windows: Gemma could not write them ({e})."
     return apply_ng(windows, reply, speech, speech_ok), None
