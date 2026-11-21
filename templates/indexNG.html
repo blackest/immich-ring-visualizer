@@ -3194,6 +3194,7 @@
                     <option value="45-49">Clean (hybrid, blocks 45-49)</option>
                   </select></label>
                 <label class="ng-checkbox-row" id="ng-enhancedh3-lowmem-row" title="Streams the model, the prompt encoder and the video decoder from disk and caps the GPU cache. Same picture and sound; the biggest memory use drops from about 29 GB to about 5 GB. Lets other apps and models keep their RAM while this renders."><input type="checkbox" id="ng-enhancedh3-lowmem" /> Low memory (stream from disk; same result, far less RAM)</label>
+                <label class="ng-checkbox-row" id="ng-enhancedh3-keepfaces-row" title="For clips longer than 5 s. The reference pictures in the tray (up to 3, pictures only) are given to EVERY window on the first-frame model, so a person's look is not left to the text in window 2 and later. A first-frame picture may come with them. The reference pictures are not sent to the brief writer: describe the people in your text. Each window also costs about a minute more."><input type="checkbox" id="ng-enhancedh3-keepfaces" /> Keep the reference pictures in every window (long clips)</label>
                 <label class="ng-checkbox-row"><input type="checkbox" id="ng-enhancedh3-refmod-on" /> Use a RefMod (keeps a saved person's likeness; one 5 s window)</label>
                 <div id="ng-enhancedh3-refmod-block" hidden>
                   <div id="ng-enhancedh3-refmod-note" class="ng-gen-status"></div>

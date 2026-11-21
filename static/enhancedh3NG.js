@@ -25,7 +25,7 @@
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
       "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
-      "quality", "speed", "render", "stop", "hybrid", "lowmem", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale", "sharp"
+      "quality", "speed", "render", "stop", "hybrid", "lowmem", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale", "sharp", "keepfaces"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
 
@@ -253,6 +253,12 @@
 
   function updateRefNote() {
     var refs = referenceItems().length;
+    if (keepFaces()) {
+      els.refnote.textContent = refs
+        ? "Pictures here are kept in every window of the clip (the first-frame model, up to 3). They are not sent to the brief writer, so describe the people in your text. Clips are not supported in this mode."
+        : (items.audio.length ? "Sound files only shape the brief's wording for now." : "");
+      return;
+    }
     var frames = items.image.length - items.image.filter(function (it) { return it.role !== "frame_anchor_first" && it.role !== "frame_anchor_last" && !it.at; }).length;
     els.refnote.textContent = refs
       ? (frames ? "Pictures and clips here are rendered as references, which cannot be mixed with first, last or timed frames: change those pictures' role, or remove them."
@@ -311,7 +317,7 @@
     // A reference render is one 5 s window (chained windows carry no references yet).
     var seconds = parseFloat(els.seconds.value) || 10;
     capNote = "";
-    if (!extendFrom && referenceItems().length && seconds > REF_MAX_SECONDS) {
+    if (!extendFrom && !keepFaces() && referenceItems().length && seconds > REF_MAX_SECONDS) {
       seconds = REF_MAX_SECONDS;
       els.seconds.value = String(seconds);
       capNote = " Seconds was set to " + seconds + ": references render one 5 s window.";
@@ -334,6 +340,9 @@
     ["image", "video", "audio"].forEach(function (kind) {
       if (extendFrom) return;
       items[kind].forEach(function (it) {
+        // Kept pictures go to the renderer only: a brief written from reference pictures comes out in the
+        // one-window reference layout, which cannot be cut into windows. The first-frame picture still goes.
+        if (keepFaces() && ((kind === "image" && !isFrameItem(it)) || kind === "video")) return;
         var field = "f" + n++;
         form.append(field, it.file, it.file.name);
         assets.push({ field: field, kind: kind, role: it.role, note: it.note || undefined });
@@ -408,6 +417,9 @@
 
   var pollTimer = null;
   var REF_MAX_SECONDS = 5.167;
+  // "Keep the reference pictures in every window": the first-frame model with the runner's --reference, any length.
+  function keepFaces() { return !!(els.keepfaces && els.keepfaces.checked) && !extendFrom; }
+  function isFrameItem(it) { return it.role === "frame_anchor_first" || it.role === "frame_anchor_last" || !!it.at; }
   var capNote = "";  // set when Write brief shortened Seconds for a reference render
 
   function setRender(text) { els.renderstatus.textContent = text || ""; }
@@ -480,7 +492,17 @@
     });
 
     var refs = extendFrom ? [] : referenceItems();
-    if (els.speed.value === "flex" && !(refs.length ? flexOk.ref : flexOk.plain)) {
+    var faces = keepFaces() && refs.length > 0;
+    if (faces) {
+      if (items.video.length) { setRender("Only pictures can be kept in every window. Remove the clip, or untick the box."); return; }
+      if (refs.length > 3) { setRender("At most 3 pictures can be kept in every window (got " + refs.length + ")."); return; }
+      if (last || items.image.some(function (it) { return it.at; })) {
+        setRender("Pictures kept in every window combine with a first frame, not a last or timed frame. Change those pictures' role, or remove them.");
+        return;
+      }
+      if (refmodOn()) { setRender("Pictures kept in every window do not combine with a RefMod: untick one of them."); return; }
+    }
+    if (els.speed.value === "flex" && !((refs.length && !faces) ? flexOk.ref : flexOk.plain)) {
       setRender(refs.length ? "Flex with reference pictures needs the Ref2VA Flex adapter, which is not built here. Pick Fast." : "Flex is not available here. Pick Fast or Full.");
       return;
     }
@@ -496,7 +518,10 @@
       form.append("refmods", JSON.stringify(refmods));
       form.append("model", "h3ref");
     }
-    if (refs.length) {
+    if (faces) {
+      refs.forEach(function (it) { form.append("reference_files", it.file, it.file.name); });
+      form.append("reference_mode", "faces");   // the first-frame model: no model field, no hybrid
+    } else if (refs.length) {
       if (first || last || items.image.some(function (it) { return it.at; })) {
         setRender("References cannot be mixed with a first, last or timed frame picture. Change the role of those pictures (the portrait to be swapped in should be a subject), or remove them.");
         return;
@@ -650,6 +675,7 @@
     els.extend.onclick = toggleExtend;
     if (els.upscale) els.upscale.onclick = startUpscale;
     if (els.sharp) els.sharp.onclick = startSharp;
+    if (els.keepfaces) els.keepfaces.onchange = updateRefNote;
     if (window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.init(els.rerolls, {
       say: setRender,
       playUrl: function (url) { els.video.src = url; els.video.style.display = ""; els.video.play(); },
