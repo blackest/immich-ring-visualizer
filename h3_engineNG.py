@@ -350,6 +350,20 @@ def _h3_chain_plan_ng(duration_s: float) -> tuple[int, int, int]:
     return window_frames, chain_windows, total_frames
 
 
+def _extension_frames_ng(duration_s: float, window_frames: int, frame_rate: float = H3_FRAME_RATE) -> int:
+    """How many NEW frames an extension delivers for `duration_s` seconds.
+
+    Every extension window adds window_frames - 1 new frames (its first frame is the carried last frame), so the
+    standard one-window length, 5.167 s = 124 frames, overflows one window by a single frame -- and used to cost a
+    whole second window (about 10 extra minutes) for that one frame. A last window that would add just one frame is
+    dropped instead: the clip comes out one frame (1/24 s) shorter."""
+    stride = window_frames - 1
+    frames = round(duration_s * frame_rate)
+    if frames > stride and frames % stride == 1:
+        frames -= 1
+    return frames
+
+
 def _clean_subprocess_env_ng() -> dict:
     """os.environ.copy() with macOS Malloc* debug vars stripped, so the
     H3 subprocess doesn't spam stderr with debug-allocator noise (same
@@ -844,7 +858,7 @@ def generate_h3_video_ng(prompt: str, image_path: Optional[str], duration_s: flo
     window_frames, chain_windows, frames = _h3_chain_plan_ng(duration_s)
     if extend_from is not None:
         window_frames = _align_h3_frames_ng(H3_CHAIN_WINDOW_S)
-        frames = round(duration_s * H3_FRAME_RATE)
+        frames = _extension_frames_ng(duration_s, window_frames)
         chain_windows = math.ceil(frames / (window_frames - 1))
     refmods = h3_ref2va.validate_refmods_ng(
         refmods, model=config.model, image_path=image_path, turbo=turbo, v13=v13,

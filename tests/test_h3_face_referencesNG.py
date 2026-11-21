@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask
 
+import h3_engineNG as eng
 import h3_jobsNG as jobs
 import h3_referencesNG as refs
 import routes.h3NG as h3_routes
@@ -191,6 +192,40 @@ class EngineCommand(_FacesBase):
         cmd = self._cmd(model="h3ref", references=[str(self.pic)], tristep=True)
         self.assertIn("--ref2va-reference", cmd)
         self.assertNotIn("--reference", cmd)
+
+
+class ExtensionWindows(_FacesBase):
+    """An extension window adds 123 new frames (its first is the carried one), so 5.167 s must not cost two windows."""
+
+    def test_the_standard_one_window_length_is_one_window_not_two(self):
+        self.assertEqual(eng._extension_frames_ng(5.167, 124), 123)       # 124 frames -> 123: no one-frame second window
+        self.assertEqual(eng._extension_frames_ng(5.125, 124), 123)       # already exactly one window
+        self.assertEqual(eng._extension_frames_ng(5.1, 124), 122)
+
+    def test_longer_extensions_drop_only_a_single_leftover_frame(self):
+        self.assertEqual(eng._extension_frames_ng(10.0, 124), 240)        # 240 = 123 + 117: two windows, untouched
+        self.assertEqual(eng._extension_frames_ng(10.25, 124), 246)       # 246 = 2 x 123 exactly
+        self.assertEqual(eng._extension_frames_ng(10.292, 124), 246)      # 247 frames = 2 x 123 + 1 -> 246
+        self.assertEqual(eng._extension_frames_ng(10.1, 124), 242)
+
+    def _extension_cmd(self, seconds, **kw):
+        clip = self.tmp / "film.mp4"
+        clip.write_bytes(b"mp4")
+        self.runner.write_text(FACES_RUNNER + "--extend-from CLIP\n--extend-frames N\n--chain-keep-windows\n"
+                               "--chain-windows N\n--chain-total-frames N\n--chain-prompts FILE\n")
+        return self._cmd(model="h3q8", duration_s=seconds, extend_from=str(clip), prompt=DESC, tristep=True, **kw)
+
+    def test_the_command_for_a_standard_extension_asks_for_one_window(self):
+        cmd = self._extension_cmd(5.167)
+        self.assertEqual((self._value(cmd, "--extend-frames"), self._value(cmd, "--chain-windows")), ("123", "1"))
+
+    def test_a_ten_second_extension_is_still_two_windows_and_keeps_its_frames(self):
+        cmd = self._extension_cmd(10.1, chain_prompts=["a", "b"])
+        self.assertEqual((self._value(cmd, "--extend-frames"), self._value(cmd, "--chain-windows")), ("242", "2"))
+
+    def test_a_single_leftover_frame_no_longer_adds_a_window_to_a_longer_extension(self):
+        cmd = self._extension_cmd(10.292, chain_prompts=["a", "b"])        # 247 frames = 2 x 123 + 1
+        self.assertEqual((self._value(cmd, "--extend-frames"), self._value(cmd, "--chain-windows")), ("246", "2"))
 
 
 class JobAndRoute(_FacesBase):
