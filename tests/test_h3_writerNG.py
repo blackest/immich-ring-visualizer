@@ -83,10 +83,12 @@ class Route(unittest.TestCase):
         self.assertEqual(m.call_args.args[2], "S2")
 
     def test_extension_adds_cast_and_look(self):
-        with mock.patch.object(route.h3_writer, "write_window_ng", return_value=WINDOW), \
+        with mock.patch.object(route.h3_writer, "write_window_ng", return_value=WINDOW) as m, \
                 mock.patch.object(route.h3_extend_look, "established_ng", return_value={"cast": "An old man.", "look": "Painterly."}):
             b = self.client.post("/api/ng/enhanced-h3/write-window", data={"intent": "x", "extend_job": "j1"}).get_json()
         self.assertIn("An old man.", b["windows"][0]["prompt"])
+        self.assertIn("Style: Painterly.", m.call_args.args[0])          # the writer is told the look first
+        self.assertIn("An old man", m.call_args.args[0])
         self.assertIn("Painterly.", b["windows"][0]["prompt"])
 
     def test_empty_intent_and_writer_failure(self):
