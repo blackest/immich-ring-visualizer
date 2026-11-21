@@ -10,6 +10,8 @@ edits every window.
 If Gemma is down or the earlier prompts cannot be read, the brief is left as the compiler wrote it, with a note.
 """
 
+import json
+from pathlib import Path
 from typing import Callable
 
 import h3_continueNG as cont
@@ -18,13 +20,22 @@ import h3_rerollNG as reroll
 MAX_PROMPTS = 4   # the earlier film's last windows are enough to read the established look from
 
 
+def _metrics_prompt_ng(src) -> str:
+    """The prompt the runner recorded beside the film (a finished job read back from disk keeps no prompt in its settings)."""
+    try:
+        path = next(Path(src.job_dir).glob("*.metrics.json"))
+        return str(json.loads(path.read_text(encoding="utf-8")).get("prompt") or "")
+    except (StopIteration, OSError, ValueError, AttributeError):
+        return ""
+
+
 def previous_prompts_ng(job_id: str) -> list:
     """The window prompts of the film at `job_id`, newest windows last. LookupError / ValueError if it cannot be read."""
     src = reroll.resolve_source_ng(job_id)
     try:
         prompts = [w.get("prompt", "") for w in reroll.load_manifest_ng(src)["windows"]]
     except ValueError:
-        prompts = [getattr(src, "prompt", "")]          # a single-window render has no manifest
+        prompts = [getattr(src, "prompt", "") or _metrics_prompt_ng(src)]   # a single-window render has no manifest
     prompts = [p for p in prompts if p and p.strip()]
     if not prompts:
         raise ValueError("the earlier clip has no saved prompt to read the look from")

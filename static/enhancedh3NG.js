@@ -24,7 +24,7 @@
   function refreshEls() {
     ["pane", "main", "status", "intent", "tray", "file", "refnote", "seconds", "shots", "aspect",
       "creativity", "director", "effort", "seed", "line", "speaker", "language", "delivery",
-      "silent", "cont", "improv", "write", "msg", "result", "summary", "diag", "windows", "change", "refine",
+      "silent", "cont", "improv", "write", "writer", "msg", "result", "summary", "diag", "windows", "change", "refine",
       "quality", "speed", "render", "stop", "hybrid", "lowmem", "refmod-on", "refmod-block", "refmod-note", "refmod-rows", "refmod-add", "renderstatus", "progress", "video", "extend", "extendnote", "rerolls", "upscale", "sharp", "finish", "keepfaces"
     ].forEach(function (k) { els[k] = $("ng-enhancedh3-" + k); });
   }
@@ -359,9 +359,24 @@
     run("Writing the brief (this can take a minute)...", fetch(API + "/brief", { method: "POST", body: form }));
   }
 
+  function writeWithWriter() {
+    if (busy) return;
+    var intent = els.intent.value.trim();
+    if (!intent) { setMsg("Describe what happens first."); els.intent.focus(); return; }
+    var form = new FormData();
+    form.append("intent", intent);
+    form.append("seconds", els.seconds.value || "5.1");
+    if (els.speaker.value.trim()) form.append("speaker", els.speaker.value.trim());
+    if (extendFrom) form.append("extend_job", extendFrom);
+    briefNeedsFirstFrame = !extendFrom && items.image.some(function (it) { return it.role === "frame_anchor_first"; });
+    capNote = "";
+    run("The H3 writer is writing one window (about 20 s)...", fetch(API + "/write-window", { method: "POST", body: form }));
+  }
+
   function refine() {
     var change = els.change.value.trim();
     if (!lastBrief || !change || busy) return;
+    if (!lastBrief.id) { setMsg("Rewrite works on a compiler brief. Edit the window text by hand, or write the brief again."); return; }
     run("Rewriting...", fetch(API + "/refine", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: lastBrief.id, change: change, seconds: parseFloat(els.seconds.value) || 10 }),
@@ -369,7 +384,7 @@
   }
 
   function run(msg, request) {
-    busy = true; els.write.disabled = true; els.refine.disabled = true;
+    busy = true; els.write.disabled = true; els.writer.disabled = true; els.refine.disabled = true;
     setMsg(msg);
     request.then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (r) {
@@ -380,7 +395,7 @@
         saveNow();
       })
       .catch(function (e) { setMsg(e.message); })
-      .then(function () { busy = false; els.write.disabled = false; els.refine.disabled = false; });
+      .then(function () { busy = false; els.write.disabled = false; els.writer.disabled = false; els.refine.disabled = false; });
   }
 
   function showBrief(b) {
@@ -733,6 +748,7 @@
     if (inited || !els.main) return;
     inited = true;
     els.write.onclick = writeBrief;
+    els.writer.onclick = writeWithWriter;
     els.refine.onclick = refine;
     els.render.onclick = render;
     els.extend.onclick = toggleExtend;

@@ -28,6 +28,7 @@ from flask import Blueprint, jsonify, request
 import configNG
 import h3_continueNG as h3_continue
 import h3_extend_lookNG as h3_extend_look
+import h3_writerNG as h3_writer
 import h3_engineNG
 
 enhancedh3NG_bp = Blueprint("enhancedh3NG", __name__)
@@ -418,6 +419,35 @@ def enhanced_h3_brief_ng():
         if why:
             out["note"] = (out.get("note") or "") + " " + why
     return jsonify(out), 201
+
+
+@enhancedh3NG_bp.route("/api/ng/enhanced-h3/write-window", methods=["POST"])
+def enhanced_h3_write_window_ng():
+    """The H3 prompt writer (a local 9B model) writes ONE window from the sentence. Form fields: intent (required), seconds,
+    speaker (a tag such as S2), extend_job (the clip being extended: its cast and look lines are added). The reply is shaped
+    like a brief so the pane shows it the same way."""
+    form = request.form
+    intent = (form.get("intent") or "").strip()
+    if not intent:
+        return jsonify({"error": "Describe what happens first."}), 400
+    seconds = form.get("seconds", 5.1, type=float)
+    notes = []
+    if seconds > 5.2:
+        seconds = 5.1
+        notes.append("The H3 writer writes one 5 s window, so Seconds was set to 5.1.")
+    try:
+        prompt = h3_writer.write_window_ng(intent, seconds, form.get("speaker") or "")
+    except h3_writer.WriterError as e:
+        return jsonify({"error": str(e)}), 502
+    windows = [{"prompt": prompt, "shot": 1}]
+    extend_job = (form.get("extend_job") or "").strip()
+    if extend_job:
+        try:
+            windows = h3_extend_look.add_lines_ng(windows, h3_extend_look.established_ng(extend_job, intent))
+        except (h3_continue.ContinueError, LookupError, ValueError) as e:
+            notes.append(f"The earlier clip's cast and look could not be read ({e}), so check this window matches it.")
+    return jsonify({"id": None, "status": "ready", "mode": "H3 writer", "target": {"effective_seconds": seconds},
+                    "windows": windows, "diagnostics": [], "note": " ".join(notes)}), 201
 
 
 @enhancedh3NG_bp.route("/api/ng/enhanced-h3/refine", methods=["POST"])

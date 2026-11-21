@@ -40,6 +40,14 @@ class Previous(unittest.TestCase):
                 mock.patch.object(ext.reroll, "load_manifest_ng", side_effect=ValueError("single window")):
             self.assertEqual(ext.previous_prompts_ng("j"), ["the only prompt"])
 
+    def test_a_job_read_back_from_disk_uses_the_prompt_the_runner_recorded(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "h3_1.metrics.json").write_text(json.dumps({"prompt": "from metrics"}))
+            with mock.patch.object(ext.reroll, "resolve_source_ng", return_value=SimpleNamespace(job_dir=d)), \
+                    mock.patch.object(ext.reroll, "load_manifest_ng", side_effect=ValueError("single window")):
+                self.assertEqual(ext.previous_prompts_ng("j"), ["from metrics"])
+
     def test_a_film_with_no_saved_prompt_is_refused(self):
         with mock.patch.object(ext.reroll, "resolve_source_ng", return_value=SimpleNamespace(prompt="")), \
                 mock.patch.object(ext.reroll, "load_manifest_ng", side_effect=ValueError("single window")):
