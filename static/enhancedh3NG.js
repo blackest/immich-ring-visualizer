@@ -136,6 +136,7 @@
 
   function saveNow() {
     var state = { fields: {}, silent: els.silent.checked, cont: els.cont.checked, improv: els.improv.checked, speed: els.speed.value,
+      keepfaces: !!(els.keepfaces && els.keepfaces.checked), lowmem: !!(els.lowmem && els.lowmem.checked),
       brief: lastBrief, needsFirstFrame: briefNeedsFirstFrame, job: renderJob,
       lastDone: lastDone, extendFrom: extendFrom };
     FIELDS.forEach(function (k) { state.fields[k] = els[k].value; });
@@ -159,6 +160,9 @@
     els.silent.checked = !!saved.silent;
     if (saved.cont !== undefined) els.cont.checked = !!saved.cont;
     if (saved.improv !== undefined) els.improv.checked = !!saved.improv;
+    if (els.keepfaces && saved.keepfaces !== undefined) els.keepfaces.checked = !!saved.keepfaces;
+    if (els.lowmem && saved.lowmem !== undefined && !els.lowmem.disabled) els.lowmem.checked = !!saved.lowmem;
+    syncKeepFaces();
     // older saves had a Fast checkbox: ticked was Fast, unticked was the full 16 steps
     var sp = saved.speed || (saved.fast === undefined ? null : saved.fast ? "fast" : "full");
     if (sp) els.speed.value = sp;
@@ -419,6 +423,13 @@
   var REF_MAX_SECONDS = 5.167;
   // "Keep the reference pictures in every window": the first-frame model with the runner's --reference, any length.
   function keepFaces() { return !!(els.keepfaces && els.keepfaces.checked) && !extendFrom; }
+  // The look selector belongs to the one-window Ref2VA route; with kept pictures it would do nothing, so it is switched off.
+  function syncKeepFaces() {
+    if (!els.hybrid) return;
+    var on = !!(els.keepfaces && els.keepfaces.checked);
+    els.hybrid.disabled = on;
+    els.hybrid.title = on ? "Not used while the reference pictures are kept in every window (that route uses the first-frame model)." : "";
+  }
   function isFrameItem(it) { return it.role === "frame_anchor_first" || it.role === "frame_anchor_last" || !!it.at; }
   var capNote = "";  // set when Write brief shortened Seconds for a reference render
 
@@ -675,7 +686,8 @@
     els.extend.onclick = toggleExtend;
     if (els.upscale) els.upscale.onclick = startUpscale;
     if (els.sharp) els.sharp.onclick = startSharp;
-    if (els.keepfaces) els.keepfaces.onchange = updateRefNote;
+    if (els.keepfaces) els.keepfaces.onchange = function () { syncKeepFaces(); updateRefNote(); saveSoon(); };
+    if (els.lowmem) els.lowmem.addEventListener("change", saveSoon);
     if (window.EnhancedH3RerollNG) window.EnhancedH3RerollNG.init(els.rerolls, {
       say: setRender,
       playUrl: function (url) { els.video.src = url; els.video.style.display = ""; els.video.play(); },
